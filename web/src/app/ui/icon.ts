@@ -25,6 +25,7 @@ const ICONS: Record<string, string> = {
   check: `<path d="m4.5 12.5 5 5 10-11"/>`,
   fullscreen: `<path d="M8 3H5.5A2.5 2.5 0 0 0 3 5.5V8"/><path d="M16 3h2.5A2.5 2.5 0 0 1 21 5.5V8"/><path d="M8 21H5.5A2.5 2.5 0 0 1 3 18.5V16"/><path d="M16 21h2.5a2.5 2.5 0 0 0 2.5-2.5V16"/>`,
   fullscreenExit: `<path d="M3 8h2.5A2.5 2.5 0 0 0 8 5.5V3"/><path d="M21 8h-2.5A2.5 2.5 0 0 1 16 5.5V3"/><path d="M3 16h2.5A2.5 2.5 0 0 1 8 18.5V21"/><path d="M21 16h-2.5a2.5 2.5 0 0 0-2.5 2.5V21"/>`,
+  eye: `<path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>`,
   grid: `<rect x="3.5" y="3.5" width="7.5" height="7.5" rx="1.5"/><rect x="13" y="3.5" width="7.5" height="7.5" rx="1.5"/><rect x="3.5" y="13" width="7.5" height="7.5" rx="1.5"/><rect x="13" y="13" width="7.5" height="7.5" rx="1.5"/>`,
   popout: `<path d="M13 4h7v7"/><path d="M20 4 11 13"/><path d="M18 14v4.5A2.5 2.5 0 0 1 15.5 21h-9A2.5 2.5 0 0 1 4 18.5v-9A2.5 2.5 0 0 1 6.5 7H11"/>`,
   pen: `<path d="M4 20.5 4.8 16.2 16.3 4.7a2.3 2.3 0 0 1 3.2 3.2L8 19.4z"/><path d="m14.6 6.4 3.2 3.2"/>`,

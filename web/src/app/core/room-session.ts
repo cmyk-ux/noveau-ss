@@ -52,6 +52,8 @@ export interface RoomSnapshot {
   focusedShareId: string | null;
   needsAudioUnlock: boolean;
   watchers: Map<string, number>;
+  /** Nomes de quem está vendo cada tela. */
+  viewers: Map<string, string[]>;
 }
 
 interface LiveShare {
@@ -66,14 +68,17 @@ function watchingOf(attrs: Record<string, string> | undefined): string | null {
   return v === undefined || v === '' ? null : v;
 }
 
-function countWatchers(people: { identity: string; watching: string | null }[], shareIds: string[]) {
-  const counts = new Map(shareIds.map((id) => [id, 0]));
+/** "watching" = id da tela em foco, ou "*" para a grade (vendo todas). */
+function viewersByShare(people: { identity: string; name: string; watching: string | null }[], shareIds: string[]) {
+  const out = new Map<string, string[]>(shareIds.map((id) => [id, []]));
   for (const p of people) {
-    if (p.watching === null || p.watching === p.identity) continue;
-    const n = counts.get(p.watching);
-    if (n !== undefined) counts.set(p.watching, n + 1);
+    if (p.watching === null) continue;
+    for (const id of p.watching === '*' ? shareIds : [p.watching]) {
+      if (id === p.identity) continue; // não conta a própria tela
+      out.get(id)?.push(p.name);
+    }
   }
-  return counts;
+  return out;
 }
 
 export function formatWatchers(n: number): string {
@@ -119,8 +124,9 @@ function keepFocus(ids: string[], current: string | null) {
 }
 
 /** Quando a primeira tela aparece, ela ganha o foco; com várias, o foco fica onde estava. */
-function focusIfOnly(ids: string[], arriving: string, current: string | null) {
-  return ids.length === 1 ? arriving : current;
+function focusIfOnly(ids: string[], arriving: string, _current: string | null) {
+  // Chegou outra tela: mostra todas em grade, como o Discord.
+  return ids.length === 1 ? arriving : null;
 }
 
 function isVisual(source: Track.Source) {
@@ -149,7 +155,7 @@ export class RoomSession {
 
   constructor(
     private readonly audioContainer: HTMLElement,
-    readonly room: Room = new Room({ adaptiveStream: false, dynacast: true }),
+    readonly room: Room = new Room({ adaptiveStream: false, dynacast: true, webAudioMix: true }),
   ) {
     this.bindEvents();
   }
@@ -400,13 +406,16 @@ export class RoomSession {
       shares: shares.map((s) => s.view),
       focusedShareId: this.focusedShareId,
       needsAudioUnlock: !this.room.canPlaybackAudio,
-      watchers: countWatchers(this.collectWatchers(), shares.map((s) => s.view.id)),
+      ...(() => {
+        const viewers = viewersByShare(this.collectWatchers(), shares.map((s) => s.view.id));
+        return { viewers, watchers: new Map([...viewers].map(([k, v]) => [k, v.length])) };
+      })(),
     };
   }
 
   /** Conta pros outros qual tela estou assistindo (atributo "watching"). */
   private publishWatching() {
-    const id = this.focusedShareId;
+    const id = this.focusedShareId ?? (this.live.length > 1 ? '*' : null);
     if (this.room.state !== ConnectionState.Connected || this.publishedWatching === id || this.refusedWatching === id) return;
     this.publishedWatching = id;
     this.refusedWatching = undefined;
@@ -417,7 +426,7 @@ export class RoomSession {
   }
 
   private collectWatchers() {
-    return this.everyone().map((p) => ({ identity: p.identity, watching: watchingOf(p.attributes) }));
+    return this.everyone().map((p) => ({ identity: p.identity, name: displayName(p), watching: watchingOf(p.attributes) }));
   }
 
   /**
@@ -448,10 +457,8 @@ export class RoomSession {
   private tune(p: RemoteParticipant, source: Track.Source, v: Volume, audible: boolean) {
     const track = p.getTrackPublication(source)?.track;
     if (track === undefined || track.kind !== Track.Kind.Audio) return;
-    for (const el of track.attachedElements) {
-      el.muted = !audible || isSilent(v);
-      el.volume = v.level;
-    }
+    // Com webAudioMix o volume é um ganho do Web Audio, que passa de 100%.
+    (track as any).setVolume(!audible || isSilent(v) ? 0 : v.level);
   }
 
   private collectParticipants(): PersonView[] {
@@ -481,6 +488,7 @@ function emptySnapshot(): RoomSnapshot {
     focusedShareId: null,
     needsAudioUnlock: false,
     watchers: new Map(),
+    viewers: new Map(),
   };
 }
 
@@ -495,4 +503,8 @@ function statusOf(state: ConnectionState): RoomStatus {
     default:
       return 'disconnected';
   }
+}
+
+export function viewersOf(s: RoomSnapshot, id: string): string[] {
+  return s.viewers.get(id) ?? [];
 }

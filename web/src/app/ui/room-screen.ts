@@ -38,7 +38,7 @@ type Tab = 'people' | 'share' | 'devices';
               <span class="tag studio-tag" title="Som sem compressão, abra 'pessoas' para ajustar">som estúdio {{ st.bits }}-bit</span>
             }
             @if (adaptedBadge(); as a) { <span class="tag warn" [title]="a.title">{{ a.text }}</span> }
-            <span class="tag">{{ watchersText() }}</span>
+            <span class="eye" [title]="viewersTitle(f.id)"><cen-icon name="eye" [size]="15" /> {{ store.viewersOf(f.id).length }}</span>
           </div>
         }
         <span class="spacer"></span>
@@ -133,16 +133,6 @@ type Tab = 'people' | 'share' | 'devices';
           </div>
         }
         <cen-stats-panel />
-        @if (store.shares().length > 1 && store.focused()) {
-          <div class="strip">
-            @for (s of store.shares(); track s.id) {
-              <button type="button" class="btn small" [class.on]="s.id === store.focused()?.id" (click)="store.focusShare(s.id)"
-                [title]="formatWatchers(store.watchersOf(s.id))">
-                {{ s.isLocal ? 'Sua tela' : s.ownerName }} · {{ store.watchersOf(s.id) }}
-              </button>
-            }
-          </div>
-        }
       </main>
 
       @if (volumeMenu(); as m) {
@@ -154,7 +144,12 @@ type Tab = 'people' | 'share' | 'devices';
               (levelChange)="store.setVolume('share', sh.id, $event)"
               (muteToggle)="store.toggleMute('share', sh.id)" />
           }
-          <p class="hint">Vale só para você.</p>
+          @if (shareById(m.id); as sh) {
+            <button type="button" class="btn small wide" (click)="store.toggleMute('share', sh.id)">
+              {{ sh.volume.muted ? 'Ativar o som da tela' : 'Mutar a tela' }}
+            </button>
+          }
+          <p class="hint">Vai até 200%. Vale só para você.</p>
         </div>
       }
 
@@ -208,6 +203,7 @@ type Tab = 'people' | 'share' | 'devices';
     .volume-menu { position: fixed; z-index: 41; width: 260px; padding: 0.6rem 0.8rem; border-radius: 10px;
       background: var(--surface); border: 1px solid var(--line); box-shadow: 0 10px 30px #0008; }
     .volume-menu .label { margin: 0 0 0.3rem; }
+    .eye { display: inline-flex; align-items: center; gap: 0.25rem; color: var(--muted); font-size: 0.8rem; }
     .studio-tag { border-color: var(--accent); color: var(--accent); }
     .cursor-ctl { display: flex; align-items: center; gap: 0.35rem; }
     .cursor-ctl svg { vertical-align: -2px; }
@@ -262,6 +258,11 @@ export class RoomScreen {
     const n = this.store.shares().length;
     return n <= 2 ? n : n <= 4 ? 2 : 3;
   });
+
+  viewersTitle(id: string) {
+    const names = this.store.viewersOf(id);
+    return names.length === 0 ? 'Ninguém assistindo' : `Assistindo: ${names.join(', ')}`;
+  }
 
   shareById(id: string) {
     return this.store.shares().find((s) => s.id === id) ?? null;

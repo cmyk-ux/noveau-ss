@@ -201,7 +201,7 @@ export class StudioHub {
   private applyAudible(pl: Player) {
     const on = this.audible(pl.identity);
     if (on && pl.ctx.state === 'suspended') void pl.ctx.resume();
-    pl.gain.gain.value = on ? this.volume * (this.perPerson.get(pl.identity) ?? 1) : 0;
+    pl.gain.gain.value = on ? this.volume * (this.perPerson.get(pl.identity) ?? 0.2) : 0;
   }
 
   get currentLatency() {

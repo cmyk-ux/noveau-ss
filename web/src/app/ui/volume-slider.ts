@@ -10,7 +10,7 @@ import { Icon } from './icon';
       (click)="muteToggle.emit()">
       <cen-icon [name]="icon()" [size]="16" />
     </button>
-    <input type="range" min="0" max="100" step="1" [value]="percent()" [attr.aria-label]="label()"
+    <input type="range" min="0" max="200" step="1" [value]="percent()" [attr.aria-label]="label()"
       [attr.aria-valuetext]="readout()" (input)="levelChange.emit(+$any($event.target).value / 100)" />
     <span class="readout mono">{{ readout() }}</span>
   `,

@@ -15,6 +15,7 @@ import {
   RoomSession,
   RoomSnapshot,
   watchersOf,
+  viewersOf,
 } from './room-session';
 import { ScreenShareCancelledError } from './share';
 import { StudioHub } from './studio';
@@ -102,6 +103,9 @@ export class RoomStore {
     });
   }
 
+  viewersOf(id: string) {
+    return viewersOf(this._snapshot(), id);
+  }
   watchersOf(id: string) {
     return watchersOf(this._snapshot(), id);
   }
@@ -153,6 +157,10 @@ export class RoomStore {
   }
   toggleMute(channel: Channel, identity: string) {
     this.session.toggleMute(channel, identity);
+    if (channel === 'share') {
+      const v = this.session.read().shares.find((s) => s.id === identity)?.volume;
+      if (v !== undefined) this.studio.setVolumeFor(identity, v.muted ? 0 : v.level);
+    }
   }
 
   async sendingStats() {

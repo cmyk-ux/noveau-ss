@@ -6,6 +6,10 @@ export interface Volume {
 }
 
 export const FULL: Volume = { level: 1, muted: false };
+/** Volume máximo: 200% (ganho via Web Audio). */
+export const MAX_LEVEL = 2;
+/** O som das telas começa baixo, como no Discord; cada um aumenta se quiser. */
+export const SHARE_DEFAULT: Volume = { level: 0.2, muted: false };
 
 export function atLevel(level: number): Volume {
   return { level: clampLevel(level), muted: false };
@@ -20,7 +24,7 @@ export function isSilent(v: Volume): boolean {
 }
 
 export function describeVolume(v: Volume): string {
-  return v.muted ? 'muted' : `${Math.round(v.level * 100)}%`;
+  return v.muted ? 'mudo' : `${Math.round(v.level * 100)}%`;
 }
 
 export function loudness(v: Volume): 'off' | 'low' | 'full' {
@@ -39,7 +43,7 @@ export function volumeIcon(v: Volume): string {
 }
 
 function clampLevel(l: number): number {
-  return Number.isFinite(l) ? Math.min(1, Math.max(0, l)) : FULL.level;
+  return Number.isFinite(l) ? Math.min(MAX_LEVEL, Math.max(0, l)) : FULL.level;
 }
 
 export type Channel = 'mic' | 'share';
@@ -48,7 +52,7 @@ export class Mixer {
   private readonly volumes = new Map<string, Volume>();
 
   read(channel: Channel, identity: string): Volume {
-    return this.volumes.get(`${channel}:${identity}`) ?? FULL;
+    return this.volumes.get(`${channel}:${identity}`) ?? (channel === 'share' ? SHARE_DEFAULT : FULL);
   }
 
   turnTo(channel: Channel, identity: string, level: number) {
