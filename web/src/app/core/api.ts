@@ -44,3 +44,32 @@ export async function requiresSecret(): Promise<boolean> {
   const res = await fetch('/api/config');
   return (await res.json()).requiresSecret === true;
 }
+
+export interface DiscordUser {
+  id: string;
+  name: string;
+  avatar: string | null;
+}
+
+export interface DiscordCall {
+  id: string;
+  name: string;
+}
+
+export interface Me {
+  /** Login com Discord configurado no servidor. */
+  discord: boolean;
+  user: DiscordUser | null;
+  /** Canal de voz do servidor em que a pessoa está agora. */
+  call: DiscordCall | null;
+}
+
+export async function whoAmI(): Promise<Me> {
+  const res = await fetch('/api/me', { cache: 'no-store' });
+  if (!res.ok) throw new Error((await res.json()).error ?? 'Não foi possível falar com o servidor.');
+  return res.json();
+}
+
+export function requestCallToken(): Promise<JoinGrant & { call: DiscordCall }> {
+  return post('/api/discord/token', {}, 'Não foi possível entrar na sala da call.');
+}

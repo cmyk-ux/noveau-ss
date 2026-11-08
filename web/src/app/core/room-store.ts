@@ -1,6 +1,6 @@
 // Estado da sala para a interface. Uma instância por página de sala.
 import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core';
-import { CameraAddress, requestCamera, requestToken, revokeCamera } from './api';
+import { CameraAddress, JoinGrant, requestCamera, requestToken, revokeCamera } from './api';
 import { DeviceList, listMicrophones, listWebcams } from './devices';
 import { RoomLink } from './link';
 import { Prefs } from './prefs';
@@ -99,14 +99,19 @@ export class RoomStore {
   }
 
   async join(link: RoomLink, name: string) {
+    await this.joinWith(() => requestToken(link, name), link);
+  }
+
+  /** Entra com um token obtido de outro jeito (ex.: sala da call do Discord, sem link). */
+  async joinWith(getGrant: () => Promise<JoinGrant>, link: RoomLink | null) {
     this._join.set('joining');
     this._error.set('');
     try {
-      const grant = await requestToken(link, name);
+      const grant = await getGrant();
       await this.session.connect(grant.url, grant.token);
       this._canPublish.set(grant.canPublish);
       this._cameraOffered.set(grant.camera);
-      this.link = link;
+      this.link = link ?? { key: '', secret: '' };
       this._join.set('joined');
     } catch (e) {
       const msg = e instanceof Error ? e.message : '';

@@ -10,12 +10,22 @@
 //   INSTANCE_SECRET      se definido, só entra quem souber essa senha
 //   CAMERA_INGRESS       "1" para oferecer câmera por RTMP (precisa do serviço livekit-ingress)
 //   STATIC_DIR           pasta do frontend compilado para servir junto (opcional)
+//   DISCORD_*            login com Discord e sala da call (veja discord.mjs)
+//
+// Tudo isso pode ficar num arquivo .env na raiz do projeto (ele não vai para o git).
 
 import { createHash, randomBytes } from 'node:crypto';
 import { createReadStream, existsSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { extname, join, normalize } from 'node:path';
-import { AccessToken, IngressClient, IngressInput, TrackSource } from 'livekit-server-sdk';
+import { fileURLToPath } from 'node:url';
+
+// Carrega ../.env antes de ler as variáveis (inclusive as do discord.mjs, importado abaixo).
+const ENV_FILE = fileURLToPath(new URL('../.env', import.meta.url));
+if (existsSync(ENV_FILE)) process.loadEnvFile(ENV_FILE);
+
+const { AccessToken, IngressClient, IngressInput, TrackSource } = await import('livekit-server-sdk');
+const discord = await import('./discord.mjs');
 
 const PORT = Number(process.env.PORT ?? 3001);
 const API_KEY = process.env.LIVEKIT_API_KEY ?? 'devkey';
@@ -62,10 +72,7 @@ function publicUrl(req) {
   return `ws://${host}:7880`;
 }
 
-async function token(req, body) {
-  const room = checkLink(body);
-  const name = cleanName(body.name);
-  if (name === '') throw new HttpError(400, 'Digite um apelido.');
+async function grantFor(req, room, name) {
   const identity = `${name}#${randomBytes(4).toString('base64url').slice(0, 6)}`;
   const at = new AccessToken(API_KEY, API_SECRET, { identity, name, ttl: TOKEN_TTL });
   at.addGrant({
@@ -78,6 +85,20 @@ async function token(req, body) {
     canPublishSources: [TrackSource.SCREEN_SHARE, TrackSource.SCREEN_SHARE_AUDIO, TrackSource.CAMERA, TrackSource.MICROPHONE],
   });
   return { token: await at.toJwt(), url: publicUrl(req), name, canPublish: true, camera: CAMERA_INGRESS };
+}
+
+async function token(req, body) {
+  const room = checkLink(body);
+  const name = cleanName(body.name);
+  if (name === '') throw new HttpError(400, 'Digite um apelido.');
+  return grantFor(req, room, name);
+}
+
+/** Token para a sala da call do Discord em que o usuário logado está agora. */
+async function discordToken(req) {
+  const { user, call } = await discord.requireCall(req);
+  const grant = await grantFor(req, discord.roomForChannel(call.id), cleanName(user.name) || 'alguém');
+  return { ...grant, camera: false, call };
 }
 
 async function camera(body) {
@@ -152,14 +173,25 @@ function send(res, status, data) {
 }
 
 const routes = {
-  'GET /api/config': async () => ({ requiresSecret: INSTANCE_SECRET !== '' }),
+  'GET /api/config': async () => ({ requiresSecret: INSTANCE_SECRET !== '', discord: discord.discordEnabled }),
+  'GET /api/me': (req) => discord.me(req),
+  'POST /api/discord/token': (req) => discordToken(req),
   'POST /api/token': (req, body) => token(req, body),
   'POST /api/camera': (_req, body) => camera(body),
   'POST /api/camera/stop': (_req, body) => stopCamera(body),
 };
 
+// Rotas que respondem com redirecionamento (fluxo de login do Discord).
+const redirects = {
+  'GET /api/discord/login': discord.login,
+  'GET /api/discord/callback': discord.callback,
+  'GET /api/discord/logout': discord.logout,
+};
+
 const server = createServer(async (req, res) => {
   const path = new URL(req.url, 'http://x').pathname;
+  const redirectRoute = redirects[`${req.method} ${path}`];
+  if (redirectRoute !== undefined) return redirectRoute(req, res);
   const route = routes[`${req.method} ${path}`];
   if (route === undefined) {
     if (STATIC_DIR !== '' && req.method === 'GET' && !path.startsWith('/api/')) return serveStatic(req, res);
@@ -169,13 +201,15 @@ const server = createServer(async (req, res) => {
     const body = req.method === 'POST' ? await readJson(req) : {};
     send(res, 200, await route(req, body));
   } catch (e) {
-    const status = e instanceof HttpError ? e.status : 500;
+    const known = e instanceof HttpError || e instanceof discord.DiscordError;
+    const status = known ? e.status : 500;
     if (status === 500) console.error(e);
-    send(res, status, { error: e instanceof HttpError ? e.message : 'Erro no servidor.' });
+    send(res, status, { error: known ? e.message : 'Erro no servidor.' });
   }
 });
 
 server.listen(PORT, () => {
   console.log(`API do Noveau em http://localhost:${PORT} (LiveKit: ${LIVEKIT_HTTP_URL})`);
   if (STATIC_DIR !== '') console.log(`Servindo o site de ${STATIC_DIR}`);
+  console.log(discord.discordEnabled ? 'Login com Discord: ligado' : 'Login com Discord: desligado (faltam DISCORD_* no .env)');
 });

@@ -42,6 +42,19 @@ Os outros abrem `http://192.168.0.10:4200/...`. Obs.: fora do `localhost`, o nav
 
 **Pela internet:** precisa abrir/redirecionar as portas 7880, 7881 (TCP) e 7882 (UDP) no roteador, ou usar um servidor. Túneis HTTP comuns (ngrok, Cloudflare Tunnel) servem para o site e a API, mas não passam UDP, então a mídia fica limitada ao TCP 7881.
 
+## Login com Discord (sala da call)
+
+Com isso ligado, quem está numa call do seu servidor e abre o site cai direto numa sala com as mesmas pessoas da call. As salas avulsas continuam funcionando.
+
+1. Em https://discord.com/developers/applications clique em **New Application** e dê um nome.
+2. Aba **OAuth2**: copie o **Client ID** e o **Client Secret** (Reset Secret). Em **Redirects**, adicione `http://localhost:4200/api/discord/callback` e salve.
+3. Aba **Bot**: clique em **Reset Token** e copie o token. Não precisa ligar nenhum "Privileged Gateway Intent".
+4. Coloque o bot no seu servidor abrindo este link (troque `SEU_CLIENT_ID`): `https://discord.com/oauth2/authorize?client_id=SEU_CLIENT_ID&scope=bot&permissions=1049600` (só "Ver canais" e "Conectar", para ele enxergar quem está em cada call).
+5. No Discord, ative **Configurações > Avançado > Modo desenvolvedor**, clique com o botão direito no servidor e em **Copiar ID do servidor**.
+6. Copie `.env.example` para `.env` na raiz do projeto e preencha os quatro `DISCORD_*` e um `SESSION_SECRET` qualquer. Reinicie o `npm run dev`.
+
+Se o site for aberto por outro endereço (IP da rede, túnel), adicione também `<endereço>/api/discord/callback` nos Redirects.
+
 ## Configuração (variáveis de ambiente da API)
 
 | Variável              | Padrão                    | Para quê                                                  |
@@ -54,6 +67,9 @@ Os outros abrem `http://192.168.0.10:4200/...`. Obs.: fora do `localhost`, o nav
 | `INSTANCE_SECRET`     | vazio                     | se definido, pede uma senha para entrar nas salas         |
 | `CAMERA_INGRESS`      | vazio                     | `1` liga a câmera RTMP (precisa do serviço Ingress do LiveKit) |
 | `STATIC_DIR`          | vazio                     | pasta do build do site para a API servir tudo numa porta  |
+| `DISCORD_*`, `SESSION_SECRET` | vazio             | login com Discord, veja acima e `.env.example`            |
+
+Essas variáveis podem ficar num arquivo `.env` na raiz do projeto.
 
 Para um build de produção: `npm run build` e depois `npm run serve` (site + API em http://localhost:3000; o LiveKit continua separado).
 
