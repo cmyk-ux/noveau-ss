@@ -45,7 +45,7 @@ export class RoomStore {
   private readonly _error = signal('');
   private readonly _canPublish = signal(false);
   private readonly _health = signal<ShareHealth | null>(null);
-  private readonly _soundProblem = signal<'refused' | 'silent' | null>(null);
+  private readonly _soundProblem = signal<'refused' | 'silent' | 'whole-pc' | null>(null);
   private readonly _busy = signal(false);
   private readonly _camera = signal<CameraAddress | null>(null);
   private readonly _cameraOffered = signal(false);
@@ -258,7 +258,9 @@ export class RoomStore {
     );
     this.watch = r.watch;
     this._liveSignature.set(this.prefs.signature());
-    this._soundProblem.set(r.audio === 'refused' ? 'refused' : null);
+    this._soundProblem.set(
+      r.audio === 'refused' ? 'refused' : r.audio === 'published' && r.surface === 'monitor' ? 'whole-pc' : null,
+    );
     this.toast.show(
       `Compartilhando ${r.resolution.width}x${r.resolution.height} em ${r.codec.toUpperCase()} a até ${formatBitrate(r.bitrate)}`,
     );
@@ -268,6 +270,13 @@ export class RoomStore {
     const wasLimited = this._health()?.sustained ?? false;
     this._health.set(h);
     if (wasLimited && !h.sustained) this.toast.show('A transmissão voltou à qualidade total.');
+  }
+
+  /** Para de mandar o som da tela, mantendo a imagem. */
+  async dropShareAudio() {
+    await this.session.stopAudio();
+    this._soundProblem.set(null);
+    this.toast.show('Som da tela desligado. A imagem continua.');
   }
 
   private async dropSilentAudio() {

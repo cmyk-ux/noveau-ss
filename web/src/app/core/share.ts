@@ -2,11 +2,11 @@
 import {
   AudioPresets,
   BackupCodecPolicy,
-  createLocalScreenTracks,
+  LocalAudioTrack,
   LocalTrack,
+  LocalVideoTrack,
   Room,
   Track,
-  type ScreenShareCaptureOptions,
   type TrackPublishOptions,
 } from 'livekit-client';
 import { Codec, CodecChoice, isSvc, pickCodec, planSize, StreamPlan, bitrateFor, Size } from './stream';
@@ -38,23 +38,46 @@ export interface ShareResult {
   resolution: Size;
   audio: 'published' | 'refused' | 'not-requested';
   watch: ShareWatch;
+  /** 'monitor' (tela inteira), 'window' (janela) ou 'browser' (aba). */
+  surface?: string;
 }
 
-function captureOptions(req: ShareRequest): ScreenShareCaptureOptions {
+/**
+ * Opções do getDisplayMedia. Chamamos o navegador direto (e não o createLocalScreenTracks do
+ * livekit-client) porque o livekit-client 2.22 descarta windowAudio, e o Cenaculum original
+ * mandava windowAudio: 'system', o que fazia uma janela compartilhada levar o som do PC
+ * inteiro (Discord junto).
+ *
+ * - windowAudio: 'window' (Chrome/Edge 141+): ao escolher uma janela, o navegador oferece
+ *   "compartilhar o áudio deste app", só o som do programa daquela janela.
+ * - systemAudio: 'include': ao escolher a tela inteira, ainda dá para mandar o som do sistema
+ *   (aí vai tudo, inclusive o Discord; o navegador não consegue separar).
+ * - restrictOwnAudio (Chrome 140+, Windows/macOS): tira do som do sistema o que esta própria
+ *   página toca, ou seja, as vozes da sala não voltam para quem está assistindo.
+ */
+function displayMediaOptions(req: ShareRequest): DisplayMediaStreamOptions {
   const { width, height } = planSize(req.plan);
+  const audio: MediaTrackConstraints | false = req.includeAudio
+    ? ({
+        channelCount: 2,
+        sampleRate: 48e3,
+        // Som cru: sem cancelamento de eco, supressão de ruído ou ganho automático.
+        echoCancellation: false,
+        noiseSuppression: false,
+        autoGainControl: false,
+        restrictOwnAudio: true,
+        suppressLocalAudioPlayback: false,
+      } as MediaTrackConstraints)
+    : false;
   return {
-    resolution: { width, height, frameRate: req.plan.frameRate },
-    contentHint: req.plan.contentHint,
+    video: { width: { ideal: width }, height: { ideal: height }, frameRate: req.plan.frameRate },
+    audio,
     selfBrowserSurface: 'include',
     surfaceSwitching: 'include',
-    // Som cru: sem cancelamento de eco, supressão de ruído ou ganho automático.
-    audio: req.includeAudio
-      ? { channelCount: 2, sampleRate: 48e3, echoCancellation: false, noiseSuppression: false, autoGainControl: false }
-      : false,
     ...(req.includeAudio
-      ? { systemAudio: 'include', windowAudio: 'system', restrictOwnAudio: true }
+      ? { systemAudio: 'include', windowAudio: 'window' }
       : { systemAudio: 'exclude', windowAudio: 'exclude' }),
-  } as ScreenShareCaptureOptions;
+  } as DisplayMediaStreamOptions;
 }
 
 function videoPublishOptions(req: ShareRequest, codec: Codec, maxBitrate: number): TrackPublishOptions {
@@ -110,20 +133,29 @@ async function settledSettings(track: MediaStreamTrack): Promise<MediaTrackSetti
 
 export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbacks): Promise<ShareResult> {
   const codec = pickCodec(req.preferredCodec);
-  let tracks: LocalTrack[];
+  let stream: MediaStream;
   try {
-    tracks = await createLocalScreenTracks(captureOptions(req));
+    stream = await navigator.mediaDevices.getDisplayMedia(displayMediaOptions(req));
   } catch (e) {
     throw e instanceof DOMException && (e.name === 'NotAllowedError' || e.name === 'AbortError')
       ? new ScreenShareCancelledError()
       : e;
   }
-  const video = tracks.find((t) => t.kind === Track.Kind.Video);
-  const audio = tracks.find((t) => t.kind === Track.Kind.Audio);
-  if (video === undefined) {
-    for (const t of tracks) t.stop();
+  const rawVideo = stream.getVideoTracks()[0];
+  const rawAudio = stream.getAudioTracks()[0];
+  if (rawVideo === undefined) {
+    for (const t of stream.getTracks()) t.stop();
     throw new Error('O navegador não entregou nenhuma imagem para compartilhar.');
   }
+  rawVideo.contentHint = req.plan.contentHint;
+  const video = new LocalVideoTrack(rawVideo, undefined, false);
+  video.source = Track.Source.ScreenShare;
+  let audio: LocalAudioTrack | undefined;
+  if (rawAudio !== undefined) {
+    audio = new LocalAudioTrack(rawAudio, undefined, false);
+    audio.source = Track.Source.ScreenShareAudio;
+  }
+  const surface = (rawVideo.getSettings() as MediaTrackSettings & { displaySurface?: string }).displaySurface;
   const settings = await settledSettings(video.mediaStreamTrack);
   const planned = planSize(req.plan);
   const resolution: Size = {
@@ -151,7 +183,7 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
   }
   const watch = new ShareWatch({ track: video, onChange: cb.onHealth });
   watch.start();
-  return { codec, bitrate, resolution, audio: audioState, watch };
+  return { codec, bitrate, resolution, audio: audioState, watch, surface };
 }
 
 export async function stopShareAudio(room: Room) {

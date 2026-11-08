@@ -46,14 +46,20 @@ type Tab = 'people' | 'share' | 'devices';
         <div class="banner">
           <span>
             @if (problem === 'refused') {
-              Compartilhando sem som: o navegador não entregou faixa de áudio. Marque a caixa de áudio na janela de escolha
-              (só aparece para uma aba, ou para a tela inteira no Windows).
+              Compartilhando sem som: o navegador não entregou faixa de áudio. Na janela de escolha, marque
+              "compartilhar o áudio deste app" (janela), "áudio da aba" (aba) ou "áudio do sistema" (tela inteira).
+            } @else if (problem === 'whole-pc') {
+              Tela inteira manda o som do PC todo, inclusive o Discord, e quem está na call se escuta.
+              Para mandar só o som do jogo ou programa, compartilhe a janela dele.
             } @else {
               Compartilhando sem som: a faixa de áudio veio totalmente muda e foi descartada para não gastar upload.
               No Linux isso costuma significar que o áudio do sistema não chegou ao navegador.
             }
           </span>
-          <button class="btn small" (click)="store.restartShare()">Compartilhar de novo</button>
+          <button class="btn small" (click)="store.restartShare()">Escolher de novo</button>
+          @if (problem === 'whole-pc') {
+            <button class="btn small" (click)="store.dropShareAudio()">Tirar o som</button>
+          }
         </div>
       }
       @if (store.needsAudioUnlock()) {
