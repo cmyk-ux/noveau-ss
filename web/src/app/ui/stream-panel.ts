@@ -58,6 +58,24 @@ import {
     </label>
     <p class="hint">Marque também a caixa de áudio na janela do navegador. Ela só aparece para uma aba, ou para a tela inteira no Windows.</p>
 
+    @if (prefs.shareAudio()) {
+      <p class="label">qualidade do som</p>
+      <div class="chips">
+        <button type="button" class="chip" [class.lit]="prefs.studio() === 'off'" (click)="prefs.setStudio('off')">Opus (leve)</button>
+        <button type="button" class="chip" [class.lit]="prefs.studio() === '16'" (click)="prefs.setStudio('16')">Estúdio 16-bit</button>
+        <button type="button" class="chip" [class.lit]="prefs.studio() === '24'" (click)="prefs.setStudio('24')">Estúdio 24-bit</button>
+      </div>
+      <p class="hint">
+        @if (prefs.studio() === 'off') {
+          Opus comprime o som (bom para voz, jogo e vídeo).
+        } @else {
+          Sem compressão nenhuma: o som sai exatamente como o navegador está tocando, a 48 kHz.
+          Gasta {{ prefs.studio() === '16' ? '1,5' : '2,3' }} Mbps de upload por pessoa assistindo e chega com
+          um atraso de ~0,25 s. Para música, compartilhe a <strong>aba</strong> do site com "compartilhar áudio da aba".
+        }
+      </p>
+    }
+
     <p class="label">codec</p>
     <div class="chips">
       @for (c of codecs(); track c) {

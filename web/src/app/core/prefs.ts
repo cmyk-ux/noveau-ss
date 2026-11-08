@@ -60,6 +60,20 @@ const store = {
   set maxCompatibility(v: boolean) {
     localStorage.setItem('cenaculum:compat', v ? 'yes' : 'no');
   },
+  get studio(): 'off' | '16' | '24' {
+    const v = localStorage.getItem('cenaculum:studio');
+    return v === '16' || v === '24' ? v : 'off';
+  },
+  set studio(v: 'off' | '16' | '24') {
+    localStorage.setItem('cenaculum:studio', v);
+  },
+  get studioLatency(): number {
+    const v = Number(localStorage.getItem('cenaculum:studio-latency'));
+    return v >= 0.05 && v <= 2 ? v : 0.25;
+  },
+  set studioLatency(v: number) {
+    localStorage.setItem('cenaculum:studio-latency', String(v));
+  },
   get cursorOn(): boolean {
     return localStorage.getItem('cenaculum:cursor') === 'yes';
   },
@@ -101,6 +115,8 @@ export class Prefs {
   private readonly _maxCompatibility = signal(store.maxCompatibility);
   private readonly _volumeHinted = signal(store.volumeHinted);
   private readonly _cursorOn = signal(store.cursorOn);
+  private readonly _studio = signal(store.studio);
+  private readonly _studioLatency = signal(store.studioLatency);
   private readonly _cursorColor = signal(store.cursorColor);
 
   readonly name = this._name.asReadonly();
@@ -111,6 +127,17 @@ export class Prefs {
   readonly maxCompatibility = this._maxCompatibility.asReadonly();
   readonly volumeHinted = this._volumeHinted.asReadonly();
   readonly cursorOn = this._cursorOn.asReadonly();
+  readonly studio = this._studio.asReadonly();
+  readonly studioLatency = this._studioLatency.asReadonly();
+
+  setStudio(v: 'off' | '16' | '24') {
+    store.studio = v;
+    this._studio.set(v);
+  }
+  setStudioLatency(v: number) {
+    store.studioLatency = v;
+    this._studioLatency.set(v);
+  }
   readonly cursorColor = this._cursorColor.asReadonly();
 
   setCursorOn(v: boolean) {
@@ -154,6 +181,6 @@ export class Prefs {
 
   /** Muda quando qualquer ajuste que exige reiniciar o compartilhamento muda. */
   signature(): string {
-    return [JSON.stringify(this._stream()), this._codec(), this._shareAudio(), this._maxCompatibility()].join('|');
+    return [JSON.stringify(this._stream()), this._codec(), this._shareAudio(), this._maxCompatibility(), this._studio()].join('|');
   }
 }

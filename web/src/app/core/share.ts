@@ -11,6 +11,15 @@ import {
 } from 'livekit-client';
 import { Codec, CodecChoice, isSvc, pickCodec, planSize, StreamPlan, bitrateFor, Size } from './stream';
 import { ShareHealth, ShareWatch, sourceAudioLevel } from './stats';
+import { StudioBits, StudioSender } from './studio';
+
+/** Envio do som em modo estúdio (sem compressão), se estiver ativo. */
+let studio: StudioSender | null = null;
+
+function stopStudio() {
+  studio?.stop();
+  studio = null;
+}
 
 export class ScreenShareCancelledError extends Error {
   constructor() {
@@ -24,6 +33,8 @@ export interface ShareRequest {
   preferredCodec: CodecChoice;
   includeAudio: boolean;
   maxCompatibility: boolean;
+  /** Som sem compressão (PCM) em vez de Opus; null = Opus normal. */
+  studio: StudioBits | null;
 }
 
 export interface ShareCallbacks {
@@ -173,7 +184,13 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
   );
   await room.localParticipant.publishTrack(video, videoPublishOptions(req, codec, bitrate));
   let audioState: ShareResult['audio'] = req.includeAudio ? 'refused' : 'not-requested';
-  if (audio !== undefined) {
+  stopStudio();
+  if (audio !== undefined && req.studio !== null) {
+    // Modo estúdio: o som vai pelo canal de dados, sem passar pelo Opus.
+    studio = new StudioSender(room, audio.mediaStreamTrack, req.studio);
+    await studio.start();
+    audioState = 'published';
+  } else if (audio !== undefined) {
     audio.mediaStreamTrack.contentHint = 'music';
     await room.localParticipant.publishTrack(audio, SCREEN_AUDIO_PUBLISH);
     audioState = 'published';
@@ -187,11 +204,13 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
 }
 
 export async function stopShareAudio(room: Room) {
+  stopStudio();
   const pub = room.localParticipant.getTrackPublication(Track.Source.ScreenShareAudio);
   if (pub?.track !== undefined) await room.localParticipant.unpublishTrack(pub.track, true);
 }
 
 export async function stopShare(room: Room) {
+  stopStudio();
   for (const source of [Track.Source.ScreenShare, Track.Source.ScreenShareAudio]) {
     const pub = room.localParticipant.getTrackPublication(source);
     if (pub?.track !== undefined) await room.localParticipant.unpublishTrack(pub.track, true);

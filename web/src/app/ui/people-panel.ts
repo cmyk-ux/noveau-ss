@@ -2,6 +2,7 @@ import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { DiscordUser, callMembers, inviteToRoom, pingCall } from '../core/api';
 import { encodeLink, isCallRoom, newKey, randomRoomName } from '../core/link';
+import { Prefs } from '../core/prefs';
 import { RoomStore } from '../core/room-store';
 import { Toast } from '../core/toast';
 import { Icon } from './icon';
@@ -20,6 +21,32 @@ import { VolumeSlider } from './volume-slider';
       <cen-volume [volume]="s.share.volume" [label]="s.label"
         (levelChange)="store.setVolume('share', s.share.id, $event)"
         (muteToggle)="store.toggleMute('share', s.share.id)" />
+    }
+    @for (st of store.studio.streams(); track st.identity) {
+      <p class="label">som de estúdio · sem compressão</p>
+      <div class="studio">
+        <div class="person">
+          <span class="name">{{ st.name }}</span>
+          <span class="tag">{{ st.bits }}-bit · 48 kHz</span>
+        </div>
+        <div class="person">
+          <input type="range" min="0" max="1" step="0.01" [value]="studioVolume()" aria-label="Volume do som de estúdio"
+            (input)="setStudioVolume(+$any($event.target).value)" />
+          <span class="mono small">{{ (studioVolume() * 100).toFixed(0) }}%</span>
+        </div>
+        <p class="hint mono">
+          buffer {{ (st.level * 1000).toFixed(0) }} / {{ (st.target * 1000).toFixed(0) }} ms
+          @if (!st.playing) { · carregando }
+          @if (st.underruns > 0) { · {{ st.underruns }} engasgo(s) }
+          @if (st.lost > 0) { · {{ st.lost }} pacote(s) perdido(s) }
+        </p>
+        <div class="chips">
+          @for (l of latencies; track l) {
+            <button type="button" class="chip" [class.lit]="l === prefs.studioLatency()" (click)="setLatency(l)">{{ l * 1000 }} ms</button>
+          }
+        </div>
+        <p class="hint">Engasgando? Aumente o atraso. Ele só afeta o som de estúdio.</p>
+      </div>
     }
     <p class="label">na sala</p>
     @for (p of store.participants(); track p.identity) {
@@ -76,6 +103,10 @@ import { VolumeSlider } from './volume-slider';
     .outside .avatar { opacity: 0.6; filter: grayscale(1); }
     .tag { font-size: 0.7rem; border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3rem; }
     .action { margin-top: 1rem; }
+    .studio { border: 1px solid var(--line); border-radius: 8px; padding: 0.25rem 0.6rem 0.6rem; margin-bottom: 0.5rem; }
+    .studio input[type=range] { flex: 1; accent-color: var(--accent); }
+    .small { font-size: 0.75rem; }
+    .chips { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.4rem; }
     .invite { display: none; }
     .outside:hover .tag { display: none; }
     .outside:hover .invite, .invite.busy { display: inline-flex; }
@@ -89,6 +120,19 @@ export class PeoplePanel {
   private readonly members = signal<DiscordUser[]>([]);
   protected readonly pinging = signal(false);
   protected readonly inviting = signal<string | null>(null);
+  protected readonly prefs = inject(Prefs);
+  protected readonly latencies = [0.1, 0.25, 0.5, 1];
+  protected readonly studioVolume = signal(1);
+
+  setStudioVolume(v: number) {
+    this.studioVolume.set(v);
+    this.store.studio.setVolume(v);
+  }
+
+  setLatency(seconds: number) {
+    this.prefs.setStudioLatency(seconds);
+    this.store.studio.setLatency(seconds);
+  }
   protected readonly stageSound = computed(() => {
     const f = this.store.focused();
     if (f === null || f.isLocal || !f.hasAudio) return null;

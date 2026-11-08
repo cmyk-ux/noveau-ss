@@ -17,6 +17,7 @@ import {
   watchersOf,
 } from './room-session';
 import { ScreenShareCancelledError } from './share';
+import { StudioHub } from './studio';
 import { ShareHealth, StatsSampler } from './stats';
 import { formatBitrate, planFor } from './stream';
 import { Toast } from './toast';
@@ -90,8 +91,10 @@ export class RoomStore {
       window.removeEventListener('beforeunload', leave);
       offChange();
       this.watch?.stop();
+      this.studio.dispose();
       void this.session.disconnect();
     });
+    this.studio.setLatency(this.prefs.studioLatency());
   }
 
   watchersOf(id: string) {
@@ -153,6 +156,9 @@ export class RoomStore {
     const r = await this.session.focusedAudioReport();
     return r === null ? null : this.sampler.readInboundAudio(r);
   }
+
+  /** Som de estúdio (sem compressão) que chega de quem transmite. */
+  readonly studio = new StudioHub(this.session.room);
 
   /** A sala do LiveKit, para recursos que falam direto por ela (cursores). */
   get liveRoom() {
@@ -258,6 +264,7 @@ export class RoomStore {
         plan: planFor(this.prefs.stream()),
         preferredCodec: this.prefs.codec(),
         includeAudio: this.prefs.shareAudio(),
+        studio: this.prefs.studio() === 'off' ? null : (Number(this.prefs.studio()) as 16 | 24),
         maxCompatibility: this.prefs.maxCompatibility(),
       },
       {

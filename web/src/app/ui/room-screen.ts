@@ -32,6 +32,9 @@ type Tab = 'people' | 'share' | 'devices';
             <strong>{{ shareTitle() }}</strong>
             @if (stage()?.measured(); as m) { <span class="tag mono">{{ m }}</span> }
             @if (f.hasAudio) { <span class="tag">com som</span> }
+            @for (st of store.studio.streams(); track st.identity) {
+              <span class="tag studio-tag" title="Som sem compressão, abra 'pessoas' para ajustar">som estúdio {{ st.bits }}-bit</span>
+            }
             @if (adaptedBadge(); as a) { <span class="tag warn" [title]="a.title">{{ a.text }}</span> }
             <span class="tag">{{ watchersText() }}</span>
           </div>
@@ -174,6 +177,7 @@ type Tab = 'people' | 'share' | 'devices';
     .room { position: relative; display: flex; flex-direction: column; height: 100%; }
     .topbar { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 1rem; border-bottom: 1px solid var(--line);
       flex-wrap: wrap; }
+    .studio-tag { border-color: var(--accent); color: var(--accent); }
     .cursor-ctl { display: flex; align-items: center; gap: 0.35rem; }
     .cursor-ctl svg { vertical-align: -2px; }
     .swatch { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #fff8; cursor: pointer; position: relative; overflow: hidden; }
