@@ -188,6 +188,10 @@ export interface OutboundVideo {
   targetBitrate: number;
   codec: string;
   encoder: string;
+  /** true = encoder de hardware (placa de vídeo). */
+  gpu: boolean | null;
+  /** Tempo médio para codificar um quadro (ms). */
+  encodeMs: number;
   scalabilityMode: string;
   limitation: Limitation;
   resolutionChanges: number;
@@ -199,6 +203,7 @@ export interface InboundVideo {
   bitrate: number;
   codec: string;
   decoder: string;
+  gpu: boolean | null;
   packetsLost: number;
   framesDropped: number;
   freezeCount: number;
@@ -235,6 +240,8 @@ export class StatsSampler {
       targetBitrate: Math.round(num(s, 'targetBitrate')),
       codec: codecName(report, s.codecId),
       encoder: text(s, 'encoderImplementation'),
+      gpu: typeof s.powerEfficientEncoder === 'boolean' ? s.powerEfficientEncoder : null,
+      encodeMs: num(s, 'framesEncoded') > 0 ? Math.round((num(s, 'totalEncodeTime') / num(s, 'framesEncoded')) * 1e4) / 10 : 0,
       scalabilityMode: text(s, 'scalabilityMode'),
       limitation: asLimitation(s.qualityLimitationReason),
       resolutionChanges: num(s, 'qualityLimitationResolutionChanges'),
@@ -285,6 +292,7 @@ export class StatsSampler {
         bitrate,
         codec: codecName(report, s.codecId),
         decoder: text(s, 'decoderImplementation'),
+        gpu: typeof s.powerEfficientDecoder === 'boolean' ? s.powerEfficientDecoder : null,
         packetsLost: num(s, 'packetsLost'),
         framesDropped: num(s, 'framesDropped'),
         freezeCount: num(s, 'freezeCount'),

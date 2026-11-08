@@ -145,8 +145,14 @@ type Tab = 'people' | 'share' | 'devices';
               (muteToggle)="store.toggleMute('share', sh.id)" />
           }
           @if (shareById(m.id); as sh) {
-            <button type="button" class="btn small wide" (click)="store.toggleMute('share', sh.id)">
-              {{ sh.volume.muted ? 'Ativar o som da tela' : 'Mutar a tela' }}
+            <button type="button" class="check-row" role="menuitemcheckbox" [attr.aria-checked]="sh.volume.muted"
+              (click)="store.toggleMute('share', sh.id)">
+              <span>Mutar</span>
+              <span class="checkbox" [class.on]="sh.volume.muted">
+                @if (sh.volume.muted) {
+                  <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                }
+              </span>
             </button>
           }
           <p class="hint">Vai até 200%. Vale só para você.</p>
@@ -203,6 +209,15 @@ type Tab = 'people' | 'share' | 'devices';
     .volume-menu { position: fixed; z-index: 41; width: 260px; padding: 0.6rem 0.8rem; border-radius: 10px;
       background: var(--surface); border: 1px solid var(--line); box-shadow: 0 10px 30px #0008; }
     .volume-menu .label { margin: 0 0 0.3rem; }
+    /* Igual ao menu do Discord: linha "Mutar" com uma caixinha que ganha um check. */
+    .check-row { display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: 0.5rem;
+      padding: 0.45rem 0.5rem; border: 0; border-radius: 6px; background: none; color: inherit; font: inherit; cursor: pointer; }
+    .check-row:hover { background: var(--accent); color: #fff; }
+    .checkbox { width: 18px; height: 18px; border-radius: 4px; border: 2px solid var(--muted); display: grid; place-items: center;
+      flex-shrink: 0; }
+    .check-row:hover .checkbox { border-color: #fff; }
+    .checkbox.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .check-row:hover .checkbox.on { background: #fff; border-color: #fff; color: var(--accent); }
     .eye { display: inline-flex; align-items: center; gap: 0.25rem; color: var(--muted); font-size: 0.8rem; }
     .studio-tag { border-color: var(--accent); color: var(--accent); }
     .cursor-ctl { display: flex; align-items: center; gap: 0.35rem; }

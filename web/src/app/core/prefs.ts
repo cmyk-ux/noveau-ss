@@ -54,6 +54,12 @@ const store = {
   set volumeHinted(v: boolean) {
     localStorage.setItem('cenaculum:volume-hint', v ? 'yes' : 'no');
   },
+  get adaptToLoad(): boolean {
+    return localStorage.getItem('cenaculum:adapt-load') !== 'no';
+  },
+  set adaptToLoad(v: boolean) {
+    localStorage.setItem('cenaculum:adapt-load', v ? 'yes' : 'no');
+  },
   get maxCompatibility(): boolean {
     return localStorage.getItem('cenaculum:compat') !== 'no';
   },
@@ -114,6 +120,12 @@ export class Prefs {
   private readonly _showStats = signal(store.showStats);
   private readonly _maxCompatibility = signal(store.maxCompatibility);
   private readonly _volumeHinted = signal(store.volumeHinted);
+  private readonly _adaptToLoad = signal(store.adaptToLoad);
+  readonly adaptToLoad = this._adaptToLoad.asReadonly();
+  setAdaptToLoad(v: boolean) {
+    store.adaptToLoad = v;
+    this._adaptToLoad.set(v);
+  }
   private readonly _cursorOn = signal(store.cursorOn);
   private readonly _studio = signal(store.studio);
   private readonly _studioLatency = signal(store.studioLatency);
@@ -181,6 +193,6 @@ export class Prefs {
 
   /** Muda quando qualquer ajuste que exige reiniciar o compartilhamento muda. */
   signature(): string {
-    return [JSON.stringify(this._stream()), this._codec(), this._shareAudio(), this._maxCompatibility(), this._studio()].join('|');
+    return [JSON.stringify(this._stream()), this._codec(), this._shareAudio(), this._maxCompatibility(), this._studio(), this._adaptToLoad()].join('|');
   }
 }

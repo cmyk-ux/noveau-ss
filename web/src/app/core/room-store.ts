@@ -1,4 +1,5 @@
 // Estado da sala para a interface. Uma instância por página de sala.
+import { LoadGovernor, LoadState } from './load';
 import { DestroyRef, Injectable, computed, effect, inject, signal } from '@angular/core';
 import { CameraAddress, JoinGrant, requestCamera, requestToken, revokeCamera } from './api';
 import { DeviceList, listMicrophones, listWebcams } from './devices';
@@ -58,6 +59,13 @@ export class RoomStore {
   readonly webcams = new DeviceList(listWebcams, () => this.session.activeDevice('videoinput'));
   readonly microphones = new DeviceList(listMicrophones, () => this.session.activeDevice('audioinput'));
   private watch: ShareWatch | null = null;
+  private governor: LoadGovernor | null = null;
+  private readonly _load = signal<LoadState | null>(null);
+  /** Degrau de qualidade por uso do PC (null = não está transmitindo ou desligado). */
+  readonly load = this._load.asReadonly();
+  private readonly _encoder = signal<{ codec: string; gpu: boolean } | null>(null);
+  /** Codec escolhido e se ele roda na placa de vídeo. */
+  readonly encoder = this._encoder.asReadonly();
 
   readonly joinState = this._join.asReadonly();
   readonly error = this._error.asReadonly();
@@ -289,20 +297,25 @@ export class RoomStore {
         includeAudio: this.prefs.shareAudio(),
         studio: this.prefs.studio() === 'off' ? null : (Number(this.prefs.studio()) as 16 | 24),
         maxCompatibility: this.prefs.maxCompatibility(),
+        adaptToLoad: this.prefs.adaptToLoad(),
       },
       {
         onEndedByBrowser: () => void this.session.stopShare(),
         onHealth: (h) => this.handleHealth(h),
         onSilentAudio: () => void this.dropSilentAudio(),
+        onLoad: (l) => this._load.set(l),
       },
     );
     this.watch = r.watch;
+    this.governor = r.governor;
+    this._encoder.set({ codec: r.codec, gpu: r.gpu });
     this._liveSignature.set(this.prefs.signature());
     this._soundProblem.set(
       r.audio === 'refused' ? 'refused' : r.audio === 'published' && r.surface === 'monitor' ? 'whole-pc' : null,
     );
     this.toast.show(
-      `Compartilhando ${r.resolution.width}x${r.resolution.height} em ${r.codec.toUpperCase()} a até ${formatBitrate(r.bitrate)}`,
+      `Compartilhando ${r.resolution.width}x${r.resolution.height} em ${r.codec.toUpperCase()} ` +
+        `(${r.gpu ? 'placa de vídeo' : 'processador'}) a até ${formatBitrate(r.bitrate)}`,
     );
   }
 
@@ -331,6 +344,10 @@ export class RoomStore {
   }
 
   private forgetShare() {
+    this.governor?.stop();
+    this.governor = null;
+    this._load.set(null);
+    this._encoder.set(null);
     if (this._liveSignature() === null && this.watch === null) return;
     this.watch?.stop();
     this.watch = null;

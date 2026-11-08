@@ -9,7 +9,8 @@ import {
   Track,
   type TrackPublishOptions,
 } from 'livekit-client';
-import { Codec, CodecChoice, isSvc, pickCodec, planSize, StreamPlan, bitrateFor, Size } from './stream';
+import { Codec, CodecChoice, pickCodec, planSize, probeEncoders, StreamPlan, bitrateFor, Size } from './stream';
+import { LoadGovernor, LoadState } from './load';
 import { ShareHealth, ShareWatch, sourceAudioLevel } from './stats';
 import { StudioBits, StudioSender } from './studio';
 
@@ -35,12 +36,16 @@ export interface ShareRequest {
   maxCompatibility: boolean;
   /** Som sem compressão (PCM) em vez de Opus; null = Opus normal. */
   studio: StudioBits | null;
+  /** Baixar fps/resolução sozinho quando o processador do PC aperta (jogo pesado). */
+  adaptToLoad: boolean;
 }
 
 export interface ShareCallbacks {
   onEndedByBrowser: () => void;
   onHealth: (h: ShareHealth) => void;
   onSilentAudio: () => void;
+  /** Mudou o degrau de qualidade por causa do uso do PC. */
+  onLoad: (s: LoadState) => void;
 }
 
 export interface ShareResult {
@@ -49,6 +54,9 @@ export interface ShareResult {
   resolution: Size;
   audio: 'published' | 'refused' | 'not-requested';
   watch: ShareWatch;
+  governor: LoadGovernor | null;
+  /** Codec escolhido roda na placa de vídeo (segundo o navegador). */
+  gpu: boolean;
   /** 'monitor' (tela inteira), 'window' (janela) ou 'browser' (aba). */
   surface?: string;
 }
@@ -92,14 +100,17 @@ function displayMediaOptions(req: ShareRequest): DisplayMediaStreamOptions {
 }
 
 function videoPublishOptions(req: ShareRequest, codec: Codec, maxBitrate: number): TrackPublishOptions {
-  const svc = isSvc(codec);
+  // H.265 só toca em quem tem decodificador de hardware; AV1/VP9 em navegadores antigos podem falhar.
+  // Com REGRESSION o H.264 de reserva só é codificado se alguém da sala não conseguir decodificar.
+  const needsBackup = codec === 'h265' || ((codec === 'av1' || codec === 'vp9') && (req.maxCompatibility || req.preferredCodec === 'auto'));
   return {
     source: Track.Source.ScreenShare,
     videoCodec: codec,
     screenShareEncoding: { maxBitrate, maxFramerate: req.plan.frameRate, priority: 'high' },
     degradationPreference: req.plan.degradation,
-    ...(svc ? { simulcast: false } : {}),
-    ...(svc && req.maxCompatibility ? { backupCodec: { codec: 'h264' }, backupCodecPolicy: BackupCodecPolicy.REGRESSION } : {}),
+    // Uma camada só: simulcast codificaria a tela 2-3 vezes (mais custo para quem transmite).
+    simulcast: false,
+    ...(needsBackup ? { backupCodec: { codec: 'h264' }, backupCodecPolicy: BackupCodecPolicy.REGRESSION } : {}),
   } as TrackPublishOptions;
 }
 
@@ -143,7 +154,6 @@ async function settledSettings(track: MediaStreamTrack): Promise<MediaTrackSetti
 }
 
 export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbacks): Promise<ShareResult> {
-  const codec = pickCodec(req.preferredCodec);
   let stream: MediaStream;
   try {
     stream = await navigator.mediaDevices.getDisplayMedia(displayMediaOptions(req));
@@ -173,6 +183,9 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
     width: settings.width !== undefined && settings.width > 0 ? settings.width : planned.width,
     height: settings.height !== undefined && settings.height > 0 ? settings.height : planned.height,
   };
+  // Com o tamanho real da captura, pergunta ao navegador quais codecs rodam na GPU e escolhe.
+  const probes = await probeEncoders(resolution, req.plan.frameRate);
+  const codec = pickCodec(req.preferredCodec);
   const bitrate = bitrateFor(resolution, req.plan.frameRate, codec);
   video.mediaStreamTrack.addEventListener(
     'ended',
@@ -200,7 +213,12 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
   }
   const watch = new ShareWatch({ track: video, onChange: cb.onHealth });
   watch.start();
-  return { codec, bitrate, resolution, audio: audioState, watch, surface };
+  let governor: LoadGovernor | null = null;
+  if (req.adaptToLoad) {
+    governor = new LoadGovernor(video.mediaStreamTrack, resolution, req.plan.frameRate, cb.onLoad);
+    governor.start();
+  }
+  return { codec, bitrate, resolution, audio: audioState, watch, surface, governor, gpu: probes[codec]?.gpu === true };
 }
 
 export async function stopShareAudio(room: Room) {

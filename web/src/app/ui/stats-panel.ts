@@ -3,6 +3,7 @@ import { Prefs } from '../core/prefs';
 import { RoomStore } from '../core/room-store';
 import { AudioReading, describeLimitation } from '../core/stats';
 import { formatBitrate } from '../core/stream';
+import { describePressure } from '../core/load';
 
 interface Row {
   label: string;
@@ -91,13 +92,25 @@ export class StatsPanel {
         row('bitrate', formatBitrate(s.bitrate)),
         row('alvo', formatBitrate(s.targetBitrate)),
         row('codec', `${s.codec} ${s.scalabilityMode}`),
-        row('encoder', s.encoder),
+        row('encoder', `${s.encoder}${s.gpu === null ? '' : s.gpu ? ' · GPU' : ' · CPU'}`, s.gpu === false),
+        row('tempo por quadro', `${s.encodeMs} ms`, s.encodeMs > 1000 / Math.max(s.fps, 1)),
+        ...this.loadRows(),
         row('limitado por', describeLimitation(s.limitation)),
         row('sustentado', h?.sustained === true ? describeLimitation(h.reason) : 'não', h?.sustained === true),
         row('mudanças de tamanho', String(s.resolutionChanges), s.resolutionChanges > 0),
         ...soundRows(await this.store.sendingAudioStats()),
       ],
     };
+  }
+
+  private loadRows(): Row[] {
+    const l = this.store.load();
+    if (l === null) return [];
+    if (!l.supported) return [row('uso do PC', 'navegador não informa')];
+    return [
+      row('uso do PC', describePressure(l.pressure), l.pressure === 'serious' || l.pressure === 'critical'),
+      row('degrau', l.step === 0 ? 'qualidade total' : `${l.width}x${l.height} ≤${l.fps}fps`, l.step > 0),
+    ];
   }
 
   private async readReceiving(): Promise<Section | null> {
@@ -112,7 +125,7 @@ export class StatsPanel {
         row('fps', String(r.fps)),
         row('bitrate', formatBitrate(r.bitrate)),
         row('codec', r.codec),
-        row('decoder', r.decoder),
+        row('decoder', `${r.decoder}${r.gpu === null ? '' : r.gpu ? ' · GPU' : ' · CPU'}`),
         row('pacotes perdidos', String(r.packetsLost), r.packetsLost > 0),
         row('quadros descartados', String(r.framesDropped), r.framesDropped > 0),
         row('travadas', `${r.freezeCount} (${r.freezeSeconds}s)`, r.freezeCount > 0),
