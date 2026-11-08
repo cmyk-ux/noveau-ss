@@ -1,6 +1,6 @@
 import { Component, ElementRef, computed, inject, input, output, signal, viewChild } from '@angular/core';
 import { Invites } from '../core/invites';
-import { roomUrl } from '../core/link';
+import { isCallRoom, roomUrl } from '../core/link';
 import { formatWatchers } from '../core/room-session';
 import { RoomStore } from '../core/room-store';
 import { shortLimitation } from '../core/stats';
@@ -91,9 +91,13 @@ type Tab = 'people' | 'share' | 'devices';
                 <button class="btn" (click)="copyInvite()"><cen-icon name="link" [size]="16" /> Copiar convite</button>
               </div>
             }
-            <p class="label">o link inteiro</p>
+            <p class="label">{{ callRoom ? 'o endereço do site' : 'o link inteiro' }}</p>
             <p class="mono link">{{ link() }}</p>
-            <p class="hint">o que vem depois do # é o que deixa alguém entrar</p>
+            <p class="hint">
+              {{ callRoom
+                ? 'quem estiver na mesma call do Discord abre o site, entra com Discord e cai nesta sala'
+                : 'o que vem depois do # é o que deixa alguém entrar' }}
+            </p>
           </div>
         }
         <cen-stats-panel />
@@ -218,6 +222,7 @@ export class RoomScreen {
       ? null
       : { text: `qualidade reduzida (${shortLimitation(h.reason)})`, title: `Enviando ${h.width}x${h.height} a ${h.fps} fps. Volta sozinho.` };
   });
+  protected readonly callRoom = isCallRoom();
   protected readonly link = computed(() => roomUrl(this.label()));
   protected readonly emptyHint = computed(() =>
     this.store.canPublish()

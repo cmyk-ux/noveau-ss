@@ -34,7 +34,13 @@ export function encodeLink(link: RoomLink): string {
   return link.secret === '' ? link.key : `k=${encodeURIComponent(link.key)}&s=${encodeURIComponent(link.secret)}`;
 }
 
+/** Sala da call do Discord: não tem chave no link, quem está na call entra pelo login. */
+export function isCallRoom(): boolean {
+  return location.pathname === '/call';
+}
+
 export function roomUrl(label: string): string {
+  if (isCallRoom()) return `${location.origin}/`;
   return `${location.origin}/room/${encodeURIComponent(label)}#${encodeLink(readLink())}`;
 }
 
