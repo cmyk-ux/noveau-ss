@@ -10,7 +10,8 @@
     "dev": "concurrently -n livekit,api,web -c magenta,cyan,green \"npm:livekit\" \"npm:api\" \"npm:web\"",
     "dev:sem-docker": "concurrently -n api,web -c cyan,green \"npm:api\" \"npm:web\"",
     "build": "npm --prefix web run build",
-    "serve": "node -e \"process.env.STATIC_DIR='web/dist/noveau-ss/browser';process.env.PORT=process.env.PORT||'3000';import('./server/server.mjs')\""
+    "serve": "node -e \"process.env.STATIC_DIR='web/dist/noveau-ss/browser';process.env.PORT=process.env.PORT||'3000';import('./server/server.mjs')\"",
+    "compartilhar": "npm run build && concurrently -n livekit,site -c magenta,cyan \"npm:livekit\" \"npm:serve\""
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

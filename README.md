@@ -40,7 +40,25 @@ NODE_IP=192.168.0.10 npm run dev
 
 Os outros abrem `http://192.168.0.10:4200/...`. Obs.: fora do `localhost`, o navegador só libera captura de tela e microfone em HTTPS, então para amigos na rede é preciso HTTPS (por exemplo com um túnel) ou ativar a flag `chrome://flags/#unsafely-treat-insecure-origin-as-secure` para esse endereço.
 
+**Com amigos, pelo Tailscale (recomendado para testar):** veja a seção "Compartilhar com amigos (Tailscale)" abaixo.
+
 **Pela internet:** precisa abrir/redirecionar as portas 7880, 7881 (TCP) e 7882 (UDP) no roteador, ou usar um servidor. Túneis HTTP comuns (ngrok, Cloudflare Tunnel) servem para o site e a API, mas não passam UDP, então a mídia fica limitada ao TCP 7881.
+
+## Compartilhar com amigos (Tailscale)
+
+`localhost` só abre no seu PC. O Tailscale (VPN grátis) dá ao seu PC um endereço que seus amigos alcançam, com HTTPS (necessário para microfone e captura de tela), sem mexer no roteador.
+
+1. Instale o Tailscale (https://tailscale.com/download), entre com sua conta e, no painel https://login.tailscale.com/admin/dns, confirme que **MagicDNS** e **HTTPS Certificates** estão ligados.
+2. Descubra o IP do Tailscale do PC: `tailscale ip -4` (algo como `100.x.y.z`).
+3. Dê HTTPS ao site e ao LiveKit (uma vez só, fica salvo):
+   ```
+   tailscale serve --bg --https=443 http://127.0.0.1:3000
+   tailscale serve --bg --https=7443 http://127.0.0.1:7880
+   ```
+   `tailscale serve status` mostra o endereço, no formato `https://SEU-PC.SUA-REDE.ts.net`.
+4. No `.env` (copie de `.env.example`), preencha `NODE_IP`, `LIVEKIT_PUBLIC_URL=wss://SEU-PC.SUA-REDE.ts.net:7443` e, se usar o Discord, `DISCORD_REDIRECT_URI=https://SEU-PC.SUA-REDE.ts.net/api/discord/callback` (adicione o mesmo endereço em OAuth2 > Redirects no Developer Portal).
+5. Rode `npm run compartilhar` (compila o site e sobe LiveKit + site na porta 3000).
+6. Compartilhe o PC com cada amigo: painel do Tailscale > **Machines** > menu `...` do seu PC > **Share**. O amigo instala o Tailscale, aceita o convite e abre `https://SEU-PC.SUA-REDE.ts.net`.
 
 ## Login com Discord (sala da call)
 
