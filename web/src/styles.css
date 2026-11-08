@@ -1,1 +1,64 @@
-/* You can add global styles to this file, and also import other style files */
+/* Tema simples e escuro. Fácil de trocar: tudo sai das variáveis abaixo. */
+:root {
+  --bg: #111015;
+  --surface: #1b1a22;
+  --surface-2: #26242f;
+  --line: #34313f;
+  --text: #ece9f2;
+  --muted: #9a96a8;
+  --accent: #e9a930;
+  --accent-ink: #1d1404;
+  --danger: #d2463c;
+  --ok: #5cc88a;
+  --radius: 8px;
+  --mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+  color-scheme: dark;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.45 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+button, input, select { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: default; opacity: 0.5; }
+#audio { display: none; }
+
+.btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 0.45rem;
+  height: 38px; padding: 0 1rem; border-radius: var(--radius);
+  border: 1px solid var(--line); background: var(--surface-2); font-weight: 600;
+}
+.btn:hover:not(:disabled) { border-color: var(--muted); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.btn.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.btn.off { color: var(--danger); }
+.btn.wide { width: 100%; }
+.btn.small { height: 30px; padding: 0 0.7rem; font-size: 0.85rem; }
+.btn.icon { width: 44px; padding: 0; }
+
+.chip {
+  height: 30px; padding: 0 0.75rem; border-radius: 999px;
+  border: 1px solid var(--line); background: transparent; font-size: 0.85rem;
+}
+.chip.lit { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.chips { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+
+.field { display: flex; flex-direction: column; gap: 0.35rem; }
+.input {
+  height: 40px; padding: 0 0.75rem; border-radius: var(--radius);
+  border: 1px solid var(--line); background: var(--bg);
+}
+.label { font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin: 1rem 0 0.4rem; }
+.hint { font-size: 0.85rem; color: var(--muted); margin: 0.3rem 0; }
+.error { color: var(--danger); min-height: 1.2em; font-size: 0.9rem; }
+.card {
+  width: min(420px, 100%); padding: 2rem; border-radius: 14px;
+  background: var(--surface); border: 1px solid var(--line);
+}
+.center { min-height: 100%; display: grid; place-items: center; padding: 1rem; }
+.mono { font-family: var(--mono); }

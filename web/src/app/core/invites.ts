@@ -7,12 +7,12 @@ export class Invites {
   private readonly toast = inject(Toast);
 
   async copy(text: string, done: string) {
-    this.report(await copyText(text), text, done, 'Copy this:');
+    this.report(await copyText(text), text, done, 'Copie isto:');
   }
 
   async invite(label: string) {
     const { copied, link } = await copyRoomLink(label);
-    this.report(copied, link, `Copied ${link.replace(/^https?:\/\//, '')}`, 'Copy the room link:');
+    this.report(copied, link, `Copiado: ${link.replace(/^https?:\/\//, '')}`, 'Copie o link da sala:');
   }
 
   private report(copied: boolean, text: string, done: string, ask: string) {

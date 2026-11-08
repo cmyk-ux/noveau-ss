@@ -1,0 +1,13 @@
+{
+  "name": "noveau-server",
+  "version": "1.0.0",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "dependencies": {
+    "livekit-server-sdk": "^2.19.2"
+  },
+  "type": "module",
+  "private": true
+}

@@ -29,15 +29,15 @@ async function post<T>(path: string, body: unknown, fallback: string): Promise<T
 }
 
 export function requestToken(link: RoomLink, name: string): Promise<JoinGrant> {
-  return post('/api/token', { ...link, name }, 'Could not join the room.');
+  return post('/api/token', { ...link, name }, 'Não foi possível entrar na sala.');
 }
 
 export function requestCamera(link: RoomLink): Promise<CameraAddress> {
-  return post('/api/camera', link, 'Could not get a camera address.');
+  return post('/api/camera', link, 'Não foi possível pegar um endereço de câmera.');
 }
 
 export function revokeCamera(link: RoomLink): Promise<unknown> {
-  return post('/api/camera/stop', link, 'Could not revoke the camera key.');
+  return post('/api/camera/stop', link, 'Não foi possível revogar a chave da câmera.');
 }
 
 export async function requiresSecret(): Promise<boolean> {
