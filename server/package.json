@@ -6,6 +6,7 @@
     "start": "node server.mjs"
   },
   "dependencies": {
+    "discord.js": "^14.28.1",
     "livekit-server-sdk": "^2.19.2"
   },
   "type": "module",

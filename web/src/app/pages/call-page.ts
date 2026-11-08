@@ -1,4 +1,4 @@
-import { Component, inject, signal } from '@angular/core';
+import { Component, effect, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { DiscordCall, requestCallToken } from '../core/api';
 import { RoomStore } from '../core/room-store';
@@ -44,6 +44,14 @@ export class CallPage {
 
   constructor() {
     void this.enter();
+    // Saiu ou trocou de call no Discord: o servidor tira a pessoa da sala. Volta ao início,
+    // que leva para a sala da call nova (se houver).
+    let wasConnected = false;
+    effect(() => {
+      const status = this.store.status();
+      if (status === 'connected') wasConnected = true;
+      if (wasConnected && status === 'disconnected') void this.router.navigateByUrl('/');
+    });
   }
 
   async enter() {

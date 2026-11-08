@@ -39,6 +39,8 @@ export interface PersonView {
   isSharing: boolean;
   canPublish: boolean;
   volume: Volume;
+  /** Id do Discord, nas salas de call. */
+  discordId: string | null;
 }
 
 export interface RoomSnapshot {
@@ -434,6 +436,7 @@ export class RoomSession {
         p.getTrackPublication(Track.Source.Camera) !== undefined,
       canPublish: p.permissions?.canPublish === true,
       volume: this.mixer.read('mic', p.identity),
+      discordId: p.attributes?.['discordId'] ?? null,
     }));
   }
 }

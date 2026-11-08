@@ -67,7 +67,7 @@ Com isso ligado, quem está numa call do seu servidor e abre o site cai direto n
 1. Em https://discord.com/developers/applications clique em **New Application** e dê um nome.
 2. Aba **OAuth2**: copie o **Client ID** e o **Client Secret** (Reset Secret). Em **Redirects**, adicione `http://localhost:4200/api/discord/callback` e salve.
 3. Aba **Bot**: clique em **Reset Token** e copie o token. Não precisa ligar nenhum "Privileged Gateway Intent".
-4. Coloque o bot no seu servidor abrindo este link (troque `SEU_CLIENT_ID`): `https://discord.com/oauth2/authorize?client_id=SEU_CLIENT_ID&scope=bot&permissions=1049600` (só "Ver canais" e "Conectar", para ele enxergar quem está em cada call).
+4. Coloque o bot no seu servidor abrindo este link (troque `SEU_CLIENT_ID`): `https://discord.com/oauth2/authorize?client_id=SEU_CLIENT_ID&scope=bot&permissions=1051648` ("Ver canais", "Conectar" e "Enviar mensagens": enxergar quem está em cada call e marcar a call no chat dela).
 5. No Discord, ative **Configurações > Avançado > Modo desenvolvedor**, clique com o botão direito no servidor e em **Copiar ID do servidor**.
 6. Copie `.env.example` para `.env` na raiz do projeto e preencha os quatro `DISCORD_*` e um `SESSION_SECRET` qualquer. Reinicie o `npm run dev`.
 

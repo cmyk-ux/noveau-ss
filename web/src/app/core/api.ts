@@ -73,3 +73,19 @@ export async function whoAmI(): Promise<Me> {
 export function requestCallToken(): Promise<JoinGrant & { call: DiscordCall }> {
   return post('/api/discord/token', {}, 'Não foi possível entrar na sala da call.');
 }
+
+export interface CallMembers {
+  call: DiscordCall;
+  people: DiscordUser[];
+}
+
+export async function callMembers(): Promise<CallMembers> {
+  const res = await fetch('/api/discord/members', { cache: 'no-store' });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error ?? 'Não foi possível ver quem está na call.');
+  return data;
+}
+
+export function pingCall(): Promise<{ ok: boolean; count: number }> {
+  return post('/api/discord/ping', {}, 'Não foi possível avisar a call.');
+}

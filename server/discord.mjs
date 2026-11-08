@@ -18,6 +18,7 @@
 //   DISCORD_REDIRECT_URI   opcional; padrão: <endereço do site>/api/discord/callback
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
+import { cachedChannelOf, membersOf, pingCall, startBot } from './discord-bot.mjs';
 
 const API = process.env.DISCORD_API_URL || 'https://discord.com/api/v10'; // trocável só para testes
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID ?? '';
@@ -29,6 +30,7 @@ const SESSION_SECRET =
   process.env.SESSION_SECRET || createHash('sha256').update(`noveau:${CLIENT_SECRET}:${BOT_TOKEN}`).digest('hex');
 const SESSION_COOKIE = 'noveau_session';
 const STATE_COOKIE = 'noveau_oauth_state';
+const SWITCH_COOKIE = 'noveau_switch_account';
 const SESSION_DAYS = 30;
 
 export const discordEnabled = CLIENT_ID !== '' && CLIENT_SECRET !== '' && BOT_TOKEN !== '' && GUILD_ID !== '';
@@ -110,7 +112,9 @@ export function login(req, res) {
     redirect_uri: redirectUri(req),
     scope: 'identify',
     state,
-    prompt: 'none',
+    // Depois de "sair", mostra a tela de autorização de novo, com o "Não é você?" para trocar
+    // de conta. Sem isso o Discord reaproveita na hora a conta logada no navegador.
+    prompt: cookies(req)[SWITCH_COOKIE] ? 'consent' : 'none',
   }).toString();
   redirect(res, url.toString(), [cookie(STATE_COOKIE, state, 600)]);
 }
@@ -145,15 +149,30 @@ export async function callback(req, res) {
       avatar: me.avatar ? `https://cdn.discordapp.com/avatars/${me.id}/${me.avatar}.png?size=64` : null,
       exp: Date.now() + SESSION_DAYS * 864e5,
     });
-    redirect(res, '/', [clearState, cookie(SESSION_COOKIE, session, SESSION_DAYS * 86400)]);
+    // O token do Discord só serve para ler o nome agora; revogamos para não guardar nada.
+    void revoke(access_token);
+    redirect(res, '/', [clearState, cookie(SWITCH_COOKIE, '', 0), cookie(SESSION_COOKIE, session, SESSION_DAYS * 86400)]);
   } catch (e) {
     console.error('[discord] login falhou:', e.message);
     redirect(res, '/?discord=falhou', [clearState]);
   }
 }
 
+async function revoke(token) {
+  try {
+    await fetch(`${API}/oauth2/token/revoke`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ client_id: CLIENT_ID, client_secret: CLIENT_SECRET, token, token_type_hint: 'access_token' }),
+    });
+  } catch {
+    /* não é crítico */
+  }
+}
+
 export function logout(_req, res) {
-  redirect(res, '/', [cookie(SESSION_COOKIE, '', 0)]);
+  // Apaga a sessão e marca que o próximo login deve deixar escolher a conta.
+  redirect(res, '/?ficar=1', [cookie(SESSION_COOKIE, '', 0), cookie(SWITCH_COOKIE, '1', 30 * 86400)]);
 }
 
 // ---------- estado de voz ----------
@@ -179,6 +198,9 @@ async function channelName(id) {
 
 /** Canal de voz do servidor configurado em que o usuário está agora, ou null. */
 export async function voiceChannelOf(userId) {
+  // Com o bot conectado, a resposta vem do gateway (tempo real, sem gastar API).
+  const cached = cachedChannelOf(userId);
+  if (cached !== undefined) return cached;
   const r = await bot(`/guilds/${GUILD_ID}/voice-states/${userId}`);
   if (r.status === 404) return null; // não está em nenhuma call do servidor
   if (!r.ok) {
@@ -212,4 +234,28 @@ export async function requireCall(req) {
   const call = await voiceChannelOf(user.id);
   if (call === null) throw new DiscordError(409, 'Você não está em nenhuma call do servidor agora.');
   return { user, call };
+}
+
+/** Liga o bot do gateway (se configurado). */
+export function startDiscordBot(onLeave) {
+  if (discordEnabled) startBot({ onLeave });
+}
+
+/** Para GET /api/discord/members: todo mundo da call em que o usuário logado está. */
+export async function callMembers(req) {
+  const { call } = await requireCall(req);
+  const people = await membersOf(call.id);
+  if (people === null) throw new DiscordError(503, 'O bot do Discord ainda está conectando.');
+  return { call, people: people.map(({ id, name, avatar }) => ({ id, name, avatar })) };
+}
+
+/** Para POST /api/discord/ping: o bot marca a call no chat do canal de voz. */
+export async function pingMyCall(req) {
+  const { user, call } = await requireCall(req);
+  try {
+    const count = await pingCall(call.id, user.name, `${siteOrigin(req)}/`);
+    return { ok: true, count };
+  } catch (e) {
+    throw new DiscordError(409, e.message);
+  }
 }

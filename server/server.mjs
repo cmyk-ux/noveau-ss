@@ -24,7 +24,7 @@ import { fileURLToPath } from 'node:url';
 const ENV_FILE = fileURLToPath(new URL('../.env', import.meta.url));
 if (existsSync(ENV_FILE)) process.loadEnvFile(ENV_FILE);
 
-const { AccessToken, IngressClient, IngressInput, TrackSource } = await import('livekit-server-sdk');
+const { AccessToken, IngressClient, IngressInput, RoomServiceClient, TrackSource } = await import('livekit-server-sdk');
 const discord = await import('./discord.mjs');
 
 const PORT = Number(process.env.PORT ?? 3001);
@@ -39,6 +39,7 @@ const TOKEN_TTL = '4h';
 const CAMERA_HOURS = 4;
 
 const ingress = new IngressClient(LIVEKIT_HTTP_URL, API_KEY, API_SECRET);
+const rooms = new RoomServiceClient(LIVEKIT_HTTP_URL, API_KEY, API_SECRET);
 
 /** O nome da sala vem só da chave do link: o rótulo na URL é decorativo. */
 function roomFor(key) {
@@ -72,9 +73,9 @@ function publicUrl(req) {
   return `ws://${host}:7880`;
 }
 
-async function grantFor(req, room, name) {
+async function grantFor(req, room, name, attributes = undefined) {
   const identity = `${name}#${randomBytes(4).toString('base64url').slice(0, 6)}`;
-  const at = new AccessToken(API_KEY, API_SECRET, { identity, name, ttl: TOKEN_TTL });
+  const at = new AccessToken(API_KEY, API_SECRET, { identity, name, ttl: TOKEN_TTL, attributes });
   at.addGrant({
     roomJoin: true,
     room,
@@ -97,7 +98,9 @@ async function token(req, body) {
 /** Token para a sala da call do Discord em que o usuário logado está agora. */
 async function discordToken(req) {
   const { user, call } = await discord.requireCall(req);
-  const grant = await grantFor(req, discord.roomForChannel(call.id), cleanName(user.name) || 'alguém');
+  const grant = await grantFor(req, discord.roomForChannel(call.id), cleanName(user.name) || 'alguém', {
+    discordId: user.id,
+  });
   return { ...grant, camera: false, call };
 }
 
@@ -176,10 +179,29 @@ const routes = {
   'GET /api/config': async () => ({ requiresSecret: INSTANCE_SECRET !== '', discord: discord.discordEnabled }),
   'GET /api/me': (req) => discord.me(req),
   'POST /api/discord/token': (req) => discordToken(req),
+  'GET /api/discord/members': (req) => discord.callMembers(req),
+  'POST /api/discord/ping': (req) => discord.pingMyCall(req),
   'POST /api/token': (req, body) => token(req, body),
   'POST /api/camera': (_req, body) => camera(body),
   'POST /api/camera/stop': (_req, body) => stopCamera(body),
 };
+
+/** Alguém saiu (ou trocou) de call no Discord: tira a pessoa da sala do site daquela call. */
+async function kickFromCallRoom(userId, channelId) {
+  const room = discord.roomForChannel(channelId);
+  try {
+    for (const p of await rooms.listParticipants(room)) {
+      if (p.attributes?.discordId === userId) {
+        await rooms.removeParticipant(room, p.identity);
+        console.log(`[discord] ${p.name} saiu da call, removido da sala dela`);
+      }
+    }
+  } catch (e) {
+    // Sala vazia ou inexistente: nada a fazer.
+    if (!/not found|does not exist/i.test(e.message ?? '')) console.error('[discord] remover da sala:', e.message);
+  }
+}
+discord.startDiscordBot((userId, channelId) => void kickFromCallRoom(userId, channelId));
 
 // Rotas que respondem com redirecionamento (fluxo de login do Discord).
 const redirects = {
