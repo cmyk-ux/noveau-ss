@@ -1,5 +1,5 @@
 import { Injectable, signal } from '@angular/core';
-import { CodecChoice, DEFAULT_STREAM, FRAME_RATES, MODES, RESOLUTIONS, StreamSettings } from './stream';
+import { BITRATE_LIMITS, CodecChoice, DEFAULT_STREAM, FRAME_RATES, RESOLUTIONS, StreamSettings } from './stream';
 
 function oneOf<T>(value: unknown, allowed: T[], fallback: T): T {
   return allowed.includes(value as T) ? (value as T) : fallback;
@@ -14,21 +14,22 @@ const store = {
     localStorage.setItem('cenaculum:name', v);
   },
   get stream(): StreamSettings {
-    const raw = localStorage.getItem('cenaculum:stream');
+    // Chave nova: os presets antigos (Games/Film/Code) saíram, todo mundo começa no Original a 60fps.
+    const raw = localStorage.getItem('cenaculum:stream2');
     if (raw === null) return DEFAULT_STREAM;
     try {
       const s = JSON.parse(raw);
       return {
-        mode: oneOf(s.mode, MODES.map((m) => m.id), DEFAULT_STREAM.mode),
         resolution: oneOf(s.resolution, RESOLUTIONS.map((r) => r.id), DEFAULT_STREAM.resolution),
         frameRate: oneOf(s.frameRate, FRAME_RATES, DEFAULT_STREAM.frameRate),
+        maxBitrate: oneOf(s.maxBitrate, BITRATE_LIMITS.map((b) => b.bps), DEFAULT_STREAM.maxBitrate),
       };
     } catch {
       return DEFAULT_STREAM;
     }
   },
   set stream(v: StreamSettings) {
-    localStorage.setItem('cenaculum:stream', JSON.stringify(v));
+    localStorage.setItem('cenaculum:stream2', JSON.stringify(v));
   },
   get codec(): CodecChoice {
     return (localStorage.getItem('cenaculum:codec') as CodecChoice) ?? 'auto';

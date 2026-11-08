@@ -9,7 +9,7 @@ import {
   Track,
   type TrackPublishOptions,
 } from 'livekit-client';
-import { Codec, CodecChoice, pickCodec, planSize, probeEncoders, StreamPlan, bitrateFor, Size } from './stream';
+import { Codec, CodecChoice, cappedBitrate, pickCodec, planSize, probeEncoders, StreamPlan, Size } from './stream';
 import { LoadGovernor, LoadState } from './load';
 import { ShareHealth, ShareWatch, sourceAudioLevel } from './stats';
 import { StudioBits, StudioSender } from './studio';
@@ -89,7 +89,11 @@ function displayMediaOptions(req: ShareRequest): DisplayMediaStreamOptions {
       } as MediaTrackConstraints)
     : false;
   return {
-    video: { width: { ideal: width }, height: { ideal: height }, frameRate: req.plan.frameRate },
+    // Original: pede o tamanho nativo. Com teto: no máximo aquilo (a tela é reduzida, nunca ampliada).
+    video:
+      req.plan.resolution === 'source'
+        ? { width: { ideal: width }, height: { ideal: height }, frameRate: req.plan.frameRate }
+        : { width: { max: width }, height: { max: height }, frameRate: req.plan.frameRate },
     audio,
     selfBrowserSurface: 'include',
     surfaceSwitching: 'include',
@@ -186,7 +190,7 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
   // Com o tamanho real da captura, pergunta ao navegador quais codecs rodam na GPU e escolhe.
   const probes = await probeEncoders(resolution, req.plan.frameRate);
   const codec = pickCodec(req.preferredCodec);
-  const bitrate = bitrateFor(resolution, req.plan.frameRate, codec);
+  const bitrate = cappedBitrate(resolution, req.plan, codec);
   video.mediaStreamTrack.addEventListener(
     'ended',
     () => {

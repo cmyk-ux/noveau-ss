@@ -7,7 +7,7 @@ import {
   CodecChoice,
   FRAME_RATES,
   formatBitrate,
-  MODES,
+  BITRATE_LIMITS,
   encoderProbes,
   pickCodec,
   planBitrate,
@@ -17,7 +17,6 @@ import {
   Resolution,
   RESOLUTIONS,
   resolutionLabel,
-  StreamMode,
   supportedCodecs,
 } from '../core/stream';
 
@@ -26,7 +25,7 @@ import {
   selector: 'cen-stream-panel',
   template: `
     <div class="head">
-      <p class="label">modo de transmissão</p>
+      <p class="label">transmissão</p>
       @if (sharing()) { <span class="on-air">no ar</span> }
     </div>
     @if (changedWhileLive()) {
@@ -35,25 +34,28 @@ import {
         <button class="btn small primary" (click)="store.restartShare()">Aplicar agora</button>
       </div>
     }
-    @for (m of modes; track m.id) {
-      <button type="button" class="option" [class.lit]="m.id === settings().mode" (click)="pickMode(m.id)">
-        <strong>{{ m.label }}</strong><span>{{ m.description }}</span>
-      </button>
+    <p class="hint">Por padrão vai a tela original, do jeito que está no seu monitor. Só mexa abaixo se quiser limitar.</p>
+    <p class="label">resolução máxima</p>
+    <div class="chips">
+      @for (r of resolutions; track r.id) {
+        <button type="button" class="chip" [class.lit]="r.id === settings().resolution" (click)="pickResolution(r.id)">{{ r.label }}</button>
+      }
+    </div>
+    <p class="label">quadros por segundo</p>
+    <div class="chips">
+      @for (f of frameRates; track f) {
+        <button type="button" class="chip" [class.lit]="f === settings().frameRate" (click)="pickFrameRate(f)">{{ f }}fps</button>
+      }
+    </div>
+    @if (settings().frameRate > 60) {
+      <p class="hint">Acima de 60 só faz diferença para quem assiste num monitor de 120 Hz ou mais, e pesa mais para capturar. 120 é o máximo que o navegador captura.</p>
     }
-    @if (settings().mode === 'custom') {
-      <p class="label">resolução</p>
-      <div class="chips">
-        @for (r of resolutions; track r.id) {
-          <button type="button" class="chip" [class.lit]="r.id === settings().resolution" (click)="pickResolution(r.id)">{{ r.label }}</button>
-        }
-      </div>
-      <p class="label">quadros por segundo</p>
-      <div class="chips">
-        @for (f of frameRates; track f) {
-          <button type="button" class="chip" [class.lit]="f === settings().frameRate" (click)="pickFrameRate(f)">{{ f }}fps</button>
-        }
-      </div>
-    }
+    <p class="label">bitrate máximo</p>
+    <div class="chips">
+      @for (b of bitrates; track b.bps) {
+        <button type="button" class="chip" [class.lit]="b.bps === settings().maxBitrate" (click)="pickBitrate(b.bps)">{{ b.label }}</button>
+      }
+    </div>
 
     <p class="label">som</p>
     <label class="switch">
@@ -99,6 +101,9 @@ import {
       <input type="checkbox" [checked]="prefs.adaptToLoad()" (change)="prefs.setAdaptToLoad(!prefs.adaptToLoad())" />
       <span>Ceder quando o PC apertar</span>
     </label>
+    @if (!prefs.adaptToLoad()) {
+      <p class="hint">Desligado: fica sempre em {{ settings().frameRate }}fps, mesmo que o jogo perca FPS.</p>
+    }
     <p class="hint">
       @if (pressureSupported) {
         Se o processador ficar sobrecarregado (jogo pesado), baixa primeiro o fps e depois a resolução. Quando alivia, volta sozinho.
@@ -152,7 +157,7 @@ import {
 export class StreamPanel {
   protected readonly prefs = inject(Prefs);
   protected readonly store = inject(RoomStore);
-  protected readonly modes = MODES;
+  protected readonly bitrates = BITRATE_LIMITS;
   protected readonly resolutions = RESOLUTIONS;
   protected readonly frameRates = FRAME_RATES;
   protected readonly settings = this.prefs.stream;
@@ -194,8 +199,8 @@ export class StreamPanel {
     };
   });
 
-  pickMode(mode: StreamMode) {
-    this.prefs.setStream({ ...this.settings(), mode });
+  pickBitrate(maxBitrate: number) {
+    this.prefs.setStream({ ...this.settings(), maxBitrate });
   }
   pickResolution(resolution: Resolution) {
     this.prefs.setStream({ ...this.settings(), resolution });

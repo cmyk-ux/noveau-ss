@@ -34,6 +34,7 @@ const RECOVER_AFTER_MS = 20000;
 function stepsFor(width: number, height: number, fps: number): Step[] {
   const raw: Step[] = [
     { width, height, fps },
+    { width, height, fps: Math.min(fps, 60) },
     { width, height, fps: Math.min(fps, 45) },
     { width, height, fps: Math.min(fps, 30) },
     { width: Math.round(width * 0.75), height: Math.round(height * 0.75), fps: Math.min(fps, 30) },

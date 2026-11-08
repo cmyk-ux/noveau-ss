@@ -2,15 +2,17 @@
 // Recuperado do bundle deployado (chunk-CzevgFlM.js).
 
 export type Resolution = 'p720' | 'p1080' | 'p1440' | 'source';
-export type StreamMode = 'gaming' | 'movie' | 'screenshare' | 'custom';
 export type Codec = 'av1' | 'h265' | 'vp9' | 'h264' | 'vp8';
 export type CodecChoice = Codec | 'auto';
-export type Degradation = 'maintain-framerate' | 'maintain-resolution';
+export type Degradation = 'maintain-framerate' | 'maintain-resolution' | 'balanced';
 
+/** Padrão: a tela original. Cada um pode limitar resolução, fps e bitrate se quiser. */
 export interface StreamSettings {
-  mode: StreamMode;
+  /** Teto de resolução ('source' = sem teto). */
   resolution: Resolution;
   frameRate: number;
+  /** Teto de bitrate em bps; 0 = automático. */
+  maxBitrate: number;
 }
 
 export interface StreamPlan {
@@ -18,6 +20,7 @@ export interface StreamPlan {
   frameRate: number;
   contentHint: 'motion' | 'detail';
   degradation: Degradation;
+  maxBitrate: number;
 }
 
 export interface Size {
@@ -39,6 +42,8 @@ const FPS_MULTIPLIERS = [
   { fps: 15, multiplier: 0.65 },
   { fps: 30, multiplier: 1 },
   { fps: 60, multiplier: 1.6 },
+  { fps: 90, multiplier: 2.1 },
+  { fps: 120, multiplier: 2.5 },
 ];
 
 // Banda não é problema (cabo): o teto é alto e o WebRTC baixa sozinho se a rede não aguentar.
@@ -51,34 +56,34 @@ function fpsMultiplier(fps: number): number {
 }
 
 export const RESOLUTIONS: { id: Resolution; label: string }[] = [
-  { id: 'p720', label: '720p' },
-  { id: 'p1080', label: '1080p' },
+  { id: 'source', label: 'Original' },
   { id: 'p1440', label: '1440p' },
-  { id: 'source', label: 'Source' },
+  { id: 'p1080', label: '1080p' },
+  { id: 'p720', label: '720p' },
 ];
 
-export const FRAME_RATES = [15, 30, 60];
+/**
+ * 120 é o teto do próprio Chrome para captura de tela (kMaxScreenCastFrameRate no Chromium).
+ * Acima disso o navegador não captura, mesmo que o jogo rode a 200+.
+ */
+export const FRAME_RATES = [30, 60, 90, 120];
 
-export const MODES: { id: StreamMode; label: string; description: string }[] = [
-  { id: 'gaming', label: 'Games', description: 'Tela original a 60fps; cede quando o PC aperta' },
-  { id: 'movie', label: 'Film', description: 'Pixels first (1080p, 30fps)' },
-  { id: 'screenshare', label: 'Code', description: 'Sharp text, never rescaled (Source, 15fps)' },
-  { id: 'custom', label: 'Custom', description: 'Pick resolution and frame rate' },
+export const BITRATE_LIMITS: { bps: number; label: string }[] = [
+  { bps: 0, label: 'Auto' },
+  { bps: 50e6, label: '50 Mbps' },
+  { bps: 25e6, label: '25 Mbps' },
+  { bps: 12e6, label: '12 Mbps' },
+  { bps: 6e6, label: '6 Mbps' },
 ];
 
 export function planFor(s: StreamSettings): StreamPlan {
-  if (s.mode === 'gaming')
-    return { resolution: 'source', frameRate: 60, contentHint: 'motion', degradation: 'maintain-framerate' };
-  if (s.mode === 'screenshare')
-    return { resolution: 'source', frameRate: 15, contentHint: 'detail', degradation: 'maintain-resolution' };
-  if (s.mode === 'movie')
-    return { resolution: 'p1080', frameRate: 30, contentHint: 'motion', degradation: 'maintain-resolution' };
-  const still = s.frameRate <= 15;
   return {
     resolution: s.resolution,
     frameRate: s.frameRate,
-    contentHint: still ? 'detail' : 'motion',
-    degradation: still || s.resolution === 'source' ? 'maintain-resolution' : 'maintain-framerate',
+    contentHint: 'motion',
+    // Equilibrado: com banda sobrando nunca chega a reduzir; se faltar, divide entre nitidez e fluidez.
+    degradation: 'balanced',
+    maxBitrate: s.maxBitrate,
   };
 }
 
@@ -101,9 +106,9 @@ export function planSize(plan: { resolution: Resolution }): Size {
 
 export function resolutionLabel(r: Resolution): string {
   if (r !== 'source') return `${LADDER[r].height}p`;
-  if (!screenKnown()) return 'Source';
+  if (!screenKnown()) return 'Original';
   const { width, height } = screenSize();
-  return `Source (${width}x${height})`;
+  return `Original (${width}x${height})`;
 }
 
 /** Codecs que o Chrome só oferece com encoder de hardware (não tem versão por software). */
@@ -214,8 +219,14 @@ export function bitrateFor(size: Size, fps: number, codec: Codec): number {
   return Math.min(bitrate, codecCeiling(codec), MAX_BITRATE);
 }
 
+/** Bitrate para o tamanho real, respeitando o teto escolhido pela pessoa. */
+export function cappedBitrate(size: Size, plan: StreamPlan, codec: Codec): number {
+  const b = bitrateFor(size, plan.frameRate, codec);
+  return plan.maxBitrate > 0 ? Math.min(b, plan.maxBitrate) : b;
+}
+
 export function planBitrate(plan: StreamPlan, codec: Codec): number {
-  return bitrateFor(planSize(plan), plan.frameRate, codec);
+  return cappedBitrate(planSize(plan), plan, codec);
 }
 
 export function formatBitrate(bps: number): string {
@@ -228,4 +239,4 @@ export function formatBitrate(bps: number): string {
         : `${Math.round(bps / 1e3)} kbps`;
 }
 
-export const DEFAULT_STREAM: StreamSettings = { mode: 'gaming', resolution: 'p1080', frameRate: 30 };
+export const DEFAULT_STREAM: StreamSettings = { resolution: 'source', frameRate: 60, maxBitrate: 0 };
