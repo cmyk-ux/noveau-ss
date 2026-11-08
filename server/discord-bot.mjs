@@ -113,3 +113,15 @@ export async function pingCall(channelId, byName, link) {
   lastPing.set(channelId, Date.now());
   return people.length;
 }
+
+/** Manda uma mensagem privada (DM) do bot para alguém. */
+export async function sendDm(userId, content) {
+  if (guild() === null) throw new Error('O bot do Discord não está conectado.');
+  try {
+    const user = await client.users.fetch(userId);
+    await user.send({ content, allowedMentions: { parse: [] } });
+  } catch (e) {
+    console.error('[discord] DM falhou:', e.message);
+    throw new Error('Não consegui mandar mensagem privada para essa pessoa (ela pode ter DMs fechadas). Copie o link e mande você.');
+  }
+}

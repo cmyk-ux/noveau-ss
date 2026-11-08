@@ -18,7 +18,7 @@
 //   DISCORD_REDIRECT_URI   opcional; padrão: <endereço do site>/api/discord/callback
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { cachedChannelOf, membersOf, pingCall, startBot } from './discord-bot.mjs';
+import { cachedChannelOf, membersOf, pingCall, sendDm, startBot } from './discord-bot.mjs';
 
 const API = process.env.DISCORD_API_URL || 'https://discord.com/api/v10'; // trocável só para testes
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID ?? '';
@@ -258,4 +258,26 @@ export async function pingMyCall(req) {
   } catch (e) {
     throw new DiscordError(409, e.message);
   }
+}
+
+/**
+ * Para POST /api/discord/invite: o bot manda por DM o link de uma sala privada para alguém
+ * que está na mesma call de quem convida (assim o bot não vira ferramenta de spam).
+ */
+export async function inviteToRoom(req, body) {
+  const { user, call } = await requireCall(req);
+  const people = (await membersOf(call.id)) ?? [];
+  if (typeof body.userId !== 'string' || !people.some((p) => p.id === body.userId)) {
+    throw new DiscordError(400, 'Essa pessoa não está na sua call.');
+  }
+  const origin = siteOrigin(req);
+  if (typeof body.link !== 'string' || !body.link.startsWith(`${origin}/room/`) || body.link.length > 300) {
+    throw new DiscordError(400, 'Link de sala inválido.');
+  }
+  try {
+    await sendDm(body.userId, `**${user.name}** te chamou para uma sala privada no Noveau: ${body.link}`);
+  } catch (e) {
+    throw new DiscordError(409, e.message);
+  }
+  return { ok: true };
 }

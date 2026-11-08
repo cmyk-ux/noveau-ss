@@ -89,3 +89,7 @@ export async function callMembers(): Promise<CallMembers> {
 export function pingCall(): Promise<{ ok: boolean; count: number }> {
   return post('/api/discord/ping', {}, 'Não foi possível avisar a call.');
 }
+
+export function inviteToRoom(userId: string, link: string): Promise<{ ok: boolean }> {
+  return post('/api/discord/invite', { userId, link }, 'Não foi possível convidar.');
+}

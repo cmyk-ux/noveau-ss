@@ -1,8 +1,7 @@
-import { Component, effect, inject, signal } from '@angular/core';
+import { Component, DestroyRef, effect, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { DiscordCall, requestCallToken } from '../core/api';
 import { RoomStore } from '../core/room-store';
-import { slugify } from '../core/link';
 import { RoomScreen } from '../ui/room-screen';
 
 /** Sala da call do Discord: entra direto, sem link nem apelido. */
@@ -47,10 +46,12 @@ export class CallPage {
     // Saiu ou trocou de call no Discord: o servidor tira a pessoa da sala. Volta ao início,
     // que leva para a sala da call nova (se houver).
     let wasConnected = false;
+    let leaving = false;
+    inject(DestroyRef).onDestroy(() => (leaving = true));
     effect(() => {
       const status = this.store.status();
       if (status === 'connected') wasConnected = true;
-      if (wasConnected && status === 'disconnected') void this.router.navigateByUrl('/');
+      if (wasConnected && !leaving && status === 'disconnected') void this.router.navigateByUrl('/');
     });
   }
 
@@ -58,7 +59,7 @@ export class CallPage {
     await this.store.joinWith(async () => {
       const grant = await requestCallToken();
       this.call.set(grant.call);
-      this.label.set(slugify(grant.call.name) || 'call');
+      this.label.set(grant.call.name.trim() || 'call');
       return grant;
     }, null);
   }

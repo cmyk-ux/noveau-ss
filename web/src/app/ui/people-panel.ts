@@ -1,6 +1,7 @@
 import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
-import { DiscordUser, callMembers, pingCall } from '../core/api';
-import { isCallRoom } from '../core/link';
+import { Router } from '@angular/router';
+import { DiscordUser, callMembers, inviteToRoom, pingCall } from '../core/api';
+import { encodeLink, isCallRoom, newKey, randomRoomName } from '../core/link';
 import { RoomStore } from '../core/room-store';
 import { Toast } from '../core/toast';
 import { Icon } from './icon';
@@ -23,7 +24,7 @@ import { VolumeSlider } from './volume-slider';
     <p class="label">na sala</p>
     @for (p of store.participants(); track p.identity) {
       <div class="person" [class.speaking]="p.isSpeaking">
-        <span class="dot"></span>
+        @if (p.avatar) { <img class="avatar" [src]="p.avatar" alt="" width="22" height="22" /> } @else { <span class="dot"></span> }
         <span class="name">{{ p.name }} @if (p.isLocal) {<span class="you">(você)</span>}</span>
         @if (p.micEnabled) { <cen-icon name="mic" [size]="14" /> }
         @if (p.isSharing) { <span class="live">AO VIVO</span> }
@@ -34,21 +35,34 @@ import { VolumeSlider } from './volume-slider';
           (muteToggle)="store.toggleMute('mic', p.identity)" />
       }
     }
-    @if (callRoom) {
-      @if (outside().length > 0) {
-        <p class="label">na call, fora do site</p>
-        @for (m of outside(); track m.id) {
-          <div class="person outside">
-            @if (m.avatar) { <img [src]="m.avatar" alt="" width="20" height="20" /> } @else { <span class="dot"></span> }
-            <span class="name">{{ m.name }}</span>
+
+    @if (outside().length > 0) {
+      <p class="label">{{ callRoom ? 'na call, fora do site' : 'na sua call do Discord' }}</p>
+      @for (m of outside(); track m.id) {
+        <div class="person outside">
+          @if (m.avatar) { <img class="avatar" [src]="m.avatar" alt="" width="22" height="22" /> } @else { <span class="dot"></span> }
+          <span class="name">{{ m.name }}</span>
+          @if (callRoom) {
             <span class="tag">fora</span>
-          </div>
-        }
+          } @else {
+            <button type="button" class="btn small" [disabled]="inviting() === m.id" (click)="invite(m)">
+              {{ inviting() === m.id ? '…' : 'convidar' }}
+            </button>
+          }
+        </div>
       }
-      <button type="button" class="btn small wide ping" [disabled]="pinging()" (click)="ping()">
+      @if (!callRoom) {
+        <p class="hint">O bot manda o link desta sala no privado do Discord da pessoa.</p>
+      }
+    }
+
+    @if (callRoom) {
+      <button type="button" class="btn small wide action" [disabled]="pinging()" (click)="ping()">
         {{ pinging() ? 'Avisando…' : 'Chamar a call no Discord' }}
       </button>
       <p class="hint">O bot marca todo mundo da call no chat do canal de voz com o link do site.</p>
+      <button type="button" class="btn small wide action" (click)="privateRoom()">Abrir uma sala privada</button>
+      <p class="hint">Cria uma sala só com quem você convidar, para passar tela em particular.</p>
     }
     <p class="hint">O ponto acende em quem está falando. Os volumes aqui valem só para você.</p>
   `,
@@ -57,33 +71,43 @@ import { VolumeSlider } from './volume-slider';
     .person { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.6rem; }
     .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .you { color: var(--muted); font-size: 0.85rem; margin-left: 0.25rem; }
-    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--line); flex-shrink: 0; }
+    .dot { width: 8px; height: 8px; margin: 0 7px; border-radius: 50%; background: var(--line); flex-shrink: 0; }
+    .avatar { border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 0 2px transparent; transition: box-shadow 0.15s; }
     .speaking .dot { background: var(--ok); box-shadow: 0 0 0 3px #5cc88a33; }
+    .speaking .avatar { box-shadow: 0 0 0 2px var(--ok); }
     .live { font-size: 0.7rem; font-weight: 700; color: var(--danger); }
     .outside { color: var(--muted); }
-    .outside img { border-radius: 50%; opacity: 0.6; filter: grayscale(1); }
+    .outside .avatar { opacity: 0.6; filter: grayscale(1); }
     .tag { font-size: 0.7rem; border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3rem; }
-    .ping { margin-top: 1rem; }
+    .action { margin-top: 1rem; }
   `,
 })
 export class PeoplePanel {
   protected readonly store = inject(RoomStore);
   private readonly toast = inject(Toast);
+  private readonly router = inject(Router);
   protected readonly callRoom = isCallRoom();
   private readonly members = signal<DiscordUser[]>([]);
   protected readonly pinging = signal(false);
-  /** Quem está na call do Discord mas ainda não abriu o site. */
+  protected readonly inviting = signal<string | null>(null);
+  protected readonly stageSound = computed(() => {
+    const f = this.store.focused();
+    if (f === null || f.isLocal || !f.hasAudio) return null;
+    return { share: f, label: f.isIngress ? f.ownerName : `${f.ownerName} (${f.kind === 'camera' ? 'câmera' : 'tela'})` };
+  });
+  /** Quem está na call do Discord mas não está nesta sala do site. */
   protected readonly outside = computed(() => {
     const inside = new Set(this.store.participants().map((p) => p.discordId));
     return this.members().filter((m) => !inside.has(m.id));
   });
 
   constructor() {
-    if (!this.callRoom) return;
+    // Em qualquer sala, se a pessoa está logada e numa call, mostra quem está na call
+    // (na sala da call para ver quem falta; numa sala privada para convidar).
     const load = () =>
       callMembers()
         .then((r) => this.members.set(r.people))
-        .catch(() => undefined);
+        .catch(() => this.members.set([]));
     void load();
     const timer = setInterval(load, 5000);
     inject(DestroyRef).onDestroy(() => clearInterval(timer));
@@ -100,9 +124,21 @@ export class PeoplePanel {
       this.pinging.set(false);
     }
   }
-  protected readonly stageSound = computed(() => {
-    const f = this.store.focused();
-    if (f === null || f.isLocal || !f.hasAudio) return null;
-    return { share: f, label: f.isIngress ? f.ownerName : `${f.ownerName} (${f.kind === 'camera' ? 'câmera' : 'tela'})` };
-  });
+
+  async invite(m: DiscordUser) {
+    this.inviting.set(m.id);
+    try {
+      await inviteToRoom(m.id, location.href);
+      this.toast.show(`Mandei o link no privado de ${m.name}.`);
+    } catch (e) {
+      this.toast.show(e instanceof Error ? e.message : 'Não foi possível convidar.');
+    } finally {
+      this.inviting.set(null);
+    }
+  }
+
+  privateRoom() {
+    // Sai da sala da call e abre uma sala avulsa nova, com chave própria.
+    void this.router.navigateByUrl(`/room/${randomRoomName()}#${encodeLink({ key: newKey(), secret: '' })}`);
+  }
 }

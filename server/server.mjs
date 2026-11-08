@@ -100,6 +100,7 @@ async function discordToken(req) {
   const { user, call } = await discord.requireCall(req);
   const grant = await grantFor(req, discord.roomForChannel(call.id), cleanName(user.name) || 'alguém', {
     discordId: user.id,
+    ...(user.avatar ? { avatar: user.avatar } : {}),
   });
   return { ...grant, camera: false, call };
 }
@@ -181,6 +182,7 @@ const routes = {
   'POST /api/discord/token': (req) => discordToken(req),
   'GET /api/discord/members': (req) => discord.callMembers(req),
   'POST /api/discord/ping': (req) => discord.pingMyCall(req),
+  'POST /api/discord/invite': (req, body) => discord.inviteToRoom(req, body),
   'POST /api/token': (req, body) => token(req, body),
   'POST /api/camera': (_req, body) => camera(body),
   'POST /api/camera/stop': (_req, body) => stopCamera(body),

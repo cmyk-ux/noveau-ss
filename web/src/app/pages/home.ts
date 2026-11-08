@@ -1,4 +1,4 @@
-import { Component, DestroyRef, ElementRef, inject, signal, viewChild } from '@angular/core';
+import { Component, DestroyRef, ElementRef, computed, inject, signal, viewChild } from '@angular/core';
 import { Router } from '@angular/router';
 import { Me, requiresSecret, whoAmI } from '../core/api';
 import { encodeLink, newKey, randomRoomName, readLink, slugify } from '../core/link';
@@ -20,19 +20,25 @@ import { encodeLink, newKey, randomRoomName, readLink, slugify } from '../core/l
                   <a class="btn small" href="/api/discord/logout">sair</a>
                 </div>
                 @if (m.call; as c) {
-                  <button type="button" class="btn primary wide" (click)="goToCall()">Entrar na sala da call #{{ c.name }}</button>
+                  <button type="button" class="btn primary wide" (click)="goToCall()">Entrar na sala da call {{ c.name }}</button>
                 } @else {
                   <p class="hint">Entre numa call do servidor e esta página te leva para a sala com as mesmas pessoas.</p>
+                }
+                @if (!anon()) {
+                  <button type="button" class="btn wide" (click)="anon.set(true)">Entrar em uma call anônima</button>
+                  <p class="hint">Uma sala fora do Discord, só com quem tiver o link.</p>
                 }
               } @else {
                 <a class="btn wide discord-login" href="/api/discord/login">Entrar com Discord</a>
                 <p class="hint">Quem estiver numa call do servidor entra direto na sala com as mesmas pessoas.</p>
               }
             </div>
-            <p class="label or">ou crie uma sala avulsa</p>
           }
         }
         @if (discordError()) { <p class="error">{{ discordError() }}</p> }
+
+        @if (showForm()) {
+        <p class="label or">call anônima</p>
         <p class="hint">Escolha um nome, mande o link, e quem abrir entra na sala com você.</p>
 
         <div class="field">
@@ -55,6 +61,7 @@ import { encodeLink, newKey, randomRoomName, readLink, slugify } from '../core/l
 
         <p class="error" role="alert">{{ error() }}</p>
         <button type="submit" class="btn primary wide">Criar sala</button>
+        }
       </form>
     </div>
   `,
@@ -78,6 +85,18 @@ export class Home {
   protected readonly error = signal('');
   protected readonly needsSecret = signal(false);
   protected readonly me = signal<Me | null>(null);
+  /** Pessoa pediu a call anônima (fora do Discord). */
+  protected readonly anon = signal(false);
+  /**
+   * O formulário de sala avulsa só aparece depois de entrar com o Discord e pedir a call
+   * anônima. Se o login com Discord não estiver configurado no servidor, aparece direto.
+   */
+  protected readonly showForm = computed(() => {
+    const m = this.me();
+    if (m === null) return false;
+    if (!m.discord) return true;
+    return m.user !== null && this.anon();
+  });
   protected readonly discordError = signal('');
   private timer: ReturnType<typeof setInterval> | undefined;
 

@@ -41,6 +41,8 @@ export interface PersonView {
   volume: Volume;
   /** Id do Discord, nas salas de call. */
   discordId: string | null;
+  /** Foto do Discord, nas salas de call. */
+  avatar: string | null;
 }
 
 export interface RoomSnapshot {
@@ -437,6 +439,7 @@ export class RoomSession {
       canPublish: p.permissions?.canPublish === true,
       volume: this.mixer.read('mic', p.identity),
       discordId: p.attributes?.['discordId'] ?? null,
+      avatar: p.attributes?.['avatar'] ?? null,
     }));
   }
 }
