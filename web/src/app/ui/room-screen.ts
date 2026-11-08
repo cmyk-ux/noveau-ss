@@ -43,12 +43,12 @@ type Tab = 'people' | 'share' | 'devices';
             (click)="prefs.setCursorOn(!prefs.cursorOn())">
             <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M4.2 2.6 19.6 10.3a.8.8 0 0 1-.1 1.5l-6.2 1.9-2.9 5.9a.8.8 0 0 1-1.5-.1L3.1 3.6a.8.8 0 0 1 1.1-1Z"
-                [attr.fill]="prefs.cursorOn() ? prefs.cursorColor() : 'none'" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+                [attr.fill]="prefs.cursorOn() ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
             </svg>
             cursor
           </button>
           @if (prefs.cursorOn()) {
-            <label class="swatch" title="Cor do seu cursor" [style.background]="prefs.cursorColor()">
+            <label class="swatch hover-only" title="Cor do seu cursor" [style.background]="prefs.cursorColor()">
               <input type="color" [value]="prefs.cursorColor()" (input)="prefs.setCursorColor($any($event.target).value)" />
             </label>
           }
@@ -178,6 +178,9 @@ type Tab = 'people' | 'share' | 'devices';
     .cursor-ctl svg { vertical-align: -2px; }
     .swatch { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #fff8; cursor: pointer; position: relative; overflow: hidden; }
     .swatch input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+    /* A cor só aparece passando o mouse no controle do cursor. */
+    .swatch.hover-only { display: none; }
+    .cursor-ctl:hover .swatch.hover-only, .cursor-ctl:focus-within .swatch.hover-only { display: block; }
     .roomname { display: flex; align-items: center; gap: 0.5rem; background: none; border: 0; padding: 0; }
     .status { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
     .status.connected { background: var(--ok); }

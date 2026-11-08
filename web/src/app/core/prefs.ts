@@ -61,7 +61,7 @@ const store = {
     localStorage.setItem('cenaculum:compat', v ? 'yes' : 'no');
   },
   get cursorOn(): boolean {
-    return localStorage.getItem('cenaculum:cursor') !== 'no';
+    return localStorage.getItem('cenaculum:cursor') === 'yes';
   },
   set cursorOn(v: boolean) {
     localStorage.setItem('cenaculum:cursor', v ? 'yes' : 'no');

@@ -271,11 +271,15 @@ export async function inviteToRoom(req, body) {
     throw new DiscordError(400, 'Essa pessoa não está na sua call.');
   }
   const origin = siteOrigin(req);
-  if (typeof body.link !== 'string' || !body.link.startsWith(`${origin}/room/`) || body.link.length > 300) {
+  const toCall = body.link === `${origin}/`;
+  if (typeof body.link !== 'string' || (!toCall && !body.link.startsWith(`${origin}/room/`)) || body.link.length > 300) {
     throw new DiscordError(400, 'Link de sala inválido.');
   }
+  const text = toCall
+    ? `**${user.name}** te chamou para a sala da call no Noveau. Abra e entre com o Discord: ${body.link}`
+    : `**${user.name}** te chamou para uma sala privada no Noveau: ${body.link}`;
   try {
-    await sendDm(body.userId, `**${user.name}** te chamou para uma sala privada no Noveau: ${body.link}`);
+    await sendDm(body.userId, text);
   } catch (e) {
     throw new DiscordError(409, e.message);
   }

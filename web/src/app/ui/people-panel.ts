@@ -42,18 +42,14 @@ import { VolumeSlider } from './volume-slider';
         <div class="person outside">
           @if (m.avatar) { <img class="avatar" [src]="m.avatar" alt="" width="22" height="22" /> } @else { <span class="dot"></span> }
           <span class="name">{{ m.name }}</span>
-          @if (callRoom) {
-            <span class="tag">fora</span>
-          } @else {
-            <button type="button" class="btn small" [disabled]="inviting() === m.id" (click)="invite(m)">
-              {{ inviting() === m.id ? '…' : 'convidar' }}
-            </button>
-          }
+          <span class="tag">fora</span>
+          <button type="button" class="btn small invite" [class.busy]="inviting() === m.id"
+            [disabled]="inviting() === m.id" (click)="invite(m)">
+            {{ inviting() === m.id ? '…' : 'convidar' }}
+          </button>
         </div>
       }
-      @if (!callRoom) {
-        <p class="hint">O bot manda o link desta sala no privado do Discord da pessoa.</p>
-      }
+      <p class="hint">Passe o mouse em alguém para convidar: o bot manda o link no privado do Discord.</p>
     }
 
     @if (callRoom) {
@@ -80,6 +76,9 @@ import { VolumeSlider } from './volume-slider';
     .outside .avatar { opacity: 0.6; filter: grayscale(1); }
     .tag { font-size: 0.7rem; border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3rem; }
     .action { margin-top: 1rem; }
+    .invite { display: none; }
+    .outside:hover .tag { display: none; }
+    .outside:hover .invite, .invite.busy { display: inline-flex; }
   `,
 })
 export class PeoplePanel {
@@ -128,7 +127,9 @@ export class PeoplePanel {
   async invite(m: DiscordUser) {
     this.inviting.set(m.id);
     try {
-      await inviteToRoom(m.id, location.href);
+      // Na sala da call, convida para o site (a pessoa entra com o Discord e cai na call);
+      // numa sala privada, manda o link desta sala.
+      await inviteToRoom(m.id, this.callRoom ? `${location.origin}/` : location.href);
       this.toast.show(`Mandei o link no privado de ${m.name}.`);
     } catch (e) {
       this.toast.show(e instanceof Error ? e.message : 'Não foi possível convidar.');
