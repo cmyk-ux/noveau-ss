@@ -235,5 +235,6 @@ const server = createServer(async (req, res) => {
 server.listen(PORT, () => {
   console.log(`API do Noveau em http://localhost:${PORT} (LiveKit: ${LIVEKIT_HTTP_URL})`);
   if (STATIC_DIR !== '') console.log(`Servindo o site de ${STATIC_DIR}`);
+  console.log(`Endereço do LiveKit que o navegador recebe: ${LIVEKIT_PUBLIC_URL !== '' ? LIVEKIT_PUBLIC_URL : 'ws://<endereço da página>:7880 (LIVEKIT_PUBLIC_URL vazio)'}`);
   console.log(discord.discordEnabled ? 'Login com Discord: ligado' : 'Login com Discord: desligado (faltam DISCORD_* no .env)');
 });
