@@ -154,6 +154,11 @@ export class RoomStore {
     return r === null ? null : this.sampler.readInboundAudio(r);
   }
 
+  /** A sala do LiveKit, para recursos que falam direto por ela (cursores). */
+  get liveRoom() {
+    return this.session.room;
+  }
+
   attachFocused(el: HTMLMediaElement) {
     return this.session.attachFocused(el);
   }

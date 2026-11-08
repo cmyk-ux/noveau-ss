@@ -1,4 +1,5 @@
 import { Component, ElementRef, computed, inject, input, output, signal, viewChild } from '@angular/core';
+import { Prefs } from '../core/prefs';
 import { Invites } from '../core/invites';
 import { isCallRoom, roomUrl } from '../core/link';
 import { formatWatchers } from '../core/room-session';
@@ -36,6 +37,22 @@ type Tab = 'people' | 'share' | 'devices';
           </div>
         }
         <span class="spacer"></span>
+        <div class="cursor-ctl" [class.on]="prefs.cursorOn()">
+          <button type="button" class="btn small" [class.on]="prefs.cursorOn()"
+            [title]="prefs.cursorOn() ? 'Esconder meu cursor da sala' : 'Mostrar meu cursor para a sala'"
+            (click)="prefs.setCursorOn(!prefs.cursorOn())">
+            <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4.2 2.6 19.6 10.3a.8.8 0 0 1-.1 1.5l-6.2 1.9-2.9 5.9a.8.8 0 0 1-1.5-.1L3.1 3.6a.8.8 0 0 1 1.1-1Z"
+                [attr.fill]="prefs.cursorOn() ? prefs.cursorColor() : 'none'" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+            </svg>
+            cursor
+          </button>
+          @if (prefs.cursorOn()) {
+            <label class="swatch" title="Cor do seu cursor" [style.background]="prefs.cursorColor()">
+              <input type="color" [value]="prefs.cursorColor()" (input)="prefs.setCursorColor($any($event.target).value)" />
+            </label>
+          }
+        </div>
         <button type="button" class="btn small" [class.on]="tab() === 'people'" (click)="toggle('people')">
           <cen-icon name="people" [size]="15" /> {{ store.participants().length }}
         </button>
@@ -157,6 +174,10 @@ type Tab = 'people' | 'share' | 'devices';
     .room { position: relative; display: flex; flex-direction: column; height: 100%; }
     .topbar { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 1rem; border-bottom: 1px solid var(--line);
       flex-wrap: wrap; }
+    .cursor-ctl { display: flex; align-items: center; gap: 0.35rem; }
+    .cursor-ctl svg { vertical-align: -2px; }
+    .swatch { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #fff8; cursor: pointer; position: relative; overflow: hidden; }
+    .swatch input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
     .roomname { display: flex; align-items: center; gap: 0.5rem; background: none; border: 0; padding: 0; }
     .status { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
     .status.connected { background: var(--ok); }
@@ -192,6 +213,7 @@ export class RoomScreen {
   protected readonly store = inject(RoomStore);
   private readonly toast = inject(Toast);
   private readonly invites = inject(Invites);
+  protected readonly prefs = inject(Prefs);
   protected readonly canShare = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
   protected readonly tab = signal<Tab | null>(null);
   protected readonly isFullscreen = signal(false);

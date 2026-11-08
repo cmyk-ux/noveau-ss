@@ -60,7 +60,36 @@ const store = {
   set maxCompatibility(v: boolean) {
     localStorage.setItem('cenaculum:compat', v ? 'yes' : 'no');
   },
+  get cursorOn(): boolean {
+    return localStorage.getItem('cenaculum:cursor') !== 'no';
+  },
+  set cursorOn(v: boolean) {
+    localStorage.setItem('cenaculum:cursor', v ? 'yes' : 'no');
+  },
+  get cursorColor(): string {
+    const saved = localStorage.getItem('cenaculum:cursor-color');
+    if (saved !== null && /^#[0-9a-f]{6}$/i.test(saved)) return saved;
+    const color = randomCursorColor();
+    localStorage.setItem('cenaculum:cursor-color', color);
+    return color;
+  },
+  set cursorColor(v: string) {
+    localStorage.setItem('cenaculum:cursor-color', v);
+  },
 };
+
+/** Cor viva aleatória (matiz qualquer, saturação e luz fixas para ler bem no escuro e no claro). */
+function randomCursorColor(): string {
+  const h = Math.random() * 360;
+  const s = 0.85;
+  const l = 0.6;
+  const f = (n: number) => {
+    const k = (n + h / 30) % 12;
+    const c = l - s * Math.min(l, 1 - l) * Math.max(-1, Math.min(k - 3, 9 - k, 1));
+    return Math.round(c * 255).toString(16).padStart(2, '0');
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
 
 @Injectable({ providedIn: 'root' })
 export class Prefs {
@@ -71,6 +100,8 @@ export class Prefs {
   private readonly _showStats = signal(store.showStats);
   private readonly _maxCompatibility = signal(store.maxCompatibility);
   private readonly _volumeHinted = signal(store.volumeHinted);
+  private readonly _cursorOn = signal(store.cursorOn);
+  private readonly _cursorColor = signal(store.cursorColor);
 
   readonly name = this._name.asReadonly();
   readonly stream = this._stream.asReadonly();
@@ -79,6 +110,18 @@ export class Prefs {
   readonly showStats = this._showStats.asReadonly();
   readonly maxCompatibility = this._maxCompatibility.asReadonly();
   readonly volumeHinted = this._volumeHinted.asReadonly();
+  readonly cursorOn = this._cursorOn.asReadonly();
+  readonly cursorColor = this._cursorColor.asReadonly();
+
+  setCursorOn(v: boolean) {
+    store.cursorOn = v;
+    this._cursorOn.set(v);
+  }
+  setCursorColor(v: string) {
+    if (!/^#[0-9a-f]{6}$/i.test(v)) return;
+    store.cursorColor = v;
+    this._cursorColor.set(v);
+  }
 
   setName(v: string) {
     store.name = v;

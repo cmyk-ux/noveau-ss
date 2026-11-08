@@ -1,13 +1,16 @@
 import { Component, ElementRef, effect, inject, signal, viewChild } from '@angular/core';
 import { RoomStore } from '../core/room-store';
 import { Toast } from '../core/toast';
+import { CursorLayer } from './cursor-layer';
 
 const QUALITY_EVERY_MS = 2000;
 
 /** O vídeo da tela em foco. */
 @Component({
   selector: 'cen-stage',
-  template: `<video #video autoplay playsinline muted (resize)="readSource()"></video>`,
+  imports: [CursorLayer],
+  template: `<video #video autoplay playsinline muted (resize)="readSource()"></video>
+    <cen-cursor-layer [source]="source()" />`,
   styles: `
     :host { position: absolute; inset: 0; display: block; }
     video { width: 100%; height: 100%; object-fit: contain; background: #000; }
