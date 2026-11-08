@@ -1,5 +1,5 @@
 // Estado da sala para a interface. Uma instância por página de sala.
-import { DestroyRef, Injectable, computed, inject, signal } from '@angular/core';
+import { DestroyRef, Injectable, computed, effect, inject, signal } from '@angular/core';
 import { CameraAddress, JoinGrant, requestCamera, requestToken, revokeCamera } from './api';
 import { DeviceList, listMicrophones, listWebcams } from './devices';
 import { RoomLink } from './link';
@@ -95,6 +95,11 @@ export class RoomStore {
       void this.session.disconnect();
     });
     this.studio.setLatency(this.prefs.studioLatency());
+    // Som de estúdio segue a mesma regra do som da tela: na grade todas, em foco só a dela.
+    effect(() => {
+      const focus = this.focused()?.id ?? null;
+      this.studio.setAudible((id) => focus === null || focus === id);
+    });
   }
 
   watchersOf(id: string) {
@@ -127,6 +132,15 @@ export class RoomStore {
     }
   }
 
+  unfocus() {
+    this.session.unfocus();
+  }
+  detachShare(id: string, el: HTMLMediaElement) {
+    this.session.detachShare(id, el);
+  }
+  attachShare(id: string, el: HTMLMediaElement) {
+    return this.session.attachShare(id, el);
+  }
   focusShare(id: string) {
     this.session.focusShare(id);
   }
@@ -134,6 +148,7 @@ export class RoomStore {
     await this.session.unlockAudio();
   }
   setVolume(channel: Channel, identity: string, level: number) {
+    if (channel === 'share') this.studio.setVolumeFor(identity, level);
     this.session.setVolume(channel, identity, level);
   }
   toggleMute(channel: Channel, identity: string) {

@@ -2,14 +2,16 @@ import { Component, ElementRef, computed, inject, input, output, signal, viewChi
 import { Prefs } from '../core/prefs';
 import { Invites } from '../core/invites';
 import { isCallRoom, roomUrl } from '../core/link';
-import { formatWatchers } from '../core/room-session';
+import { ShareView, formatWatchers } from '../core/room-session';
 import { RoomStore } from '../core/room-store';
 import { shortLimitation } from '../core/stats';
 import { Toast } from '../core/toast';
 import { DevicesPanel } from './devices-panel';
 import { Icon } from './icon';
 import { PeoplePanel } from './people-panel';
+import { ShareTile } from './share-tile';
 import { Stage } from './stage';
+import { VolumeSlider } from './volume-slider';
 import { StatsPanel } from './stats-panel';
 import { StreamPanel } from './stream-panel';
 
@@ -17,7 +19,7 @@ type Tab = 'people' | 'share' | 'devices';
 
 @Component({
   selector: 'cen-room-screen',
-  imports: [Icon, Stage, StatsPanel, PeoplePanel, StreamPanel, DevicesPanel],
+  imports: [Icon, Stage, ShareTile, VolumeSlider, StatsPanel, PeoplePanel, StreamPanel, DevicesPanel],
   host: { '(document:fullscreenchange)': 'isFullscreen.set(fullscreenActive())', '(keydown.escape)': 'tab.set(null)' },
   template: `
     <div class="room">
@@ -93,13 +95,23 @@ type Tab = 'people' | 'share' | 'devices';
       }
 
       <main #stageArea class="stage-area">
-        @if (store.focused()) {
-          <cen-stage />
+        @if (store.focused(); as f) {
+          <cen-stage (click)="clickFocused()" (contextmenu)="openVolume($event, f)" />
           <div class="corner">
+            @if (store.shares().length > 1) {
+              <button class="btn icon small" title="Ver todas as telas" (click)="store.unfocus()"><cen-icon name="grid" [size]="16" /></button>
+            }
             <button class="btn icon small" title="Janela flutuante" (click)="stage()?.popout()"><cen-icon name="popout" [size]="16" /></button>
             <button class="btn icon small" [title]="isFullscreen() ? 'Sair da tela cheia' : 'Tela cheia'" (click)="toggleFullscreen()">
               <cen-icon [name]="isFullscreen() ? 'fullscreenExit' : 'fullscreen'" [size]="16" />
             </button>
+          </div>
+        } @else if (store.shares().length > 1) {
+          <div class="grid" [style.--cols]="gridCols()">
+            @for (s of store.shares(); track s.id) {
+              <cen-share-tile [share]="s" (click)="store.focusShare(s.id)" (contextmenu)="openVolume($event, s)"
+                [title]="'Clique para focar · botão direito para o volume'" />
+            }
           </div>
         } @else {
           <div class="empty">
@@ -121,7 +133,7 @@ type Tab = 'people' | 'share' | 'devices';
           </div>
         }
         <cen-stats-panel />
-        @if (store.shares().length > 1) {
+        @if (store.shares().length > 1 && store.focused()) {
           <div class="strip">
             @for (s of store.shares(); track s.id) {
               <button type="button" class="btn small" [class.on]="s.id === store.focused()?.id" (click)="store.focusShare(s.id)"
@@ -132,6 +144,19 @@ type Tab = 'people' | 'share' | 'devices';
           </div>
         }
       </main>
+
+      @if (volumeMenu(); as m) {
+        <div class="menu-backdrop" (click)="volumeMenu.set(null)" (contextmenu)="$event.preventDefault(); volumeMenu.set(null)"></div>
+        <div class="volume-menu" [style.left.px]="m.x" [style.top.px]="m.y" (click)="$event.stopPropagation()">
+          <p class="label">volume da tela de {{ m.name }}</p>
+          @if (shareById(m.id); as sh) {
+            <cen-volume [volume]="sh.volume" [label]="'som da tela de ' + m.name"
+              (levelChange)="store.setVolume('share', sh.id, $event)"
+              (muteToggle)="store.toggleMute('share', sh.id)" />
+          }
+          <p class="hint">Vale só para você.</p>
+        </div>
+      }
 
       <footer class="dock">
         <button class="btn icon" [class.off]="!store.micOn()" [title]="store.micOn() ? 'Desligar microfone' : 'Ligar microfone'"
@@ -177,6 +202,12 @@ type Tab = 'people' | 'share' | 'devices';
     .room { position: relative; display: flex; flex-direction: column; height: 100%; }
     .topbar { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 1rem; border-bottom: 1px solid var(--line);
       flex-wrap: wrap; }
+    .grid { position: absolute; inset: 0; padding: 10px; display: grid; gap: 10px;
+      grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); }
+    .menu-backdrop { position: fixed; inset: 0; z-index: 40; }
+    .volume-menu { position: fixed; z-index: 41; width: 260px; padding: 0.6rem 0.8rem; border-radius: 10px;
+      background: var(--surface); border: 1px solid var(--line); box-shadow: 0 10px 30px #0008; }
+    .volume-menu .label { margin: 0 0 0.3rem; }
     .studio-tag { border-color: var(--accent); color: var(--accent); }
     .cursor-ctl { display: flex; align-items: center; gap: 0.35rem; }
     .cursor-ctl svg { vertical-align: -2px; }
@@ -225,6 +256,30 @@ export class RoomScreen {
   protected readonly tab = signal<Tab | null>(null);
   protected readonly isFullscreen = signal(false);
   protected readonly stage = viewChild(Stage);
+  protected readonly volumeMenu = signal<{ id: string; name: string; x: number; y: number } | null>(null);
+  /** Colunas da grade: 2 telas lado a lado, 3-4 em 2x2, 5+ em 3 colunas. */
+  protected readonly gridCols = computed(() => {
+    const n = this.store.shares().length;
+    return n <= 2 ? n : n <= 4 ? 2 : 3;
+  });
+
+  shareById(id: string) {
+    return this.store.shares().find((s) => s.id === id) ?? null;
+  }
+
+  /** Botão direito numa tela: menu com o volume do som dela. */
+  openVolume(e: MouseEvent, s: ShareView) {
+    e.preventDefault();
+    if (s.isLocal) return;
+    const x = Math.min(e.clientX, window.innerWidth - 276);
+    const y = Math.min(e.clientY, window.innerHeight - 140);
+    this.volumeMenu.set({ id: s.id, name: s.ownerName, x, y });
+  }
+
+  /** Clicar na tela em foco volta para a grade (se não estiver usando o cursor, que também clica). */
+  clickFocused() {
+    if (this.store.shares().length > 1 && !this.prefs.cursorOn()) this.store.unfocus();
+  }
   private readonly stageArea = viewChild.required<ElementRef<HTMLElement>>('stageArea');
   protected readonly formatWatchers = formatWatchers;
 

@@ -109,8 +109,13 @@ export function isWaitingForCamera(s: RoomSnapshot, cameraOffered: boolean) {
   return cameraOffered && !s.shares.some((x) => x.isIngress);
 }
 
+/**
+ * Foco: com uma tela só, ela fica em foco. Com várias, o foco fica onde estava; se a tela em
+ * foco sumir, volta para a grade (null), como no Discord.
+ */
 function keepFocus(ids: string[], current: string | null) {
-  return current !== null && ids.includes(current) ? current : (ids[0] ?? null);
+  if (current !== null && ids.includes(current)) return current;
+  return ids.length === 1 ? ids[0] : null;
 }
 
 /** Quando a primeira tela aparece, ela ganha o foco; com várias, o foco fica onde estava. */
@@ -218,6 +223,25 @@ export class RoomSession {
   focusShare(id: string) {
     this.focusedShareId = id;
     this.emit();
+  }
+
+  /** Volta para a grade com todas as telas. */
+  unfocus() {
+    this.focusedShareId = null;
+    this.emit();
+  }
+
+  /** Solta o vídeo de um elemento que vai sumir. */
+  detachShare(id: string, el: HTMLMediaElement) {
+    this.live.find((s) => s.view.id === id)?.publication.track?.detach(el);
+  }
+
+  /** Liga o vídeo de uma tela qualquer (para a grade). */
+  attachShare(id: string, el: HTMLMediaElement): boolean {
+    const track = this.live.find((s) => s.view.id === id)?.publication.track;
+    if (track === undefined) return false;
+    track.attach(el);
+    return true;
   }
 
   setVolume(channel: Channel, identity: string, level: number) {
@@ -396,15 +420,19 @@ export class RoomSession {
     return this.everyone().map((p) => ({ identity: p.identity, watching: watchingOf(p.attributes) }));
   }
 
-  /** Só a tela em foco é recebida, e em alta qualidade. */
+  /**
+   * Com uma tela em foco, só ela é recebida, em alta qualidade. Na grade, todas são recebidas;
+   * até 2 telas em alta, mais que isso em média (cada uma ocupa menos espaço).
+   */
   private followFocus(shares: LiveShare[]) {
-    for (const s of shares) {
-      if (s.view.isLocal) continue;
-      const focused = s.view.id === this.focusedShareId;
+    const grid = this.focusedShareId === null;
+    const remote = shares.filter((s) => !s.view.isLocal);
+    for (const s of remote) {
+      const shown = grid || s.view.id === this.focusedShareId;
       const pub = s.publication as any;
       pub.setSubscribed(true);
-      pub.setEnabled(focused);
-      if (focused) pub.setVideoQuality(VideoQuality.HIGH);
+      pub.setEnabled(shown);
+      if (shown) pub.setVideoQuality(grid && shares.length > 2 ? VideoQuality.MEDIUM : VideoQuality.HIGH);
     }
   }
 
@@ -412,7 +440,8 @@ export class RoomSession {
     for (const p of this.room.remoteParticipants.values()) {
       const id = p.identity;
       this.tune(p, Track.Source.Microphone, this.mixer.read('mic', id), true);
-      this.tune(p, Track.Source.ScreenShareAudio, this.mixer.read('share', id), id === this.focusedShareId);
+      // Na grade, o som de todas as telas toca (cada uma com seu volume); em foco, só a dela.
+      this.tune(p, Track.Source.ScreenShareAudio, this.mixer.read('share', id), this.focusedShareId === null || id === this.focusedShareId);
     }
   }
 

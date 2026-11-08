@@ -143,6 +143,8 @@ export class StudioHub {
   readonly streams = this._streams.asReadonly();
   private latency = 0.25;
   private volume = 1;
+  private readonly perPerson = new Map<string, number>();
+  private audible: (identity: string) => boolean = () => true;
   private readonly onData = (payload: Uint8Array, p?: RemoteParticipant, _k?: unknown, topic?: string) => {
     if (topic === TOPIC && p !== undefined) this.receive(payload, p);
   };
@@ -180,7 +182,26 @@ export class StudioHub {
 
   setVolume(v: number) {
     this.volume = v;
-    for (const pl of this.players.values()) pl.gain.gain.value = v;
+    for (const pl of this.players.values()) this.applyAudible(pl);
+  }
+
+  /** Volume do som de estúdio de uma pessoa (o mesmo controle do volume da tela dela). */
+  setVolumeFor(identity: string, v: number) {
+    this.perPerson.set(identity, v);
+    const pl = this.players.get(identity);
+    if (pl !== undefined) this.applyAudible(pl);
+  }
+
+  /** Só toca o som de estúdio das telas visíveis (como o som normal da tela). */
+  setAudible(isAudible: (identity: string) => boolean) {
+    this.audible = isAudible;
+    for (const pl of this.players.values()) this.applyAudible(pl);
+  }
+
+  private applyAudible(pl: Player) {
+    const on = this.audible(pl.identity);
+    if (on && pl.ctx.state === 'suspended') void pl.ctx.resume();
+    pl.gain.gain.value = on ? this.volume * (this.perPerson.get(pl.identity) ?? 1) : 0;
   }
 
   get currentLatency() {
@@ -220,7 +241,6 @@ export class StudioHub {
   private create(p: RemoteParticipant): Player {
     const ctx = new AudioContext({ sampleRate: RATE, latencyHint: 'playback' });
     const gain = ctx.createGain();
-    gain.gain.value = this.volume;
     gain.connect(ctx.destination);
     const pl: Player = {
       identity: p.identity,
@@ -245,6 +265,7 @@ export class StudioHub {
       },
     };
     this.players.set(p.identity, pl);
+    this.applyAudible(pl);
     void ctx.audioWorklet.addModule(WORKLET_URL).then(() => {
       if (!this.players.has(p.identity)) return;
       const node = new AudioWorkletNode(ctx, 'studio-player', { numberOfInputs: 0, outputChannelCount: [2] });
