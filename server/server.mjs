@@ -88,7 +88,7 @@ async function grantFor(req, room, name, attributes = undefined, device = undefi
     canUpdateOwnMetadata: true,
     canPublishSources: [TrackSource.SCREEN_SHARE, TrackSource.SCREEN_SHARE_AUDIO, TrackSource.CAMERA, TrackSource.MICROPHONE],
   });
-  return { token: await at.toJwt(), url: publicUrl(req), name, canPublish: true, camera: CAMERA_INGRESS };
+  return { token: await at.toJwt(), url: publicUrl(req), name, identity, canPublish: true, camera: CAMERA_INGRESS };
 }
 
 async function token(req, body) {
@@ -106,6 +106,60 @@ async function discordToken(req, body = {}) {
     ...(user.avatar ? { avatar: user.avatar } : {}),
   }, body.device);
   return { ...grant, camera: false, call };
+}
+
+// ---------- Convite de 1 uso (para quem não pode entrar com Discord)
+// Alguém da call gera um link; a primeira pessoa que abrir escolhe um apelido e entra na sala da
+// call. O link fica preso ao navegador dela (pode recarregar a página), e vale por GUEST_TTL_MS.
+// Qualquer pessoa da sala que entrou com Discord pode expulsar o convidado, e aí o link morre.
+const GUEST_TTL_MS = 12 * 3600_000;
+const GUEST_MAX_PER_PERSON = 5;
+/** id -> { room, call: {id, name}, by, byName, expiresAt, holder, identity } */
+const guestInvites = new Map();
+
+function pruneGuests() {
+  const now = Date.now();
+  for (const [id, g] of guestInvites) if (g.expiresAt < now) guestInvites.delete(id);
+}
+
+async function createGuestInvite(req) {
+  const { user, call } = await discord.requireCall(req);
+  pruneGuests();
+  const mine = [...guestInvites.values()].filter((g) => g.by === user.id && g.holder === null).length;
+  if (mine >= GUEST_MAX_PER_PERSON) throw new HttpError(429, `Você já tem ${GUEST_MAX_PER_PERSON} convites sem uso. Espere alguém usar.`);
+  const id = randomBytes(12).toString('base64url');
+  const expiresAt = Date.now() + GUEST_TTL_MS;
+  guestInvites.set(id, { room: discord.roomForChannel(call.id), call, by: user.id, byName: user.name, expiresAt, holder: null, identity: null });
+  console.log(`[convite] ${user.name} criou um convite de 1 uso para ${call.name}`);
+  return { id, expiresAt };
+}
+
+async function guestToken(req, body) {
+  pruneGuests();
+  const g = typeof body.id === 'string' ? guestInvites.get(body.id) : undefined;
+  const holder = typeof body.holder === 'string' && body.holder.length >= 16 && body.holder.length <= 64 ? body.holder : null;
+  if (g === undefined || holder === null || (g.holder !== null && g.holder !== holder)) {
+    throw new HttpError(410, 'Este convite já foi usado, venceu ou foi cancelado. Peça um novo a quem te chamou.');
+  }
+  const name = cleanName(body.name);
+  if (name === '') throw new HttpError(400, 'Digite um apelido.');
+  g.holder = holder;
+  const grant = await grantFor(req, g.room, name, { guest: '1', invitedBy: cleanName(g.byName) || 'alguém' }, body.device);
+  g.identity = grant.identity;
+  return { ...grant, camera: false, call: g.call };
+}
+
+/** Quem está na sala com Discord tira um convidado (e o convite dele deixa de valer). */
+async function kickGuest(req, body) {
+  const { user, call } = await discord.requireCall(req);
+  const room = discord.roomForChannel(call.id);
+  const target = (await rooms.listParticipants(room)).find((p) => p.identity === body.identity);
+  if (target === undefined) throw new HttpError(404, 'Essa pessoa já saiu da sala.');
+  if (target.attributes?.guest !== '1') throw new HttpError(403, 'Só dá para expulsar quem entrou por convite, sem Discord.');
+  for (const [id, g] of guestInvites) if (g.identity === target.identity) guestInvites.delete(id);
+  await rooms.removeParticipant(room, target.identity);
+  console.log(`[convite] ${user.name} expulsou o convidado ${target.name}`);
+  return { ok: true };
 }
 
 async function camera(body) {
@@ -190,6 +244,9 @@ const routes = {
   'GET /api/discord/members': (req) => discord.callMembers(req),
   'POST /api/discord/ping': (req) => discord.pingMyCall(req),
   'POST /api/discord/invite': (req, body) => discord.inviteToRoom(req, body),
+  'POST /api/discord/guest-invite': (req) => createGuestInvite(req),
+  'POST /api/discord/kick': (req, body) => kickGuest(req, body),
+  'POST /api/guest/token': (req, body) => guestToken(req, body),
   'POST /api/token': (req, body) => token(req, body),
   'POST /api/camera': (_req, body) => camera(body),
   'POST /api/camera/stop': (_req, body) => stopCamera(body),

@@ -1,6 +1,6 @@
 import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
-import { DiscordUser, callMembers, inviteToRoom, pingCall } from '../core/api';
+import { DiscordUser, callMembers, createGuestInvite, inviteToRoom, kickGuest, pingCall } from '../core/api';
 import { encodeLink, isCallRoom, newKey, randomRoomName } from '../core/link';
 import { IS_MOBILE } from '../core/device';
 import { Prefs } from '../core/prefs';
@@ -57,6 +57,13 @@ import { VolumeSlider } from './volume-slider';
         @if (p.isLocal ? isMobile : p.mobile) { <cen-icon class="device" name="phone" [size]="14" title="Pelo celular" /> }
         @if (p.micEnabled) { <cen-icon name="mic" [size]="14" /> }
         @if (p.isSharing) { <span class="live">AO VIVO</span> }
+        @if (p.guest) { <span class="tag" [title]="'Sem Discord. Convidado por ' + (p.invitedBy ?? 'alguém')">convidado</span> }
+        @if (p.guest && !p.isLocal && iAmDiscord()) {
+          <button type="button" class="btn small kick" [class.danger]="kicking() === p.identity"
+            [title]="'Tirar ' + p.name + ' da sala (o convite deixa de valer)'" (click)="kick(p.identity, p.name)">
+            {{ kicking() === p.identity ? 'confirmar' : 'expulsar' }}
+          </button>
+        }
       </div>
       @if (p.myOtherDevice) {
         <p class="hint other">Seu outro aparelho. A voz dele não toca aqui, para não dar eco. Ligar o microfone num desliga no outro.</p>
@@ -83,7 +90,11 @@ import { VolumeSlider } from './volume-slider';
       <p class="hint">{{ isMobile ? 'Toque em convidar' : 'Passe o mouse em alguém para convidar' }}: o bot manda o link no privado do Discord.</p>
     }
 
-    @if (callRoom) {
+    @if (callRoom && iAmDiscord()) {
+      <button type="button" class="btn small wide action" [disabled]="makingGuest()" (click)="guestInvite()">
+        {{ makingGuest() ? 'Criando…' : 'Convite de 1 uso (sem Discord)' }}
+      </button>
+      <p class="hint">Gera um link que só uma pessoa usa. Ela escolhe um apelido e entra nesta sala. Qualquer um daqui com Discord pode expulsar.</p>
       <button type="button" class="btn small wide action" [disabled]="pinging()" (click)="ping()">
         {{ pinging() ? 'Avisando…' : 'Chamar a call no Discord' }}
       </button>
@@ -120,6 +131,7 @@ import { VolumeSlider } from './volume-slider';
     @media (hover: none) { .outside .tag { display: none; } .outside .invite { display: inline-flex; } }
     .device { color: var(--muted); flex-shrink: 0; }
     .other { margin: 0.1rem 0 0.5rem 1.9rem; }
+    .kick { height: 22px; padding: 0 0.5rem; font-size: 0.72rem; }
   `,
 })
 export class PeoplePanel {
@@ -128,6 +140,53 @@ export class PeoplePanel {
   private readonly router = inject(Router);
   protected readonly callRoom = isCallRoom();
   protected readonly isMobile = IS_MOBILE;
+  /** Entrei com Discord (convidado não gera convite nem expulsa ninguém). */
+  protected readonly iAmDiscord = computed(() => this.store.participants().some((p) => p.isLocal && p.discordId !== null));
+  protected readonly makingGuest = signal(false);
+  protected readonly kicking = signal<string | null>(null);
+  private kickTimer?: number;
+
+  async guestInvite() {
+    this.makingGuest.set(true);
+    try {
+      const { id } = await createGuestInvite();
+      const link = `${location.origin}/call#convite=${id}`;
+      let copied = false;
+      try {
+        await navigator.clipboard.writeText(link);
+        copied = true;
+      } catch {
+        /* sem permissão de copiar */
+      }
+      if (!copied && 'share' in navigator) {
+        await navigator.share({ title: 'Convite para a call', url: link }).catch(() => undefined);
+      } else if (!copied) {
+        window.prompt('Copie o convite:', link);
+      }
+      if (copied) this.toast.show('Convite de 1 uso copiado. Vale por 12 h ou até alguém usar.');
+    } catch (e) {
+      this.toast.show(e instanceof Error ? e.message : 'Não foi possível criar o convite.');
+    } finally {
+      this.makingGuest.set(false);
+    }
+  }
+
+  /** Primeiro clique arma, o segundo (em até 3 s) expulsa. */
+  async kick(identity: string, name: string) {
+    window.clearTimeout(this.kickTimer);
+    if (this.kicking() !== identity) {
+      this.kicking.set(identity);
+      this.kickTimer = window.setTimeout(() => this.kicking.set(null), 3000);
+      return;
+    }
+    this.kicking.set(null);
+    try {
+      await kickGuest(identity);
+      this.toast.show(`${name} saiu da sala. O convite dele não vale mais.`);
+    } catch (e) {
+      this.toast.show(e instanceof Error ? e.message : 'Não foi possível expulsar.');
+    }
+  }
   private readonly members = signal<DiscordUser[]>([]);
   protected readonly pinging = signal(false);
   protected readonly inviting = signal<string | null>(null);
@@ -159,7 +218,10 @@ export class PeoplePanel {
     // Em qualquer sala, se a pessoa está logada e numa call, mostra quem está na call
     // (na sala da call para ver quem falta; numa sala privada para convidar).
     const load = () =>
-      callMembers()
+      // Convidado (sem Discord) não tem call para olhar.
+      this.store.participants().some((p) => p.isLocal && p.guest)
+        ? Promise.resolve()
+        : callMembers()
         .then((r) => this.members.set(r.people))
         .catch(() => this.members.set([]));
     void load();

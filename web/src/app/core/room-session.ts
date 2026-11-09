@@ -52,6 +52,10 @@ export interface PersonView {
   mobile: boolean;
   /** Outro aparelho da mesma conta do Discord (ex.: eu no PC e no celular). */
   myOtherDevice: boolean;
+  /** Entrou por convite de 1 uso, sem Discord. */
+  guest: boolean;
+  /** Quem chamou o convidado. */
+  invitedBy: string | null;
 }
 
 export interface RoomSnapshot {
@@ -597,6 +601,8 @@ export class RoomSession {
       avatar: p.attributes?.['avatar'] ?? null,
       mobile: p.attributes?.['device'] === 'mobile',
       myOtherDevice: this.isMyOtherDevice(p),
+      guest: p.attributes?.['guest'] === '1',
+      invitedBy: p.attributes?.['invitedBy'] ?? null,
     }));
   }
 }
