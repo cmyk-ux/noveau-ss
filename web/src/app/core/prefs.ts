@@ -47,11 +47,13 @@ const store = {
   set shareAudio(v: boolean) {
     localStorage.setItem('cenaculum:audio', v ? 'yes' : 'no');
   },
+  // Clipes como no Discord: sempre guardando os últimos 2 min da tela em foco (chave nova para
+  // ligar também para quem tinha desligado no botão antigo).
   get clips(): boolean {
-    return localStorage.getItem('cenaculum:clips') === '1';
+    return localStorage.getItem('noveau:clips') !== 'off';
   },
   set clips(v: boolean) {
-    localStorage.setItem('cenaculum:clips', v ? '1' : '0');
+    localStorage.setItem('noveau:clips', v ? 'on' : 'off');
   },
   get showStats(): boolean {
     return localStorage.getItem('cenaculum:stats') === 'yes';
