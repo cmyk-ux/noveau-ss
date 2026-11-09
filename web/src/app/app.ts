@@ -8,7 +8,10 @@ import { Toast } from './core/toast';
   template: `
     <router-outlet />
     @if (toast.message(); as message) {
-      <div class="toast" role="status">{{ message }}</div>
+      <div class="toast" role="status">
+        {{ message }}
+        @if (toast.action(); as a) { <button type="button" class="undo" (click)="toast.runAction()">{{ a.label }}</button> }
+      </div>
     }
   `,
   styles: `
@@ -20,7 +23,11 @@ import { Toast } from './core/toast';
       -webkit-mask: radial-gradient(4px at 50% 100%, #0000 98%, #000) 50% 100% / 10px 100% repeat-x;
       mask: radial-gradient(4px at 50% 100%, #0000 98%, #000) 50% 100% / 10px 100% repeat-x;
       animation: print 340ms steps(8) both;
+      display: flex; align-items: center; gap: 0.9rem;
     }
+    .undo { all: unset; cursor: pointer; font: 600 0.8rem var(--mono); text-transform: uppercase; letter-spacing: 0.08em;
+      padding: 0.15rem 0.5rem; border: 1px solid #1d1b17; border-radius: 2px; }
+    .undo:hover { background: #1d1b17; color: #ddd6c6; }
   `,
 })
 export class App {

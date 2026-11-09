@@ -119,9 +119,10 @@ export class RoomStore {
       this.hintVolume(s);
     });
     const leave = () => void this.session.disconnect();
-    window.addEventListener('beforeunload', leave);
+    // 'pagehide' e não 'beforeunload': baixar um clipe dispara 'beforeunload' sem sair da página.
+    window.addEventListener('pagehide', leave);
     inject(DestroyRef).onDestroy(() => {
-      window.removeEventListener('beforeunload', leave);
+      window.removeEventListener('pagehide', leave);
       offChange();
       this.watch?.stop();
       this.daw.stop();

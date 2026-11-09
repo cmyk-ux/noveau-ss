@@ -68,6 +68,11 @@ set(FORMATS VST3 Standalone)
 if(APPLE)
   list(APPEND FORMATS AU)
 endif()
+# AAX (Pro Tools): o SDK vem dentro da JUCE (licença GPLv3 ou comercial da Avid). Sem a assinatura
+# PACE/iLok ele só abre no "Pro Tools Developer"; veja docs/PLUGIN-DAW.md.
+if(WIN32 OR APPLE)
+  list(APPEND FORMATS AAX)
+endif()
 
 juce_add_plugin(NoveauDAW
   COMPANY_NAME "noveau"
@@ -85,6 +90,7 @@ juce_add_plugin(NoveauDAW
   EDITOR_WANTS_KEYBOARD_FOCUS TRUE
   COPY_PLUGIN_AFTER_BUILD FALSE
   VST3_CATEGORIES Fx Tools Network
+  AAX_CATEGORY AAX_ePlugInCategory_Effect
   AU_MAIN_TYPE kAudioUnitType_Effect)
 
 target_sources(NoveauDAW PRIVATE

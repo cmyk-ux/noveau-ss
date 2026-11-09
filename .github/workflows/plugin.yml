@@ -69,6 +69,7 @@ jobs:
           New-Item -ItemType Directory $out | Out-Null
           Copy-Item -Recurse "build/NoveauDAW_artefacts/Release/VST3/noveau DAW.vst3" $out
           Copy-Item "build/NoveauDAW_artefacts/Release/Standalone/noveau DAW.exe" $out
+          Copy-Item -Recurse "build/NoveauDAW_artefacts/Release/AAX/noveau DAW.aaxplugin" $out
           Copy-Item plugin/LEIA-ME.txt $out
           Compress-Archive -Path "$out/*" -DestinationPath "$out.zip"
 
@@ -80,9 +81,10 @@ jobs:
           cp -R "build/NoveauDAW_artefacts/Release/VST3/noveau DAW.vst3" "$out/"
           cp -R "build/NoveauDAW_artefacts/Release/AU/noveau DAW.component" "$out/"
           cp -R "build/NoveauDAW_artefacts/Release/Standalone/noveau DAW.app" "$out/"
+          cp -R "build/NoveauDAW_artefacts/Release/AAX/noveau DAW.aaxplugin" "$out/"
           cp plugin/LEIA-ME.txt "$out/"
           # Sem conta paga da Apple: assinatura "ad hoc" (o Apple Silicon exige alguma assinatura).
-          for f in "$out"/*.vst3 "$out"/*.component "$out"/*.app; do codesign --force --deep -s - "$f"; done
+          for f in "$out"/*.vst3 "$out"/*.component "$out"/*.app "$out"/*.aaxplugin; do codesign --force --deep -s - "$f"; done
           ditto -c -k --keepParent "$out" "$out.zip"
 
       - uses: actions/upload-artifact@v4

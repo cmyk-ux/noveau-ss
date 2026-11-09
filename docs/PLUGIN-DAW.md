@@ -66,7 +66,12 @@ tem licença comercial. VST3 é MIT desde a versão 3.8 do SDK (out/2025).
 
 ## Limites conhecidos
 
-- Pro Tools (AAX) não está incluso: exige conta e assinatura da Avid/PACE.
+- Pro Tools (AAX): compilado (o SDK vem na JUCE, GPLv3), mas **sem assinatura** só abre no Pro Tools
+  Developer. Para o Pro Tools comum: criar conta em developer.avid.com/aax, pedir as ferramentas de
+  assinatura (e-mail para audiosdk@avid.com, assunto "PACE Eden Signing Tools Request", com descrição
+  do plugin e um vídeo), ter uma conta iLok, e então assinar com o `wraptool` da PACE.
+- VST2 (o "VST" antigo): a Steinberg não dá mais licença do SDK do VST2 para quem não tinha contrato
+  até 2018, e o SDK MIT de 2025 é só do VST3. Toda DAW atual abre VST3.
 - CLAP não está incluso (VST3 cobre Bitwig e Reaper). Dá para adicionar com `clap-juce-extensions`.
 - O plugin só manda; ouvir a sala de volta dentro da DAW seria um segundo plugin.
 - O macOS é assinado "ad hoc": na primeira vez precisa do `xattr` do LEIA-ME.

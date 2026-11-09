@@ -99,8 +99,8 @@ export class CallPage {
     let wasConnected = false;
     let leaving = false;
     inject(DestroyRef).onDestroy(() => (leaving = true));
-    // Recarregar/fechar a aba também desconecta: isso não é ser expulso.
-    window.addEventListener('beforeunload', () => (leaving = true), { once: true });
+    // Recarregar/fechar a aba também desconecta: isso não é ser expulso. Só 'pagehide': o
+    // 'beforeunload' também dispara ao baixar um clipe, sem sair da página.
     window.addEventListener('pagehide', () => (leaving = true), { once: true });
     effect(() => {
       const status = this.store.status();
