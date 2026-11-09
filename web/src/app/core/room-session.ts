@@ -364,6 +364,19 @@ export class RoomSession {
     return (await track?.getRTCStatsReport()) ?? null;
   }
 
+  /** Faixas cruas da tela em foco (vídeo e o som dela), para o gravador de clipes. */
+  focusedMedia(): { id: string; video: MediaStreamTrack; audio: MediaStreamTrack | null; name: string; local: boolean } | null {
+    const f = this.focusedLive();
+    const video = f?.publication.track?.mediaStreamTrack;
+    if (f === undefined || video === undefined) return null;
+    const owner = f.view.isLocal ? this.room.localParticipant : this.room.remoteParticipants.get(f.view.ownerIdentity);
+    const audio =
+      f.view.kind === 'camera' && !f.view.isIngress
+        ? null
+        : (owner?.getTrackPublication(Track.Source.ScreenShareAudio)?.track?.mediaStreamTrack ?? null);
+    return { id: f.view.id, video, audio, name: f.view.isLocal ? 'minha-tela' : f.view.ownerName, local: f.view.isLocal };
+  }
+
   private focusedLive() {
     return this.live.find((s) => s.view.id === this.focusedShareId);
   }

@@ -202,6 +202,11 @@ export interface OutboundVideo {
   scalabilityMode: string;
   limitation: Limitation;
   resolutionChanges: number;
+  /** Quadros 2,5x maiores que a média (mudança brusca de cena: menu, tela preta). */
+  hugeFrames: number;
+  /** Pedidos de quadro-chave de quem assiste (perdeu pacote e precisou recomeçar). */
+  keyRequests: number;
+  keyFrames: number;
 }
 export interface InboundVideo {
   width: number;
@@ -215,6 +220,7 @@ export interface InboundVideo {
   framesDropped: number;
   freezeCount: number;
   freezeSeconds: number;
+  keyRequests: number;
   jitterMs: number;
 }
 export interface AudioReading {
@@ -253,6 +259,9 @@ export class StatsSampler {
       scalabilityMode: text(s, 'scalabilityMode'),
       limitation: asLimitation(s.qualityLimitationReason),
       resolutionChanges: num(s, 'qualityLimitationResolutionChanges'),
+      hugeFrames: num(s, 'hugeFramesSent'),
+      keyRequests: num(s, 'pliCount') + num(s, 'firCount'),
+      keyFrames: num(s, 'keyFramesEncoded'),
     };
   }
 
@@ -305,6 +314,7 @@ export class StatsSampler {
         framesDropped: num(s, 'framesDropped'),
         freezeCount: num(s, 'freezeCount'),
         freezeSeconds: Math.round(num(s, 'totalFreezesDuration') * 10) / 10,
+        keyRequests: num(s, 'pliCount') + num(s, 'firCount'),
         jitterMs: Math.round(num(s, 'jitter') * 1e3),
       };
     }

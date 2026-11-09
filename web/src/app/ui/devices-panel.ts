@@ -76,9 +76,9 @@ import { Icon } from './icon';
     .dev { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .btn { margin-top: 0.6rem; }
     .copy { display: block; width: 100%; text-align: left; padding: 0.45rem 0.6rem; border-radius: 5px;
-      border: 1px solid var(--line-2); background: #09080c; box-shadow: inset 0 1px 4px #000a; font-size: 0.78rem;
+      border: 1px solid #0b0b0c; background: var(--well); box-shadow: var(--inset); font-size: 0.78rem;
       word-break: break-all; }
-    .copy:hover { border-color: var(--accent); }
+    .copy:hover { color: var(--accent-hi); }
     .live { color: var(--ok); margin-left: 0.5rem; }
   `,
 })

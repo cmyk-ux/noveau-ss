@@ -24,8 +24,9 @@ import { fileURLToPath } from 'node:url';
 const ENV_FILE = fileURLToPath(new URL('../.env', import.meta.url));
 if (existsSync(ENV_FILE)) process.loadEnvFile(ENV_FILE);
 
-const { AccessToken, IngressClient, IngressInput, RoomServiceClient, TrackSource } = await import('livekit-server-sdk');
+const { AccessToken, IngressClient, IngressInput, RoomServiceClient, TokenVerifier, TrackSource } = await import('livekit-server-sdk');
 const discord = await import('./discord.mjs');
+const clips = await import('./clips.mjs');
 
 const PORT = Number(process.env.PORT ?? 3001);
 const API_KEY = process.env.LIVEKIT_API_KEY ?? 'devkey';
@@ -177,7 +178,11 @@ function send(res, status, data) {
 }
 
 const routes = {
-  'GET /api/config': async () => ({ requiresSecret: INSTANCE_SECRET !== '', discord: discord.discordEnabled }),
+  'GET /api/config': async () => ({
+    requiresSecret: INSTANCE_SECRET !== '',
+    discord: discord.discordEnabled,
+    clips: clips.clipsEnabled ? { ttlMs: clips.CLIP_TTL_MS } : null,
+  }),
   'GET /api/me': (req) => discord.me(req),
   'POST /api/discord/token': (req) => discordToken(req),
   'GET /api/discord/members': (req) => discord.callMembers(req),
@@ -212,8 +217,41 @@ const redirects = {
   'GET /api/discord/logout': discord.logout,
 };
 
+/** Quem manda clipe precisa estar numa sala: prova com o próprio token do LiveKit. */
+const verifier = new TokenVerifier(API_KEY, API_SECRET);
+async function roomMember(req) {
+  const auth = String(req.headers.authorization ?? '');
+  if (!auth.startsWith('Bearer ')) throw new clips.ClipError(401, 'Entre numa sala para clipar.');
+  try {
+    const claims = await verifier.verify(auth.slice(7));
+    return { identity: claims.sub ?? 'anon', name: claims.name ?? '' };
+  } catch {
+    throw new clips.ClipError(401, 'Sessão da sala expirou. Recarregue a página.');
+  }
+}
+
+async function clipRoute(req, res, path) {
+  try {
+    if (req.method === 'POST' && path === '/api/clips') {
+      const who = await roomMember(req);
+      const name = decodeURIComponent(String(req.headers['x-clip-name'] ?? ''));
+      return send(res, 200, await clips.uploadClip(req, who.identity, name));
+    }
+    const m = /^\/api\/clips\/([\w-]+)$/.exec(path);
+    if (req.method === 'DELETE' && m !== null) {
+      return send(res, 200, await clips.deleteClip(m[1], String(req.headers['x-clip-token'] ?? '')));
+    }
+    return send(res, 404, { error: 'Não encontrado.' });
+  } catch (e) {
+    const status = e instanceof clips.ClipError ? e.status : 500;
+    if (status === 500) console.error('[clipes]', e);
+    if (!res.headersSent) send(res, status, { error: status === 500 ? 'Não foi possível guardar o clipe.' : e.message });
+  }
+}
+
 const server = createServer(async (req, res) => {
   const path = new URL(req.url, 'http://x').pathname;
+  if (path === '/api/clips' || path.startsWith('/api/clips/')) return clipRoute(req, res, path);
   const redirectRoute = redirects[`${req.method} ${path}`];
   if (redirectRoute !== undefined) return redirectRoute(req, res);
   const route = routes[`${req.method} ${path}`];
@@ -237,4 +275,7 @@ server.listen(PORT, () => {
   if (STATIC_DIR !== '') console.log(`Servindo o site de ${STATIC_DIR}`);
   console.log(`Endereço do LiveKit que o navegador recebe: ${LIVEKIT_PUBLIC_URL !== '' ? LIVEKIT_PUBLIC_URL : 'ws://<endereço da página>:7880 (LIVEKIT_PUBLIC_URL vazio)'}`);
   console.log(discord.discordEnabled ? 'Login com Discord: ligado' : 'Login com Discord: desligado (faltam DISCORD_* no .env)');
+  console.log(clips.clipsEnabled ? 'Clipes: ligados (Cloudflare R2)' : 'Clipes: desligados (faltam R2_* no .env)');
 });
+// Clipes grandes demoram para subir: não corta a conexão no meio.
+server.requestTimeout = 10 * 60_000;

@@ -43,6 +43,12 @@ const store = {
   set shareAudio(v: boolean) {
     localStorage.setItem('cenaculum:audio', v ? 'yes' : 'no');
   },
+  get clips(): boolean {
+    return localStorage.getItem('cenaculum:clips') === '1';
+  },
+  set clips(v: boolean) {
+    localStorage.setItem('cenaculum:clips', v ? '1' : '0');
+  },
   get showStats(): boolean {
     return localStorage.getItem('cenaculum:stats') === 'yes';
   },
@@ -119,6 +125,9 @@ export class Prefs {
   private readonly _codec = signal(store.codec);
   private readonly _shareAudio = signal(store.shareAudio);
   private readonly _showStats = signal(store.showStats);
+  private readonly _clips = signal(store.clips);
+  /** Guardar os últimos 2 min da tela em foco para poder clipar. */
+  readonly clips = this._clips.asReadonly();
   private readonly _maxCompatibility = signal(store.maxCompatibility);
   private readonly _volumeHinted = signal(store.volumeHinted);
   private readonly _adaptToLoad = signal(store.adaptToLoad);
@@ -179,6 +188,11 @@ export class Prefs {
     store.shareAudio = v;
     this._shareAudio.set(v);
   }
+  setClips(v: boolean) {
+    store.clips = v;
+    this._clips.set(v);
+  }
+
   setShowStats(v: boolean) {
     store.showStats = v;
     this._showStats.set(v);

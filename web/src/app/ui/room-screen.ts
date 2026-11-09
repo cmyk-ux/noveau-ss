@@ -31,20 +31,20 @@ function timecode(ms: number): string {
     '(document:fullscreenchange)': 'isFullscreen.set(fullscreenActive())',
     '(document:keydown.escape)': 'closeAll()',
     '(document:pointerdown)': 'outside($event)',
+    '(document:keydown.alt.c)': 'clip()',
   },
   template: `
     <div class="room">
       <header class="topbar">
         <div class="brand">
-          <cen-icon name="logo" [size]="22" class="mark" />
+          <img class="mark pixel" src="logo.svg" alt="Noveau" width="32" height="32" />
           @if (callRoom) {
             <span class="roomname" [title]="'Sala da call ' + label()">{{ label() }}</span>
           } @else {
             <button type="button" class="roomname" [title]="chipTitle()" (click)="copyInvite()">{{ label() }}</button>
           }
-          <span class="deck mono" [title]="statusText()">
-            <span class="led" [class]="ledClass()"></span>{{ clock() }}
-          </span>
+          <span class="led" [class]="ledClass()" [title]="statusText()"></span>
+          <span class="lcd" [title]="statusText()">{{ clock() }}</span>
         </div>
 
         @if (store.focused(); as f) {
@@ -122,6 +122,16 @@ function timecode(ms: number): string {
           <cen-stage (click)="clickFocused()" (contextmenu)="openVolume($event, f)" />
           <div class="viewfinder" aria-hidden="true"></div>
           <div class="corner">
+            @if (store.canClip()) {
+              @if (prefs.clips()) {
+                <button class="btn small ghost buf" [title]="'Guardando os últimos 2 min' + (store.clips.size() ? ' (' + store.clips.size() + ')' : '') + '. Clique para desligar.'"
+                  (click)="prefs.setClips(false)"><span class="led" [class.bad]="store.clips.buffered() > 0"></span><span class="mono">{{ mmss(store.clips.buffered()) }}</span></button>
+                <button class="btn small ghost" title="Clipar os últimos 2 min (Alt+C)" (click)="clip()"><cen-icon name="scissors" [size]="15" /> clipar</button>
+              } @else {
+                <button class="btn small ghost" title="Começa a guardar os últimos 2 min desta tela para você poder clipar" (click)="prefs.setClips(true)">
+                  <cen-icon name="scissors" [size]="15" /> clipes</button>
+              }
+            }
             @if (store.shares().length > 1) {
               <button class="btn icon small ghost" title="Ver todas as telas" (click)="store.unfocus()"><cen-icon name="grid" [size]="16" /></button>
             }
@@ -139,7 +149,7 @@ function timecode(ms: number): string {
           </div>
         } @else {
           <div class="empty">
-            <div class="testcard card marks">
+            <div class="testcard card screws">
               <div class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
               <p class="nosignal mono"><span class="led warn"></span>{{ store.waitingForCamera() ? 'aguardando câmera' : 'sem sinal' }}</p>
               <h2>{{ store.waitingForCamera() ? 'Esperando a câmera.' : 'Ninguém está compartilhando.' }}</h2>
@@ -186,6 +196,37 @@ function timecode(ms: number): string {
             </button>
           }
           <p class="hint">Vai até 200%. Vale só para você.</p>
+        </div>
+      }
+
+      @if (store.clips.items().length > 0) {
+        <div class="shelf">
+          @for (c of store.clips.items(); track c.id) {
+            <div class="clip panel-surface">
+              <div class="clip-head">
+                <span class="label">clipe · {{ c.name }}</span>
+                @if (c.seconds) { <span class="mono dim">{{ mmss(c.seconds) }} · {{ (c.mb ?? 0) < 10 ? c.mb?.toFixed(1) : c.mb?.toFixed(0) }} MB</span> }
+              </div>
+              @switch (c.state) {
+                @case ('saving') { <p class="hint">Montando o vídeo…</p> }
+                @case ('uploading') {
+                  <div class="meter"><i [style.width.%]="c.progress * 100"></i></div>
+                  <p class="hint mono">enviando {{ (c.progress * 100).toFixed(0) }}%</p>
+                }
+                @case ('ready') {
+                  <div class="clip-actions">
+                    <a class="btn small primary" [href]="c.url" rel="noopener"><cen-icon name="download" [size]="15" /> baixar</a>
+                    <span class="mono countdown" title="Depois disso o clipe é apagado">{{ left(c.expiresAt) }}</span>
+                    <button class="btn small" title="Apagar agora do servidor" (click)="store.clips.remove(c)"><cen-icon name="trash" [size]="14" /> apagar</button>
+                  </div>
+                }
+                @case ('failed') {
+                  <p class="error">{{ c.error }}</p>
+                  <button class="btn small" (click)="store.clips.dismiss(c)">fechar</button>
+                }
+              }
+            </div>
+          }
         </div>
       }
 
@@ -256,20 +297,18 @@ function timecode(ms: number): string {
     /* ---------- barra de cima */
     .topbar { display: flex; align-items: center; gap: 0.9rem; padding: 0.5rem 0.9rem; min-height: 52px; flex-wrap: wrap;
       border-bottom: 1px solid var(--line); box-shadow: 0 1px 0 #000;
-      background: linear-gradient(180deg, #16131c, #0f0d13), var(--grain); background-size: auto, 160px 160px; }
+      background-color: var(--chassis); background-image: var(--grain), var(--brushed); background-size: 160px 160px, auto;
+      box-shadow: inset 0 -1px 0 rgb(255 255 255 / 0.04), 0 1px 0 #000; }
     .brand { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
-    .mark { color: var(--accent-hi); filter: drop-shadow(0 0 6px var(--accent-glow)); }
+    .mark { width: 32px; height: 32px; display: block; }
     .roomname { font-family: var(--display); font-style: italic; font-size: 1.3rem; line-height: 1; background: none; border: 0;
       padding: 0; max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     button.roomname:hover { color: var(--accent-hi); }
-    .deck { display: inline-flex; align-items: center; gap: 0.4rem; height: 22px; padding: 0 0.5rem; border-radius: 4px;
-      background: #07060a; border: 1px solid var(--line); box-shadow: inset 0 1px 3px #000c; font-size: 0.72rem;
-      color: var(--muted); letter-spacing: 0.06em; }
     .now { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.9rem; min-width: 0;
       padding-left: 0.9rem; border-left: 1px solid var(--line); animation: slide-in 260ms var(--ease) both; }
     .onair { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.14em; color: #fff; background: var(--danger);
-      padding: 1px 6px; border-radius: 3px; box-shadow: 0 0 12px -2px var(--danger); }
-    .now.mine .onair { background: var(--accent); box-shadow: 0 0 12px -2px var(--accent); }
+      padding: 2px 6px; border-radius: 1px; }
+    .now.mine .onair { background: var(--accent); }
     .eye { display: inline-flex; align-items: center; gap: 0.25rem; color: var(--muted); font-size: 0.78rem; }
     .spacer { flex: 1; }
     .cursor-ctl { display: flex; align-items: center; gap: 0.35rem; }
@@ -282,18 +321,18 @@ function timecode(ms: number): string {
     /* ---------- avisos: fita de atenção */
     .banner { display: flex; align-items: center; gap: 0.8rem; padding: 0.5rem 0.9rem; font-size: 0.86rem;
       border-bottom: 1px solid var(--line); animation: unfold-down 240ms var(--ease) both;
-      background: repeating-linear-gradient(-45deg, rgb(255 181 74 / 0.06) 0 10px, transparent 10px 20px), var(--surface); }
+      background: repeating-linear-gradient(-45deg, rgb(208 154 58 / 0.07) 0 10px, transparent 10px 20px), var(--surface); }
     .banner .msg { flex: 1; }
-    .flag { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.14em; color: #120d05; background: var(--warn);
+    .flag { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.14em; color: #1a1408; background: var(--warn);
       padding: 1px 6px; border-radius: 3px; }
-    .banner.danger { background: repeating-linear-gradient(-45deg, rgb(255 74 61 / 0.1) 0 10px, transparent 10px 20px), var(--surface); }
+    .banner.danger { background: repeating-linear-gradient(-45deg, rgb(196 73 60 / 0.1) 0 10px, transparent 10px 20px), var(--surface); }
     .banner.danger .flag { background: var(--danger); color: #fff; }
 
     /* ---------- palco */
     .stage-area { position: relative; flex: 1; min-height: 0; background: #000; touch-action: pan-x pan-y; overscroll-behavior: none; }
     /* Cantos de visor de câmera; aparecem com o mouse por cima. */
     .viewfinder { position: absolute; inset: 14px; pointer-events: none; z-index: 3; opacity: 0; transition: opacity 200ms;
-      --m: rgb(255 255 255 / 0.55);
+      --m: rgb(221 216 204 / 0.45);
       background:
         linear-gradient(var(--m), var(--m)) 0 0 / 22px 1.5px, linear-gradient(var(--m), var(--m)) 0 0 / 1.5px 22px,
         linear-gradient(var(--m), var(--m)) 100% 0 / 22px 1.5px, linear-gradient(var(--m), var(--m)) 100% 0 / 1.5px 22px,
@@ -308,14 +347,14 @@ function timecode(ms: number): string {
 
     /* ---------- sem sinal */
     .empty { height: 100%; display: grid; place-items: center; padding: 1.5rem 1rem; overflow-y: auto;
-      background: radial-gradient(90% 70% at 50% 40%, #17121f 0%, var(--bg) 70%), var(--grain); background-size: auto, 160px 160px; }
+      background-color: #141415; background-image: var(--grain); background-size: 160px 160px; }
     .testcard { width: min(520px, 100%); text-align: center; padding-top: 0; overflow: visible; }
-    .bars { display: grid; grid-template-columns: repeat(7, 1fr); height: 8px; margin: 0 -2rem 1.6rem;
-      border-radius: var(--radius-lg) var(--radius-lg) 0 0; overflow: hidden; opacity: 0.85; }
-    .bars i:nth-child(1) { background: #c9c4d4; } .bars i:nth-child(2) { background: #c9b85a; }
-    .bars i:nth-child(3) { background: #5ab8bf; } .bars i:nth-child(4) { background: #63b874; }
-    .bars i:nth-child(5) { background: #ab8eff; } .bars i:nth-child(6) { background: #d0554b; }
-    .bars i:nth-child(7) { background: #4f4bbf; }
+    /* Barras de teste desbotadas, como uma fita velha. */
+    .bars { display: grid; grid-template-columns: repeat(7, 1fr); height: 6px; margin: 0 -2rem 1.6rem; opacity: 0.6; }
+    .bars i:nth-child(1) { background: #b9b5aa; } .bars i:nth-child(2) { background: #b3a457; }
+    .bars i:nth-child(3) { background: #5c9a9c; } .bars i:nth-child(4) { background: #678f58; }
+    .bars i:nth-child(5) { background: #7d6fae; } .bars i:nth-child(6) { background: #a5493f; }
+    .bars i:nth-child(7) { background: #4a4a86; }
     .nosignal { display: inline-flex; align-items: center; gap: 0.45rem; margin: 0 0 0.6rem; font-size: 0.7rem;
       text-transform: uppercase; letter-spacing: 0.22em; color: var(--warn); }
     .testcard h2 { margin: 0; }
@@ -326,40 +365,52 @@ function timecode(ms: number): string {
 
     /* ---------- menu de volume (botão direito) */
     .menu-backdrop { position: fixed; inset: 0; z-index: 40; }
-    .volume-menu { position: fixed; z-index: 41; width: 270px; padding: 0.7rem 0.8rem; animation: unfold-down 160ms var(--ease) both; }
+    .volume-menu { position: fixed; z-index: 41; width: 270px; padding: 0.7rem 0.8rem; animation: unfold-down 120ms linear both; }
     .volume-menu .label { margin: 0 0 0.4rem; }
     /* Igual ao menu do Discord: linha "Mutar" com uma caixinha que ganha um check. */
     .check-row { display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: 0.5rem;
       padding: 0.45rem 0.5rem; border: 0; border-radius: 5px; background: none; color: inherit; font: inherit; cursor: pointer; }
-    .check-row:hover { background: var(--accent); color: #fff; }
-    .checkbox { width: 18px; height: 18px; border-radius: 4px; border: 2px solid var(--muted); display: grid; place-items: center; flex-shrink: 0; }
-    .check-row:hover .checkbox { border-color: #fff; }
-    .checkbox.on { background: var(--accent); border-color: var(--accent); color: #fff; }
-    .check-row:hover .checkbox.on { background: #fff; border-color: #fff; color: var(--accent); }
+    .check-row:hover { background: var(--surface-3); }
+    .checkbox { width: 18px; height: 18px; border-radius: 2px; background: var(--well); box-shadow: var(--inset); display: grid;
+      place-items: center; flex-shrink: 0; border: 1px solid #0b0b0c; }
+    .checkbox.on { color: var(--accent-hi); }
 
     /* ---------- barra de baixo: teclas com setinha, como no Discord */
     .dock { position: relative; display: flex; justify-content: center; padding: 0.6rem 0.8rem 0.75rem;
       border-top: 1px solid var(--line); box-shadow: 0 -1px 0 #000;
-      background: linear-gradient(0deg, #16131c, #0f0d13), var(--grain); background-size: auto, 160px 160px; }
-    .keys { display: flex; align-items: center; gap: 0.55rem; padding: 0.3rem; border-radius: 10px;
-      background: #07060a; border: 1px solid var(--line); box-shadow: inset 0 2px 6px #000c; }
+      background-color: var(--chassis); background-image: var(--grain), var(--brushed); background-size: 160px 160px, auto; }
+    .keys { display: flex; align-items: center; gap: 0.5rem; padding: 0.35rem 0.4rem 0.45rem; border-radius: 3px;
+      background: var(--well); box-shadow: var(--inset); }
     .split { display: inline-flex; }
     .split > .btn:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
-    .caret { width: 22px; padding: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; border-left-color: #000;
-      color: var(--muted); }
+    .caret { width: 20px; padding: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 0; color: var(--muted); }
     .caret cen-icon { transform: rotate(180deg); transition: transform 180ms var(--ease); }
     .split.open .caret { color: var(--accent-hi); }
     .split.open .caret cen-icon { transform: none; }
-    .sep { width: 1px; height: 26px; background: var(--line-2); margin: 0 0.15rem; }
+    .sep { width: 2px; height: 26px; margin: 0 0.2rem; border-left: 1px solid #0b0b0c; border-right: 1px solid rgb(255 255 255 / 0.06); }
     .hangup { width: 52px; }
     .pop { position: absolute; bottom: calc(100% + 8px); left: 50%; translate: -50% 0; z-index: 20;
       width: min(320px, calc(100vw - 1.5rem)); max-height: calc(100dvh - 9.5rem); overflow-y: auto;
-      padding: 0.7rem 0.9rem 0.9rem; animation: unfold-up 200ms var(--ease) both; }
+      padding: 0.7rem 0.9rem 0.9rem; animation: unfold-up 140ms linear both; }
     .pop.wide { width: min(400px, calc(100vw - 1.5rem)); }
     .pop-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.3rem; }
     .pop-head .label { margin: 0; }
     .close { background: none; border: 0; color: var(--muted); display: grid; place-items: center; padding: 4px; border-radius: 4px; }
     .close:hover { color: var(--text); background: var(--surface-3); }
+    .brand .wordmark { display: none; }
+
+    /* ---------- clipes */
+    .shelf { position: absolute; right: 0.75rem; bottom: 5.2rem; z-index: 15; display: flex; flex-direction: column; gap: 0.5rem;
+      width: min(300px, calc(100% - 1.5rem)); }
+    .clip { padding: 0.6rem 0.75rem 0.7rem; animation: slide-in 220ms var(--ease) both; }
+    .clip-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
+    .clip-head .label { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dim { color: var(--faint); font-size: 0.7rem; }
+    .clip-actions { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; }
+    .countdown { flex: 1; text-align: center; font-size: 0.8rem; color: var(--warn); }
+    .meter { height: 6px; margin-top: 0.55rem; border-radius: 1px; background: var(--well); box-shadow: var(--inset); overflow: hidden; }
+    .meter i { display: block; height: 100%; background: var(--accent); transition: width 200ms linear; }
+    .buf { gap: 0.4rem; }
 
     /* ---------- painel de pessoas */
     .panel { position: absolute; top: 60px; right: 0.75rem; bottom: 5rem; width: min(340px, calc(100% - 1.5rem));
@@ -488,6 +539,25 @@ export class RoomScreen {
    * Ctrl + roda (e a pinça do touchpad, que o navegador entrega como Ctrl + roda) dava zoom na
    * página inteira em cima do vídeo. Na área da tela isso não faz sentido: bloqueia.
    */
+  clip() {
+    if (!this.store.canClip() || this.store.focused() === null) return;
+    if (!this.prefs.clips()) {
+      this.prefs.setClips(true);
+      this.toast.show('Clipes ligados: a partir de agora ficam guardados os últimos 2 min desta tela.');
+      return;
+    }
+    this.store.clips.clip();
+  }
+
+  mmss(seconds: number) {
+    const s = Math.max(0, Math.floor(seconds));
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  }
+
+  left(expiresAt: number | undefined) {
+    return expiresAt === undefined ? '' : this.mmss((expiresAt - this.now()) / 1000);
+  }
+
   noZoom(e: WheelEvent) {
     if (e.ctrlKey || e.metaKey) e.preventDefault();
   }

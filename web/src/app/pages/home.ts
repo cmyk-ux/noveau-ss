@@ -7,9 +7,9 @@ import { encodeLink, newKey, randomRoomName, readLink, slugify } from '../core/l
   selector: 'cen-home',
   template: `
     <div class="center">
-      <form class="card marks" (submit)="create($event)">
+      <form class="card screws" (submit)="create($event)">
         <div class="masthead">
-          <span class="logo"><svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true" fill="currentColor"><path fill-rule="evenodd" d="M5 20V12a7 7 0 0 1 14 0v8Zm6.1-14.9h1.8V20h-1.8zM5 14.2h14V16H5z"/></svg></span>
+          <img class="logo pixel" src="logo.svg" alt="" width="64" height="64" />
           <div>
             <h1>Noveau</h1>
             <p class="label sub">tela · som · ao vivo</p>
@@ -76,8 +76,7 @@ import { encodeLink, newKey, randomRoomName, readLink, slugify } from '../core/l
     h1 { margin: 0; font-size: 2.6rem; }
     .masthead { display: flex; align-items: center; gap: 0.9rem; padding-bottom: 1.1rem; margin-bottom: 0.4rem;
       border-bottom: 1px solid var(--line); }
-    .logo { color: var(--accent-hi); display: grid; place-items: center; width: 52px; height: 52px; border-radius: 8px;
-      background: #09080c; border: 1px solid var(--line-2); box-shadow: inset 0 2px 6px #000c, 0 0 24px -10px var(--accent-glow); }
+    .logo { display: block; width: 64px; height: 64px; }
     .sub { margin: 0.3rem 0 0; }
     .colophon { margin: 1.6rem 0 0; font-size: 0.66rem; color: var(--faint); text-align: center; letter-spacing: 0.06em; }
     .row { display: flex; gap: 0.5rem; }
@@ -86,8 +85,8 @@ import { encodeLink, newKey, randomRoomName, readLink, slugify } from '../core/l
     .who { display: flex; align-items: center; gap: 0.5rem; }
     .who img { border-radius: 50%; }
     .who span { flex: 1; font-weight: 600; }
-    .discord-login { background: linear-gradient(180deg, #6873f4, #4f5ae6); color: #fff; border-color: #3c46c9;
-      justify-content: center; text-decoration: none; box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.25), 0 2px 0 #000; }
+    .discord-login { background: #4f57b8; color: #f1ede4; justify-content: center; text-decoration: none; }
+    .discord-login:hover { background: #5961c4 !important; }
     .who a { text-decoration: none; }
     .or { text-align: center; margin: 1rem 0 0; }
   `,

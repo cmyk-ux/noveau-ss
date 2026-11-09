@@ -21,6 +21,8 @@ const ICONS: Record<string, string> = {
   speakerLow: `<path d="M4.5 9.5v5h3.2L13 18.5v-13L7.7 9.5z"/><path d="M16.5 9a4.5 4.5 0 0 1 0 6"/>`,
   speakerOff: `<path d="M4.5 9.5v5h3.2L13 18.5v-13L7.7 9.5z"/><path d="m16.5 9.5 5 5"/><path d="m21.5 9.5-5 5"/>`,
   dots: `<circle cx="12" cy="5" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="12" cy="19" r="1.4"/>`,
+  scissors: `<circle cx="6" cy="6.5" r="2.8"/><circle cx="6" cy="17.5" r="2.8"/><path d="M8.3 8.2 20 18"/><path d="M8.3 15.8 20 6"/>`,
+  download: `<path d="M12 4v11"/><path d="m7.5 10.5 4.5 4.5 4.5-4.5"/><path d="M5 19.5h14"/>`,
   close: `<path d="m6 6 12 12"/><path d="M18 6 6 18"/>`,
   check: `<path d="m4.5 12.5 5 5 10-11"/>`,
   fullscreen: `<path d="M8 3H5.5A2.5 2.5 0 0 0 3 5.5V8"/><path d="M16 3h2.5A2.5 2.5 0 0 1 21 5.5V8"/><path d="M8 21H5.5A2.5 2.5 0 0 1 3 18.5V16"/><path d="M16 21h2.5a2.5 2.5 0 0 0 2.5-2.5V16"/>`,

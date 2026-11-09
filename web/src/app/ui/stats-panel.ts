@@ -47,11 +47,11 @@ function soundRows(a: AudioReading | null): Row[] {
   styles: `
     /* Leitura de equipamento: fósforo sobre preto. */
     :host { position: absolute; top: 0.75rem; left: 0.75rem; z-index: 5; min-width: 240px; padding: 0.55rem 0.75rem 0.65rem;
-      background: rgb(6 5 9 / 0.82); border: 1px solid rgb(255 255 255 / 0.08); border-radius: 4px; font: 11.5px/1.55 var(--mono);
-      backdrop-filter: blur(4px); box-shadow: 0 10px 30px -14px #000; pointer-events: none; }
+      background: rgb(16 16 17 / 0.88); border: 1px solid #0b0b0c; border-radius: 2px; font: 11.5px/1.55 var(--mono);
+      box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.05); pointer-events: none; }
     :host([hidden]) { display: none; }
     .title { color: var(--accent-hi); margin-top: 0.35rem; text-transform: uppercase; letter-spacing: 0.14em; font-size: 10px; }
-    .row strong { font-weight: 500; color: var(--ok); }
+    .row strong { font-weight: 500; color: var(--text); }
     .row { display: flex; justify-content: space-between; gap: 1rem; }
     .row span { color: var(--muted); }
     .row.warn strong { color: var(--danger); }
@@ -102,6 +102,8 @@ export class StatsPanel {
         row('limitado por', describeLimitation(s.limitation)),
         row('sustentado', h?.sustained === true ? describeLimitation(h.reason) : 'não', h?.sustained === true),
         row('mudanças de tamanho', String(s.resolutionChanges), s.resolutionChanges > 0),
+        row('quadros gigantes', String(s.hugeFrames), s.hugeFrames > 0),
+        row('quadros-chave', `${s.keyFrames} (${s.keyRequests} pedidos)`, s.keyRequests > 0),
         ...soundRows(await this.store.sendingAudioStats()),
       ],
     };
@@ -133,6 +135,7 @@ export class StatsPanel {
         row('pacotes perdidos', String(r.packetsLost), r.packetsLost > 0),
         row('quadros descartados', String(r.framesDropped), r.framesDropped > 0),
         row('travadas', `${r.freezeCount} (${r.freezeSeconds}s)`, r.freezeCount > 0),
+        row('quadro-chave pedido', String(r.keyRequests), r.keyRequests > 0),
         row('jitter', `${r.jitterMs} ms`, r.jitterMs > 50),
         ...soundRows(await this.store.receivingAudioStats()),
       ],

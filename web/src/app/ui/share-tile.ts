@@ -25,10 +25,10 @@ import { RoomStore } from '../core/room-store';
   `,
   styles: `
     /* Monitor de ilha de edição: liga como tubo de TV, plaqueta com o nome embaixo. */
-    :host { position: relative; display: block; min-width: 0; min-height: 0; background: #000; border-radius: 4px;
-      overflow: hidden; cursor: pointer; box-shadow: 0 0 0 1px var(--line-2), 0 12px 30px -16px #000;
+    :host { position: relative; display: block; min-width: 0; min-height: 0; background: #000; border-radius: 2px;
+      overflow: hidden; cursor: pointer; box-shadow: 0 0 0 1px #0b0b0c, 0 0 0 3px #2a2a2b, 0 0 0 4px #0b0b0c;
       transition: box-shadow 160ms; animation: crt-on 420ms var(--ease) both; }
-    :host(:hover) { box-shadow: 0 0 0 1px var(--accent), 0 0 24px -8px var(--accent-glow); }
+    :host(:hover) { box-shadow: 0 0 0 1px #0b0b0c, 0 0 0 3px var(--accent), 0 0 0 4px #0b0b0c; }
     video { width: 100%; height: 100%; object-fit: contain; display: block; }
     .name { position: absolute; left: 8px; bottom: 8px; padding: 3px 8px; border-radius: 3px; background: rgb(8 7 11 / 0.82);
       border: 1px solid rgb(255 255 255 / 0.08); font: 500 0.7rem/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase;

@@ -24,7 +24,7 @@ const ARROW =
   styles: `
     :host { position: absolute; inset: 0; overflow: hidden; z-index: 1; }
     :host ::ng-deep .cur {
-      position: absolute; left: 0; top: 0; pointer-events: none; will-change: transform, opacity;
+      position: absolute; left: 0; top: 0; pointer-events: none; will-change: transform, opacity; transform-origin: 4px 3px;
       filter: drop-shadow(0 1px 2px #0008);
     }
     :host ::ng-deep .cur svg { display: block; transform-origin: 4px 3px; transition: transform 120ms ease-out; }
@@ -42,6 +42,8 @@ const ARROW =
 export class CursorLayer {
   /** Tamanho real da imagem da tela (para achar a área útil com as faixas pretas). */
   readonly source = input.required<{ width: number; height: number }>();
+  /** Zoom da tela (a camada fica dentro dela): corrige a conta do mouse e mantém as setas no tamanho certo. */
+  readonly zoom = input(1);
   private readonly store = inject(RoomStore);
   private readonly prefs = inject(Prefs);
   private readonly host = inject(ElementRef<HTMLElement>).nativeElement as HTMLElement;
@@ -83,8 +85,9 @@ export class CursorLayer {
   private normalized(e: PointerEvent) {
     const r = this.host.getBoundingClientRect();
     const c = this.content();
-    const x = (e.clientX - r.left - c.x) / c.w;
-    const y = (e.clientY - r.top - c.y) / c.h;
+    const k = this.host.clientWidth === 0 ? 1 : r.width / this.host.clientWidth;
+    const x = ((e.clientX - r.left) / k - c.x) / c.w;
+    const y = ((e.clientY - r.top) / k - c.y) / c.h;
     return x < 0 || y < 0 || x > 1 || y > 1 ? null : { x, y };
   }
 
@@ -129,7 +132,7 @@ export class CursorLayer {
       n.root.style.setProperty('--c', f.color);
       // Opacidade menor para não atrapalhar a tela.
       n.root.style.opacity = String(0.82 * f.alpha);
-      n.root.style.transform = `translate3d(${px - 4}px, ${py - 3}px, 0)`;
+      n.root.style.transform = `translate3d(${px - 4}px, ${py - 3}px, 0) scale(${1 / this.zoom()})`;
       n.svg.style.transform = `rotate(${f.tilt}deg)`;
       if (n.tag.textContent !== f.name) n.tag.textContent = f.name;
       for (const k of f.clicks) {
@@ -139,7 +142,7 @@ export class CursorLayer {
         r.style.setProperty('--c', f.color);
         r.style.display = 'block';
         r.style.opacity = String((1 - k.age) * 0.9);
-        r.style.transform = `translate3d(${c.x + k.x * c.w}px, ${c.y + k.y * c.h}px, 0) scale(${0.3 + k.age * 1.2})`;
+        r.style.transform = `translate3d(${c.x + k.x * c.w}px, ${c.y + k.y * c.h}px, 0) scale(${(0.3 + k.age * 1.2) / this.zoom()})`;
       }
     }
     for (let i = rippleIndex; i < this.ripples.length; i++) this.ripples[i].style.display = 'none';

@@ -48,6 +48,10 @@ services:
       DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-}
       SESSION_SECRET: ${SESSION_SECRET:-}
       DISCORD_REDIRECT_URI: https://${DOMAIN}/api/discord/callback
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      R2_BUCKET: ${R2_BUCKET:-}
     depends_on:
       - livekit
     # a porta 3000 também não é publicada: só o Caddy fala com ela.

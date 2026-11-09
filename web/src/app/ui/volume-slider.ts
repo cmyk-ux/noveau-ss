@@ -38,7 +38,7 @@ function positionOf(level: number): number {
     .mute.silent { color: var(--danger); }
     input { flex: 1; min-width: 0; accent-color: var(--accent); }
     .readout { width: 3.2rem; text-align: right; font-size: 0.8rem; color: var(--muted); }
-    .readout.boost { color: var(--danger); font-weight: 700; }
+    .readout.boost { color: var(--danger); font-weight: 500; }
   `,
 })
 export class VolumeSlider {

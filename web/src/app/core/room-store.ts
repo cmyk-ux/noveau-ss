@@ -24,6 +24,7 @@ import { ShareHealth, StatsSampler } from './stats';
 import { formatBitrate, planFor } from './stream';
 import { Toast } from './toast';
 import { Channel } from './volume';
+import { ClipRecorder, ClipServer, clipServer, clipsSupported } from './clips';
 import { ShareWatch } from './stats';
 
 function audioContainer(): HTMLElement {
@@ -56,6 +57,12 @@ export class RoomStore {
   private readonly _liveSignature = signal<string | null>(null);
 
   private link: RoomLink = { key: '', secret: '' };
+  private token = '';
+  /** Gravador de clipes (últimos 2 min da tela em foco). */
+  readonly clips = new ClipRecorder(() => this.token);
+  private readonly _clipServer = signal<ClipServer | null>(null);
+  /** O servidor tem onde guardar clipes e este navegador consegue gravar. */
+  readonly canClip = computed(() => this._clipServer() !== null && clipsSupported());
   readonly webcams = new DeviceList(listWebcams, () => this.session.activeDevice('videoinput'));
   readonly microphones = new DeviceList(listMicrophones, () => this.session.activeDevice('audioinput'));
   private watch: ShareWatch | null = null;
@@ -101,7 +108,21 @@ export class RoomStore {
       offChange();
       this.watch?.stop();
       this.studio.dispose();
+      this.clips.stop();
       void this.session.disconnect();
+    });
+    void clipServer().then((c) => this._clipServer.set(c));
+    // Gravação contínua para clipes: segue a tela em foco (e o som dela) enquanto estiver ligada.
+    effect(() => {
+      const f = this.focused();
+      const on = this.prefs.clips() && this.canClip() && this._join() === 'joined';
+      void f?.trackSid;
+      void f?.hasAudio;
+      if (!on) {
+        this.clips.stop();
+        return;
+      }
+      this.clips.follow(f === null ? null : this.session.focusedMedia());
     });
     this.studio.setLatency(this.prefs.studioLatency());
     // Som de estúdio segue a mesma regra do som da tela: na grade todas, em foco só a dela.
@@ -129,6 +150,7 @@ export class RoomStore {
     try {
       const grant = await getGrant();
       await this.session.connect(grant.url, grant.token);
+      this.token = grant.token;
       this._canPublish.set(grant.canPublish);
       this._cameraOffered.set(grant.camera);
       this.link = link ?? { key: '', secret: '' };

@@ -97,10 +97,10 @@ import { VolumeSlider } from './volume-slider';
     .you { color: var(--muted); font-size: 0.85rem; margin-left: 0.25rem; }
     .dot { width: 8px; height: 8px; margin: 0 7px; border-radius: 50%; background: var(--line-2); flex-shrink: 0; }
     .avatar { border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 0 2px transparent; transition: box-shadow 0.12s; }
-    .speaking .dot { background: var(--ok); box-shadow: 0 0 8px -1px var(--ok); }
-    .speaking .avatar { box-shadow: 0 0 0 2px var(--ok), 0 0 12px -2px var(--ok); }
-    .live { font: 500 0.62rem var(--mono); letter-spacing: 0.12em; color: #fff; background: var(--danger); padding: 1px 5px;
-      border-radius: 3px; }
+    .speaking .dot { background: var(--ok); box-shadow: 0 0 4px rgb(127 168 100 / 0.5); }
+    .speaking .avatar { box-shadow: 0 0 0 2px var(--ok); }
+    .live { font: 500 0.62rem var(--mono); letter-spacing: 0.12em; color: #fff; background: var(--danger); padding: 2px 5px;
+      border-radius: 1px; }
     .outside { color: var(--muted); }
     .outside .avatar { opacity: 0.6; filter: grayscale(1); }
     .action { margin-top: 1rem; }
