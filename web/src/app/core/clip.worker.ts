@@ -227,8 +227,27 @@ async function clip() {
       fastStart: 'in-memory',
       firstTimestampBehavior: 'cross-track-offset',
     });
-    vids.forEach((f, i) => muxer.addVideoChunk(f.chunk, i === 0 ? { decoderConfig: videoConfig! } : undefined, f.at - start));
-    snd.forEach((s, i) => muxer.addAudioChunk(s.chunk, i === 0 ? { decoderConfig: audioConfig! } : undefined, s.at - start));
+    // O codificador da placa de vídeo no Windows entrega pedaços sem duração (null), e o MP4
+    // exige uma: usa a distância até o próximo pedaço (o último fica com a do quadro/bloco).
+    const add = <C extends EncodedVideoChunk | EncodedAudioChunk>(
+      list: Stored<C>[],
+      fallback: number,
+      put: (data: Uint8Array, c: C, at: number, dur: number, i: number) => void,
+    ) =>
+      list.forEach((s, i) => {
+        const data = new Uint8Array(s.chunk.byteLength);
+        s.chunk.copyTo(data);
+        const next = list[i + 1]?.at;
+        const own = s.chunk.duration;
+        const dur = next !== undefined ? next - s.at : own !== null && own > 0 ? own : fallback;
+        put(data, s.chunk, s.at - start, Math.max(0, dur), i);
+      });
+    add(vids, 1e6 / opts!.fps, (data, c, at, dur, i) =>
+      muxer.addVideoChunkRaw(data, c.type, at, dur, i === 0 ? { decoderConfig: videoConfig! } : undefined),
+    );
+    add(snd, (1e6 * 1024) / (audioFormat?.sampleRate ?? 48000), (data, c, at, dur, i) =>
+      muxer.addAudioChunkRaw(data, c.type, at, dur, i === 0 ? { decoderConfig: audioConfig! } : undefined),
+    );
     muxer.finalize();
     const buffer = muxer.target.buffer;
     post({ type: 'clip', buffer, seconds: (end - start) / 1e6, width: size.width, height: size.height }, [buffer]);
