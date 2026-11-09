@@ -16,6 +16,7 @@ import { Participant, RemoteParticipant, Room, RoomEvent } from 'livekit-client'
 const TOPIC = 'studio';
 const RATE = 48000;
 const HEADER = 12;
+const HEADER_V2 = 16;
 const WORKLET_URL = '/studio-worklets.js';
 
 export type StudioBits = 16 | 24;
@@ -95,9 +96,15 @@ export class StudioSender {
 // ---------------------------------------------------------------- recebimento
 
 export interface StudioStreamView {
+  /** Chave do player: a identidade na sala, ou o id do plugin de DAW. */
+  key: string;
   identity: string;
   name: string;
+  /** 'room' = modo estúdio do navegador; 'daw' = plugin de DAW. */
+  source: 'room' | 'daw';
   bits: number;
+  rate: number;
+  channels: number;
   /** Segundos de som no buffer agora. */
   level: number;
   target: number;
@@ -107,7 +114,11 @@ export interface StudioStreamView {
 }
 
 interface Player {
+  key: string;
   identity: string;
+  source: 'room' | 'daw';
+  rate: number;
+  channels: number;
   name: string;
   ctx: AudioContext;
   node: AudioWorkletNode | null;
@@ -120,20 +131,57 @@ interface Player {
   lastPacket: number;
 }
 
-function decode(view: DataView, bits: number, frames: number): Float32Array {
+/**
+ * Lê as amostras de um pacote. v1 (navegador): cabeçalho de 12 bytes, 48 kHz estéreo.
+ * v2 (plugin de DAW, veja server/daw.mjs): cabeçalho de 16 bytes, taxa no cabeçalho, 16/24-bit
+ * inteiro ou 32-bit float, 1 ou 2 canais. Sai sempre estéreo intercalado (mono vira L = R).
+ */
+function decode(view: DataView, header: number, bits: number, channels: number, frames: number): Float32Array {
   const out = new Float32Array(frames * 2);
-  let o = HEADER;
-  if (bits === 16) {
-    for (let i = 0; i < out.length; i++, o += 2) {
-      out[i] = view.getInt16(o, true) / 0x8000;
+  const n = frames * channels;
+  const step = 2 / channels; // mono: cada amostra vai para L e R
+  let o = header;
+  for (let i = 0, j = 0; i < n; i++, j += step) {
+    let v: number;
+    if (bits === 16) {
+      v = view.getInt16(o, true) / 0x8000;
+      o += 2;
+    } else if (bits === 24) {
+      v = (view.getUint8(o) | (view.getUint8(o + 1) << 8) | (view.getInt8(o + 2) << 16)) / 0x800000;
+      o += 3;
+    } else {
+      v = view.getFloat32(o, true);
+      o += 4;
     }
-  } else {
-    for (let i = 0; i < out.length; i++, o += 3) {
-      const n = view.getUint8(o) | (view.getUint8(o + 1) << 8) | (view.getInt8(o + 2) << 16);
-      out[i] = n / 0x800000;
-    }
+    out[j] = v;
+    if (channels === 1) out[j + 1] = v;
   }
   return out;
+}
+
+interface Packet {
+  bits: number;
+  channels: number;
+  rate: number;
+  seq: number;
+  frames: number;
+  header: number;
+}
+
+function readHeader(view: DataView): Packet | null {
+  if (view.byteLength < HEADER || view.getUint8(0) !== 0x53) return null;
+  const version = view.getUint8(1);
+  const bits = view.getUint8(2);
+  const channels = version === 1 ? 2 : view.getUint8(3);
+  const header = version === 1 ? HEADER : HEADER_V2;
+  if (version !== 1 && version !== 2) return null;
+  if (version === 2 && view.byteLength < HEADER_V2) return null;
+  const rate = version === 1 ? RATE : view.getUint32(12, true);
+  const frames = view.getUint16(8, true);
+  const ok = version === 1 ? bits === 16 || bits === 24 : bits === 16 || bits === 24 || bits === 32;
+  if (!ok || channels < 1 || channels > 2 || rate < 8000 || rate > 192000) return null;
+  if (view.byteLength < header + frames * channels * (bits / 8)) return null;
+  return { bits, channels, rate, seq: view.getUint32(4, true), frames, header };
 }
 
 /** Recebe e toca o som de estúdio de quem estiver mandando. */
@@ -149,13 +197,14 @@ export class StudioHub {
     if (topic === TOPIC && p !== undefined) this.receive(payload, p);
   };
   private readonly onLeave = (p: Participant) => this.drop(p.identity);
+  private readonly dawVolume = new Map<string, number>();
   private readonly unlock = () => {
     for (const pl of this.players.values()) if (pl.ctx.state === 'suspended') void pl.ctx.resume();
   };
   private readonly sweep = setInterval(() => {
     // Quem parou de mandar há 3 s (parou de transmitir): libera.
     const now = performance.now();
-    for (const pl of this.players.values()) if (now - pl.lastPacket > 3000) this.drop(pl.identity);
+    for (const pl of this.players.values()) if (now - pl.lastPacket > 3000) this.drop(pl.key);
   }, 1000);
 
   constructor(private readonly room: Room) {
@@ -199,9 +248,11 @@ export class StudioHub {
   }
 
   private applyAudible(pl: Player) {
-    const on = this.audible(pl.identity);
+    // O plugin de DAW não tem tela: toca sempre, com o volume dele.
+    const on = pl.source === 'daw' || this.audible(pl.identity);
     if (on && pl.ctx.state === 'suspended') void pl.ctx.resume();
-    pl.gain.gain.value = on ? this.volume * (this.perPerson.get(pl.identity) ?? 0.2) : 0;
+    const level = pl.source === 'daw' ? this.dawVolumeOf(pl.key) : (this.perPerson.get(pl.identity) ?? 0.2);
+    pl.gain.gain.value = on ? this.volume * level : 0;
   }
 
   get currentLatency() {
@@ -209,25 +260,53 @@ export class StudioHub {
   }
 
   private receive(payload: Uint8Array, p: RemoteParticipant) {
-    if (payload.byteLength < HEADER) return;
+    this.ingest(p.identity, p.identity, p.name || p.identity.split('#')[0], 'room', payload);
+  }
+
+  /** Pacote do plugin de DAW (chegou pelo WebSocket do servidor). */
+  feedDaw(id: string, name: string, payload: Uint8Array) {
+    this.ingest(`daw:${id}`, id, name, 'daw', payload);
+  }
+
+  /** O plugin desconectou. */
+  dropDaw(id: string) {
+    this.drop(`daw:${id}`);
+  }
+
+  /** Volume de um plugin de DAW (0..1), só para você. */
+  setDawVolume(key: string, v: number) {
+    this.dawVolume.set(key, v);
+    const pl = this.players.get(key);
+    if (pl !== undefined) this.applyAudible(pl);
+  }
+
+  dawVolumeOf(key: string) {
+    return this.dawVolume.get(key) ?? 1;
+  }
+
+  private ingest(key: string, identity: string, name: string, source: 'room' | 'daw', payload: Uint8Array) {
     const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
-    if (view.getUint8(0) !== 0x53 || view.getUint8(1) !== 1) return;
-    const bits = view.getUint8(2);
-    const seq = view.getUint32(4, true);
-    const frames = view.getUint16(8, true);
-    if ((bits !== 16 && bits !== 24) || payload.byteLength < HEADER + frames * 2 * (bits / 8)) return;
-    const pl = this.players.get(p.identity) ?? this.create(p);
+    const h = readHeader(view);
+    if (h === null) return;
+    let pl = this.players.get(key);
+    // Mudou a taxa (a DAW trocou de 48 para 96 kHz): recria o player na taxa nova.
+    if (pl !== undefined && pl.rate !== h.rate) {
+      this.drop(key);
+      pl = undefined;
+    }
+    pl ??= this.create(key, identity, name, source, h.rate);
     pl.lastPacket = performance.now();
-    pl.bits = bits;
-    if (pl.expected >= 0 && seq !== pl.expected) {
-      const gap = (seq - pl.expected) >>> 0;
+    pl.bits = h.bits;
+    pl.channels = h.channels;
+    if (pl.expected >= 0 && h.seq !== pl.expected) {
+      const gap = (h.seq - pl.expected) >>> 0;
       if (gap > 0x7fffffff) return; // atrasado/duplicado
       // Pacotes perdidos de vez: completa com silêncio para não adiantar o tempo.
       pl.lost += gap;
-      if (gap < 50) this.feed(pl, new Float32Array(frames * 2 * gap));
+      if (gap < 50) this.feed(pl, new Float32Array(h.frames * 2 * gap));
     }
-    pl.expected = (seq + 1) >>> 0;
-    this.feed(pl, decode(view, bits, frames));
+    pl.expected = (h.seq + 1) >>> 0;
+    this.feed(pl, decode(view, h.header, h.bits, h.channels, h.frames));
   }
 
   private feed(pl: Player, pcm: Float32Array) {
@@ -238,13 +317,17 @@ export class StudioHub {
     pl.node.port.postMessage({ type: 'pcm', data: pcm }, [pcm.buffer]);
   }
 
-  private create(p: RemoteParticipant): Player {
-    const ctx = new AudioContext({ sampleRate: RATE, latencyHint: 'playback' });
+  private create(key: string, identity: string, name: string, source: 'room' | 'daw', rate: number): Player {
+    const ctx = new AudioContext({ sampleRate: rate, latencyHint: 'playback' });
     const gain = ctx.createGain();
     gain.connect(ctx.destination);
     const pl: Player = {
-      identity: p.identity,
-      name: p.name || p.identity.split('#')[0],
+      key,
+      identity,
+      source,
+      rate,
+      channels: 2,
+      name,
       ctx,
       node: null,
       gain,
@@ -254,9 +337,13 @@ export class StudioHub {
       lost: 0,
       lastPacket: performance.now(),
       view: {
-        identity: p.identity,
-        name: p.name || p.identity.split('#')[0],
+        key,
+        identity,
+        name,
+        source,
         bits: 24,
+        rate,
+        channels: 2,
         level: 0,
         target: this.latency,
         playing: false,
@@ -264,15 +351,15 @@ export class StudioHub {
         lost: 0,
       },
     };
-    this.players.set(p.identity, pl);
+    this.players.set(key, pl);
     this.applyAudible(pl);
     void ctx.audioWorklet.addModule(WORKLET_URL).then(() => {
-      if (!this.players.has(p.identity)) return;
+      if (this.players.get(key) !== pl) return;
       const node = new AudioWorkletNode(ctx, 'studio-player', { numberOfInputs: 0, outputChannelCount: [2] });
       node.connect(gain);
       node.port.postMessage({ type: 'latency', seconds: this.latency });
       node.port.onmessage = (e) => {
-        pl.view = { ...pl.view, ...e.data, bits: pl.bits, lost: pl.lost };
+        pl.view = { ...pl.view, ...e.data, bits: pl.bits, channels: pl.channels, lost: pl.lost };
         this.publish();
       };
       pl.node = node;
@@ -284,10 +371,10 @@ export class StudioHub {
     return pl;
   }
 
-  private drop(identity: string) {
-    const pl = this.players.get(identity);
+  private drop(key: string) {
+    const pl = this.players.get(key);
     if (pl === undefined) return;
-    this.players.delete(identity);
+    this.players.delete(key);
     void pl.ctx.close();
     this.publish();
   }

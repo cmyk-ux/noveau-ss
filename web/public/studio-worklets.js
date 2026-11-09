@@ -36,13 +36,13 @@ class StudioCapture extends AudioWorkletProcessor {
 class StudioPlayer extends AudioWorkletProcessor {
   constructor() {
     super();
-    this.capacity = 48000 * 4; // 4 s de folga
+    this.capacity = sampleRate * 4; // 4 s de folga (sampleRate = taxa do AudioContext)
     this.ring = new Float32Array(this.capacity * 2);
     this.read = 0;
     this.write = 0;
     this.level = 0; // frames no buffer
-    this.target = 48000 * 0.25;
-    this.band = 48000 * 0.04;
+    this.target = sampleRate * 0.25;
+    this.band = sampleRate * 0.04;
     this.playing = false;
     this.underruns = 0;
     this.adjusts = 0;
@@ -51,8 +51,8 @@ class StudioPlayer extends AudioWorkletProcessor {
       const m = e.data;
       if (m.type === 'pcm') this.push(m.data);
       else if (m.type === 'latency') {
-        this.target = Math.round(48000 * m.seconds);
-        this.band = Math.max(480, Math.round(this.target * 0.15));
+        this.target = Math.round(sampleRate * m.seconds);
+        this.band = Math.max(Math.round(sampleRate / 100), Math.round(this.target * 0.15));
       } else if (m.type === 'reset') {
         this.read = this.write = this.level = 0;
         this.playing = false;
@@ -118,8 +118,8 @@ class StudioPlayer extends AudioWorkletProcessor {
     if (currentTime >= this.reportAt) {
       this.reportAt = currentTime + 0.5;
       this.port.postMessage({
-        level: this.level / 48000,
-        target: this.target / 48000,
+        level: this.level / sampleRate,
+        target: this.target / sampleRate,
         playing: this.playing,
         underruns: this.underruns,
         adjusts: this.adjusts,

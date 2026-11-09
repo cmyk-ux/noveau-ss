@@ -27,6 +27,7 @@ if (existsSync(ENV_FILE)) process.loadEnvFile(ENV_FILE);
 const { AccessToken, IngressClient, IngressInput, RoomServiceClient, TokenVerifier, TrackSource } = await import('livekit-server-sdk');
 const discord = await import('./discord.mjs');
 const clips = await import('./clips.mjs');
+const daw = await import('./daw.mjs');
 
 const PORT = Number(process.env.PORT ?? 3001);
 const API_KEY = process.env.LIVEKIT_API_KEY ?? 'devkey';
@@ -238,6 +239,7 @@ const routes = {
     requiresSecret: INSTANCE_SECRET !== '',
     discord: discord.discordEnabled,
     clips: clips.clipsEnabled ? { ttlMs: clips.CLIP_TTL_MS } : null,
+    daw: true,
   }),
   'GET /api/me': (req) => discord.me(req),
   'POST /api/discord/token': (req, body) => discordToken(req, body),
@@ -293,8 +295,12 @@ async function clipRoute(req, res, path) {
   try {
     if (req.method === 'POST' && path === '/api/clips') {
       const who = await roomMember(req);
-      const name = decodeURIComponent(String(req.headers['x-clip-name'] ?? ''));
-      return send(res, 200, await clips.uploadClip(req, who.identity, name));
+      const body = await readJson(req);
+      return send(res, 200, await clips.startClip(who.identity, String(body.name ?? ''), body.bytes));
+    }
+    const done = /^\/api\/clips\/([\w-]+)\/done$/.exec(path);
+    if (req.method === 'POST' && done !== null) {
+      return send(res, 200, await clips.finishClip(done[1], String(req.headers['x-clip-token'] ?? '')));
     }
     const m = /^\/api\/clips\/([\w-]+)$/.exec(path);
     if (req.method === 'DELETE' && m !== null) {
@@ -302,9 +308,23 @@ async function clipRoute(req, res, path) {
     }
     return send(res, 404, { error: 'Não encontrado.' });
   } catch (e) {
-    const status = e instanceof clips.ClipError ? e.status : 500;
+    const status = e instanceof clips.ClipError || e instanceof HttpError ? e.status : 500;
     if (status === 500) console.error('[clipes]', e);
     if (!res.headersSent) send(res, status, { error: status === 500 ? 'Não foi possível guardar o clipe.' : e.message });
+  }
+}
+
+// ---------- Plugin de DAW: quem está na sala gera um código para parear o plugin (veja daw.mjs).
+async function dawPair(req, res) {
+  try {
+    const auth = String(req.headers.authorization ?? '');
+    const claims = await verifier.verify(auth.startsWith('Bearer ') ? auth.slice(7) : '').catch(() => null);
+    if (claims?.video?.room === undefined) throw new HttpError(401, 'Entre numa sala para ligar o plugin.');
+    send(res, 200, daw.createPairCode(claims.video.room, claims.sub ?? 'anon', claims.name ?? ''));
+  } catch (e) {
+    const status = e instanceof HttpError ? e.status : 500;
+    if (status === 500) console.error('[daw]', e);
+    send(res, status, { error: status === 500 ? 'Erro no servidor.' : e.message });
   }
 }
 
@@ -361,6 +381,7 @@ async function diagRoute(req, res) {
 
 const server = createServer(async (req, res) => {
   const path = new URL(req.url, 'http://x').pathname;
+  if (path === '/api/daw/pair' && req.method === 'POST') return dawPair(req, res);
   if (path === '/api/clips' || path.startsWith('/api/clips/')) return clipRoute(req, res, path);
   if (path === '/api/diag' && req.method === 'POST') return diagRoute(req, res);
   const redirectRoute = redirects[`${req.method} ${path}`];
@@ -381,6 +402,8 @@ const server = createServer(async (req, res) => {
   }
 });
 
+daw.attachDaw(server, (token) => verifier.verify(token));
+
 // HOST=127.0.0.1 em produção (rede do host): só o Caddy alcança a API.
 server.listen(PORT, process.env.HOST || undefined, () => {
   console.log(`API do Noveau em http://localhost:${PORT} (LiveKit: ${LIVEKIT_HTTP_URL})`);
@@ -389,5 +412,3 @@ server.listen(PORT, process.env.HOST || undefined, () => {
   console.log(discord.discordEnabled ? 'Login com Discord: ligado' : 'Login com Discord: desligado (faltam DISCORD_* no .env)');
   console.log(clips.clipsEnabled ? 'Clipes: ligados (Cloudflare R2)' : 'Clipes: desligados (faltam R2_* no .env)');
 });
-// Clipes grandes demoram para subir: não corta a conexão no meio.
-server.requestTimeout = 10 * 60_000;

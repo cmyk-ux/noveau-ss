@@ -1,7 +1,8 @@
-// Clipes: o navegador de quem clipou manda um MP4 dos últimos 2 min, o servidor guarda no
-// Cloudflare R2 e devolve um link de download que vale CLIP_TTL_MS. Passou disso (ou a pessoa
+// Clipes: o navegador de quem clipou manda um MP4 dos últimos 2 min direto para o Cloudflare R2
+// (com um endereço assinado por este servidor) e recebe um link de download que vale CLIP_TTL_MS. Passou disso (ou a pessoa
 // apagou antes), o arquivo some. Só quem clipou recebe o link e o código para apagar.
 //
+// Passo a passo para criar o bucket, a chave e o CORS: docs/CLIPES.md
 // .env: R2_ACCOUNT_ID, R2_ACCESS_KEY_ID, R2_SECRET_ACCESS_KEY, R2_BUCKET. Sem eles, clipes desligados.
 
 import { randomBytes, timingSafeEqual } from 'node:crypto';
@@ -17,6 +18,8 @@ const MAX_BYTES = 400 * 1024 * 1024; // 2 min a 1080p60 fica em ~150 MB; folga p
 const MAX_PER_PERSON = 3;
 const PREFIX = 'clips/';
 const SWEEP_MS = 60_000;
+/** Tempo para o navegador terminar de mandar o arquivo para o R2. */
+const UPLOAD_WINDOW_MS = 15 * 60_000;
 
 export class ClipError extends Error {
   constructor(status, message) {
@@ -35,7 +38,9 @@ async function client() {
   ({ getSignedUrl: presign } = await import('@aws-sdk/s3-request-presigner'));
   s3 = new sdk.S3Client({
     region: 'auto',
-    endpoint: `https://${ACCOUNT}.r2.cloudflarestorage.com`,
+    // R2_ENDPOINT só para testes com um S3 local; no uso normal fica vazio.
+    endpoint: process.env.R2_ENDPOINT || `https://${ACCOUNT}.r2.cloudflarestorage.com`,
+    forcePathStyle: Boolean(process.env.R2_ENDPOINT),
     credentials: { accessKeyId: KEY_ID, secretAccessKey: SECRET },
   });
   return s3;
@@ -63,52 +68,69 @@ function forget(id) {
   return clip;
 }
 
-/** Recebe o corpo (MP4) e sobe para o R2. `owner` é a identidade do LiveKit de quem clipou. */
-export async function uploadClip(req, owner, name) {
-  if (!clipsEnabled) throw new ClipError(503, 'Clipes não estão configurados neste servidor (faltam R2_* no .env).');
+/**
+ * Passo 1: reserva um clipe e devolve um endereço assinado para o navegador mandar o MP4 DIRETO
+ * para o R2. O arquivo (até centenas de MB) nunca passa pela memória deste servidor, que é
+ * pequeno (1 GB de RAM). O bucket precisa de uma regra de CORS liberando PUT deste site.
+ */
+export async function startClip(owner, name, bytes) {
+  if (!clipsEnabled) throw new ClipError(503, 'Clipes não estão configurados neste servidor (faltam R2_* no env).');
+  const size = Number(bytes);
+  if (!(size > 0)) throw new ClipError(411, 'Tamanho do clipe não informado.');
+  if (size > MAX_BYTES) throw new ClipError(413, 'Clipe grande demais.');
   const mine = [...clips.values()].filter((c) => c.owner === owner).length;
   if (mine >= MAX_PER_PERSON) throw new ClipError(429, `No máximo ${MAX_PER_PERSON} clipes ao mesmo tempo. Apague ou espere um sumir.`);
-  const declared = Number(req.headers['content-length'] ?? 0);
-  if (!(declared > 0)) throw new ClipError(411, 'Tamanho do clipe não informado.');
-  if (declared > MAX_BYTES) throw new ClipError(413, 'Clipe grande demais.');
-
-  const body = await new Promise((resolve, reject) => {
-    const parts = [];
-    let size = 0;
-    req.on('data', (c) => {
-      size += c.length;
-      if (size > MAX_BYTES) {
-        reject(new ClipError(413, 'Clipe grande demais.'));
-        req.destroy();
-        return;
-      }
-      parts.push(c);
-    });
-    req.on('end', () => resolve(Buffer.concat(parts)));
-    req.on('error', reject);
-  });
 
   const id = randomBytes(9).toString('base64url');
   const key = `${PREFIX}${id}.mp4`;
-  const c = await client();
-  await c.send(new sdk.PutObjectCommand({ Bucket: BUCKET, Key: key, Body: body, ContentType: 'video/mp4' }));
-
-  const expiresAt = Date.now() + CLIP_TTL_MS;
   const token = randomBytes(18).toString('base64url');
+  const c = await client();
+  const uploadUrl = await presign(
+    c,
+    new sdk.PutObjectCommand({ Bucket: BUCKET, Key: key, ContentType: 'video/mp4', ContentLength: size }),
+    { expiresIn: Math.floor(UPLOAD_WINDOW_MS / 1000) },
+  );
+  const file = `noveau-${String(name || 'clipe').replace(/[^\w-]+/g, '-').slice(0, 40)}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.mp4`;
+  // Se o envio nunca terminar, esquece a reserva (e apaga o que tiver chegado).
   const timer = setTimeout(() => {
     forget(id);
-    removeObject(key).catch((e) => console.error('[clipes] apagar no prazo:', e.message));
-  }, CLIP_TTL_MS);
-  clips.set(id, { key, token, owner, expiresAt, timer });
+    removeObject(key).catch(() => undefined);
+  }, UPLOAD_WINDOW_MS + 60_000);
+  clips.set(id, { key, token, owner, file, size, expiresAt: 0, timer, ready: false });
+  return { id, token, uploadUrl };
+}
 
-  const file = `noveau-${(name || 'clipe').replace(/[^\w-]+/g, '-').slice(0, 40)}-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.mp4`;
+/** Passo 2: o navegador terminou o PUT. Confere no R2 e devolve o link de download. */
+export async function finishClip(id, token) {
+  const clip = clips.get(id);
+  if (clip === undefined) throw new ClipError(404, 'Esse clipe expirou antes de terminar de subir.');
+  if (!sameToken(clip.token, token)) throw new ClipError(403, 'Só quem fez o clipe pode terminar o envio.');
+  const c = await client();
+  let head;
+  try {
+    head = await c.send(new sdk.HeadObjectCommand({ Bucket: BUCKET, Key: clip.key }));
+  } catch {
+    throw new ClipError(409, 'O arquivo não chegou no R2.');
+  }
+  if ((head.ContentLength ?? 0) > MAX_BYTES) {
+    forget(id);
+    await removeObject(clip.key).catch(() => undefined);
+    throw new ClipError(413, 'Clipe grande demais.');
+  }
+  clearTimeout(clip.timer);
+  clip.ready = true;
+  clip.expiresAt = Date.now() + CLIP_TTL_MS;
+  clip.timer = setTimeout(() => {
+    forget(id);
+    removeObject(clip.key).catch((e) => console.error('[clipes] apagar no prazo:', e.message));
+  }, CLIP_TTL_MS);
   const url = await presign(
     c,
-    new sdk.GetObjectCommand({ Bucket: BUCKET, Key: key, ResponseContentDisposition: `attachment; filename="${file}"` }),
+    new sdk.GetObjectCommand({ Bucket: BUCKET, Key: clip.key, ResponseContentDisposition: `attachment; filename="${clip.file}"` }),
     { expiresIn: Math.floor(CLIP_TTL_MS / 1000) },
   );
-  console.log(`[clipes] ${owner} clipou ${(body.length / 1e6).toFixed(1)} MB (${id})`);
-  return { id, url, token, expiresAt, bytes: body.length };
+  console.log(`[clipes] ${clip.owner} clipou ${((head.ContentLength ?? 0) / 1e6).toFixed(1)} MB (${id})`);
+  return { id, url, expiresAt: clip.expiresAt, bytes: head.ContentLength ?? 0 };
 }
 
 export async function deleteClip(id, token) {
@@ -129,7 +151,8 @@ async function sweep() {
   try {
     const c = await client();
     const out = await c.send(new sdk.ListObjectsV2Command({ Bucket: BUCKET, Prefix: PREFIX, MaxKeys: 1000 }));
-    const limit = Date.now() - CLIP_TTL_MS - 30_000;
+    // Pronto há mais que o prazo, ou um envio largado no meio há mais que a janela de envio.
+    const limit = Date.now() - Math.max(CLIP_TTL_MS, UPLOAD_WINDOW_MS) - 60_000;
     for (const o of out.Contents ?? []) {
       if (o.Key !== undefined && o.LastModified !== undefined && o.LastModified.getTime() < limit) await removeObject(o.Key);
     }
