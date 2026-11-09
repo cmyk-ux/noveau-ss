@@ -1,0 +1,85 @@
+# Noveau em servidor (VPS). Uso:
+#   cp .env.prod.example .env.prod   # e preencha
+#   docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
+# Passo a passo completo: deploy/VULTR.md
+#
+# Rede: tudo em "network_mode: host". O LiveKit pede isso ("host networking should be used for
+# optimal performance"): sem a ponte/NAT do Docker no meio, os pacotes UDP de vídeo não passam
+# pelo conntrack e o servidor vê os IPs reais. Por isso os serviços se falam por 127.0.0.1.
+# Firewall da Vultr: abrir só 80, 443 (TCP e UDP), 7881/TCP e 7882/UDP.
+services:
+  # Uma vez a cada "up": aumenta os buffers de UDP do Linux. O padrão (~200 KB) enche em
+  # milissegundos com vídeo a 30+ Mbps passando por uma porta só, e o excesso é DESCARTADO pelo
+  # kernel (vira perda de pacote para todo mundo). O LiveKit avisa no log: "UDP receive buffer is
+  # too small for a production set-up" e sugere 5 MB.
+  tuning:
+    image: busybox:1.36
+    network_mode: host
+    privileged: true
+    restart: "no"
+    command: >
+      sh -c "sysctl -w net.core.rmem_max=16777216 net.core.wmem_max=16777216
+      net.core.rmem_default=4194304 net.core.wmem_default=1048576
+      net.core.netdev_max_backlog=10000"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      DOMAIN: ${DOMAIN:?defina DOMAIN no .env.prod}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+      - livekit
+
+  livekit:
+    image: livekit/livekit-server:v1.13.11
+    restart: unless-stopped
+    network_mode: host
+    depends_on:
+      tuning:
+        condition: service_completed_successfully
+    command: --config /etc/livekit.yaml
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:?defina LIVEKIT_API_KEY no .env.prod}: ${LIVEKIT_API_SECRET:?defina LIVEKIT_API_SECRET no .env.prod}"
+    volumes:
+      - ./deploy/livekit.yaml:/etc/livekit.yaml:ro
+    # 7880 (sinalização) fica fechada no firewall da Vultr: só o Caddy (127.0.0.1) fala com ela.
+
+  app:
+    build: .
+    restart: unless-stopped
+    network_mode: host
+    environment:
+      HOST: 127.0.0.1
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      LIVEKIT_HTTP_URL: http://127.0.0.1:7880
+      LIVEKIT_PUBLIC_URL: wss://${DOMAIN}/livekit
+      INSTANCE_SECRET: ${INSTANCE_SECRET:-}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      DISCORD_REDIRECT_URI: https://${DOMAIN}/api/discord/callback
+      R2_ACCOUNT_ID: ${R2_ACCOUNT_ID:-}
+      R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
+      R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
+      R2_BUCKET: ${R2_BUCKET:-}
+      # Diário de travadas (um JSON por linha): docker compose exec app tail -n 50 /data/diagnosticos.jsonl
+      DIAG_FILE: /data/diagnosticos.jsonl
+    volumes:
+      - app_data:/data
+    depends_on:
+      - livekit
+    # a API escuta só em 127.0.0.1:3000: só o Caddy fala com ela.
+
+volumes:
+  app_data:
+  caddy_data:
+  caddy_config:
