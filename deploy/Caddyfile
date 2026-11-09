@@ -1,0 +1,16 @@
+# Caddy: HTTPS automático (Let's Encrypt) para o site e para o LiveKit, no mesmo domínio.
+#   https://SEU-DOMINIO/          -> site e API
+#   wss://SEU-DOMINIO/livekit     -> LiveKit (sinalização)
+# A mídia (vídeo/áudio) NÃO passa por aqui: vai direto nas portas 7881/TCP e 7882/UDP.
+{$DOMAIN} {
+	encode zstd gzip
+
+	handle /livekit/* {
+		uri strip_prefix /livekit
+		reverse_proxy livekit:7880
+	}
+
+	handle {
+		reverse_proxy app:3000
+	}
+}

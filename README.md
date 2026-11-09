@@ -60,6 +60,11 @@ Os outros abrem `http://192.168.0.10:4200/...`. Obs.: fora do `localhost`, o nav
 5. Rode `npm run compartilhar` (compila o site e sobe LiveKit + site na porta 3000).
 6. Compartilhe o PC com cada amigo: painel do Tailscale > **Machines** > menu `...` do seu PC > **Share**. O amigo instala o Tailscale, aceita o convite e abre `https://SEU-PC.SUA-REDE.ts.net`.
 
+## Em um servidor (VPS)
+
+Para deixar no ar de verdade, com HTTPS e sem VPN, há um `Dockerfile` e um `docker-compose.prod.yml` (site + API, LiveKit e Caddy).
+Passo a passo para a Vultr em [`deploy/VULTR.md`](deploy/VULTR.md).
+
 ## Login com Discord (sala da call)
 
 Com isso ligado, quem está numa call do seu servidor e abre o site cai direto numa sala com as mesmas pessoas da call. As salas avulsas continuam funcionando.

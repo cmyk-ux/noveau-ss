@@ -1,0 +1,57 @@
+# Noveau em servidor (VPS). Uso:
+#   cp .env.prod.example .env.prod   # e preencha
+#   docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
+# Passo a passo completo: deploy/VULTR.md
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:?defina DOMAIN no .env.prod}
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - app
+      - livekit
+
+  livekit:
+    image: livekit/livekit-server:v1.13.6
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    environment:
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY:?defina LIVEKIT_API_KEY no .env.prod}: ${LIVEKIT_API_SECRET:?defina LIVEKIT_API_SECRET no .env.prod}"
+    volumes:
+      - ./deploy/livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "7881:7881"
+      - "7882:7882/udp"
+    # a porta 7880 (sinalização) NÃO é publicada: só o Caddy fala com ela, pela rede interna.
+
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET}
+      LIVEKIT_HTTP_URL: http://livekit:7880
+      LIVEKIT_PUBLIC_URL: wss://${DOMAIN}/livekit
+      INSTANCE_SECRET: ${INSTANCE_SECRET:-}
+      DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
+      DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN:-}
+      DISCORD_GUILD_ID: ${DISCORD_GUILD_ID:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+      DISCORD_REDIRECT_URI: https://${DOMAIN}/api/discord/callback
+    depends_on:
+      - livekit
+    # a porta 3000 também não é publicada: só o Caddy fala com ela.
+
+volumes:
+  caddy_data:
+  caddy_config:
