@@ -124,8 +124,19 @@ export class StatsPanel {
         row('quadros gigantes', String(s.hugeFrames), s.hugeFrames > 0),
         row('quadros-chave', `${s.keyFrames} (${s.keyRequests} pedidos)`, s.keyRequests > 0),
         ...soundRows(await this.store.sendingAudioStats()),
+        ...this.tipRows(s),
       ],
     };
+  }
+
+  /** Dicas a partir da pesquisa: OpenH264 = H.264 no processador; captura acima de 1080p presa no orçamento do Chrome. */
+  private tipRows(s: { encoder: string; width: number; height: number; captureFps: number }): Row[] {
+    const want = this.prefs.stream().frameRate;
+    const out: Row[] = [];
+    if (/openh264/i.test(s.encoder)) out.push(row('dica', 'H.264 no processador: abra com a flag PlatformH264CbpEncoding', true));
+    if (s.captureFps > 0 && s.captureFps < want * 0.9 && s.width * s.height > 1920 * 1080)
+      out.push(row('dica', 'captura acima de 1080p limitada pelo navegador: tente 1080p ou Auto', true));
+    return out;
   }
 
   private loadRows(): Row[] {
