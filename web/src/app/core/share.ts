@@ -12,6 +12,7 @@ import {
 } from 'livekit-client';
 import { Codec, CodecChoice, cappedBitrate, pickCodec, planSize, probeEncoders, StreamPlan, Size } from './stream';
 import { LoadGovernor, LoadState } from './load';
+import { UploadGuard, UploadState } from './upload-guard';
 import { ShareHealth, ShareWatch, sourceAudioLevel } from './stats';
 import { StudioBits, StudioSender } from './studio';
 
@@ -47,6 +48,8 @@ export interface ShareCallbacks {
   onSilentAudio: () => void;
   /** Mudou o degrau de qualidade por causa do uso do PC. */
   onLoad: (s: LoadState) => void;
+  /** Teto de bitrate por perda na subida. */
+  onUpload: (s: UploadState) => void;
 }
 
 export interface ShareResult {
@@ -56,6 +59,7 @@ export interface ShareResult {
   audio: 'published' | 'refused' | 'not-requested';
   watch: ShareWatch;
   governor: LoadGovernor | null;
+  upload: UploadGuard;
   /** Codec escolhido roda na placa de vídeo (segundo o navegador). */
   gpu: boolean;
   /** 'monitor' (tela inteira), 'window' (janela) ou 'browser' (aba). */
@@ -241,7 +245,9 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
     governor = new LoadGovernor(video.mediaStreamTrack, resolution, req.plan.frameRate, cb.onLoad);
     governor.start();
   }
-  return { codec, bitrate, resolution, audio: audioState, watch, surface, governor, gpu: probes[codec]?.gpu === true };
+  const upload = new UploadGuard(() => (video as any).sender as RTCRtpSender | undefined, bitrate, cb.onUpload);
+  upload.start();
+  return { codec, bitrate, resolution, audio: audioState, watch, surface, governor, upload, gpu: probes[codec]?.gpu === true };
 }
 
 export async function stopShareAudio(room: Room) {

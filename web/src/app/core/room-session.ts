@@ -356,6 +356,21 @@ export class RoomSession {
     this.announce();
   }
 
+  /** Para as estatísticas: a proteção contra travadas está disponível/ligada para a tela em foco? */
+  shieldStatus(): string {
+    const f = this.focusedLive();
+    if (f === undefined || f.view.isLocal) return '';
+    const pub = f.publication as any;
+    const layers: { width?: number; height?: number }[] = pub.trackInfo?.layers ?? [];
+    if (!pub.simulcasted || layers.length < 2) return 'sem cópia menor';
+    const g = this.guards.get(f.view.id);
+    const now = Date.now();
+    if (g !== undefined && g.until > now) return `ligada (${g.height}p, ${Math.ceil((g.until - now) / 1000)} s)`;
+    if (g !== undefined && g.useless !== 0 && now - g.useless < 10 * 60_000) return 'pausada (problema é de quem envia)';
+    const low = [...layers].sort((a, b) => (a.width ?? 0) - (b.width ?? 0))[0];
+    return `pronta (cópia ${low.height ?? '?'}p)`;
+  }
+
   /** Volta já para a qualidade máxima (botão "voltar ao máximo"). */
   unshield(id: string) {
     const g = this.guards.get(id);

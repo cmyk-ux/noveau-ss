@@ -60,6 +60,12 @@ function timecode(ms: number): string {
               <span class="tag accent" title="Som sem compressão, abra 'pessoas' para ajustar">estúdio {{ st.bits }}-bit</span>
             }
             @if (adaptedBadge(); as a) { <span class="tag warn" [title]="a.title">{{ a.text }}</span> }
+            @if (f.isLocal && store.upload(); as u) {
+              @if (u.cap < u.target) {
+                <span class="tag warn" [title]="'Sua internet está perdendo pacotes na subida (' + (u.loss * 100).toFixed(1) + '%). O teto baixou um pouco para não travar para ninguém e volta sozinho quando a rede limpar.'">
+                  {{ (u.cap / 1e6).toFixed(0) }} de {{ (u.target / 1e6).toFixed(0) }} Mbps por perda</span>
+              }
+            }
             @if (f.shielded; as sh) {
               <button type="button" class="tag warn shield" (click)="store.unshield(f.id)"
                 [title]="'Sua conexão travou várias vezes, então você está recebendo a cópia menor desta tela até ' + clockAt(sh.until) + '. Só você. Clique para voltar ao máximo agora.'">

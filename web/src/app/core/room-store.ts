@@ -1,5 +1,6 @@
 // Estado da sala para a interface. Uma instância por página de sala.
 import { LoadGovernor, LoadState } from './load';
+import { UploadGuard, UploadState } from './upload-guard';
 import { DestroyRef, Injectable, computed, effect, inject, signal } from '@angular/core';
 import { CameraAddress, JoinGrant, requestCamera, requestToken, revokeCamera } from './api';
 import { DeviceList, listMicrophones, listWebcams } from './devices';
@@ -67,6 +68,10 @@ export class RoomStore {
   readonly microphones = new DeviceList(listMicrophones, () => this.session.activeDevice('audioinput'));
   private watch: ShareWatch | null = null;
   private governor: LoadGovernor | null = null;
+  private uploadGuard: UploadGuard | null = null;
+  private readonly _upload = signal<UploadState | null>(null);
+  /** Teto de bitrate por perda na subida (null = sem transmitir). */
+  readonly upload = this._upload.asReadonly();
   private readonly _load = signal<LoadState | null>(null);
   /** Degrau de qualidade por uso do PC (null = não está transmitindo ou desligado). */
   readonly load = this._load.asReadonly();
@@ -182,6 +187,10 @@ export class RoomStore {
   }
   hideShare(id: string) {
     this.session.hideShare(id);
+  }
+
+  shieldStatus() {
+    return this.session.shieldStatus();
   }
 
   /** Sai da proteção contra travadas e volta já para a qualidade máxima. */
@@ -344,10 +353,13 @@ export class RoomStore {
         onHealth: (h) => this.handleHealth(h),
         onSilentAudio: () => void this.dropSilentAudio(),
         onLoad: (l) => this._load.set(l),
+        onUpload: (u) => this._upload.set(u),
       },
     );
     this.watch = r.watch;
     this.governor = r.governor;
+    this.uploadGuard?.stop();
+    this.uploadGuard = r.upload;
     this._encoder.set({ codec: r.codec, gpu: r.gpu });
     this._liveSignature.set(this.prefs.signature());
     this._soundProblem.set(
@@ -386,6 +398,9 @@ export class RoomStore {
   private forgetShare() {
     this.governor?.stop();
     this.governor = null;
+    this.uploadGuard?.stop();
+    this.uploadGuard = null;
+    this._upload.set(null);
     this._load.set(null);
     this._encoder.set(null);
     if (this._liveSignature() === null && this.watch === null) return;

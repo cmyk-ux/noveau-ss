@@ -128,6 +128,7 @@ export class StatsPanel {
         row('mudanças de tamanho', String(s.resolutionChanges), s.resolutionChanges > 0),
         row('quadros gigantes', String(s.hugeFrames), s.hugeFrames > 0),
         row('quadros-chave', `${s.keyFrames} (${s.keyRequests} pedidos)`, s.keyRequests > 0),
+        ...this.uploadRows(),
         ...soundRows(await this.store.sendingAudioStats()),
         ...this.tipRows(s),
       ],
@@ -142,6 +143,16 @@ export class StatsPanel {
     if (s.captureFps > 0 && s.captureFps < want * 0.9 && s.width * s.height > 1920 * 1080)
       out.push(row('dica', 'captura acima de 1080p limitada pelo navegador: tente 1080p ou Auto', true));
     return out;
+  }
+
+  private uploadRows(): Row[] {
+    const u = this.store.upload();
+    if (u === null) return [];
+    const pct = (u.loss * 100).toFixed(u.loss < 0.01 ? 2 : 1);
+    return [
+      row('perda na subida', `${pct}%`, u.loss > 0.005),
+      row('teto por perda', u.cap >= u.target ? 'no máximo' : `${formatBitrate(u.cap)} de ${formatBitrate(u.target)}`, u.cap < u.target),
+    ];
   }
 
   private loadRows(): Row[] {
@@ -171,6 +182,7 @@ export class StatsPanel {
         row('decoder', `${r.decoder}${r.gpu === null ? '' : r.gpu ? ' · GPU' : ' · CPU'}`),
         row('pacotes perdidos', `${r.packetsLost} (${lossPct(r.packetsLost, r.packetsReceived)})`, r.packetsLost > 0),
         row('reenvios', `${r.recovered} recuperados / ${r.nacks} pedidos`),
+        row('proteção', this.store.shieldStatus() || '—'),
         row('quadros descartados', String(r.framesDropped), r.framesDropped > 0),
         row('travadas', `${r.freezeCount} (${r.freezeSeconds}s)`, r.freezeCount > 0),
         row('quadro-chave pedido', String(r.keyRequests), r.keyRequests > 0),
