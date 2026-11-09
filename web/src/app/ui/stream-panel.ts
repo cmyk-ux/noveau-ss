@@ -12,6 +12,7 @@ import {
   pickCodec,
   planBitrate,
   planSize,
+  hardwareOnly,
   probeEncoders,
   planFor,
   Resolution,
@@ -174,7 +175,7 @@ export class StreamPanel {
     this.probeTick();
     const p = encoderProbes();
     return supportedCodecs()
-      .filter((c) => p[c]?.gpu === true)
+      .filter((c) => p[c]?.gpu === true || hardwareOnly(c))
       .map((c) => c.toUpperCase());
   });
   protected pressure(p: Parameters<typeof describePressure>[0]) {

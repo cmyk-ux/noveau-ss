@@ -216,7 +216,13 @@ export function pickCodec(choice: CodecChoice): Codec {
   const ok = supportedCodecs();
   if (choice !== 'auto' && ok.includes(choice)) return choice;
   // Automático: o primeiro que a placa de vídeo codifica. Assim quem transmite quase não perde FPS.
-  for (const c of GPU_ORDER) if (ok.includes(c) && probed[c]?.gpu === true) return c;
+  // O H.265 só aparece no navegador quando existe encoder de hardware, então basta ele estar na
+  // lista: a sondagem às vezes diz "não" para ele (fps alto, tamanho grande) e o automático caía no
+  // VP8 por software, que derruba a resolução e o fps de quem está jogando.
+  for (const c of GPU_ORDER) {
+    if (!ok.includes(c)) continue;
+    if (probed[c]?.gpu === true || hardwareOnly(c)) return c;
+  }
   // Sem placa de vídeo: VP8. No Chrome do Windows o H.264 do LiveKit sai no OpenH264 (uma thread só)
   // e o VP9 por software pesa muito; o VP8 usa vários núcleos e todo navegador toca.
   for (const c of ['vp8', 'vp9', 'h264'] as Codec[]) if (ok.includes(c)) return c;
