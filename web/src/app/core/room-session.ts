@@ -62,6 +62,8 @@ interface LiveShare {
 }
 
 const WATCHING = 'watching';
+/** Quanto tempo escondida até parar de receber vídeo (alt-tab rápido não conta). */
+const AWAY_AFTER_MS = 2000;
 
 function watchingOf(attrs: Record<string, string> | undefined): string | null {
   const v = attrs?.[WATCHING];
@@ -152,6 +154,28 @@ export class RoomSession {
   private publishedWatching: string | null | undefined = undefined;
   private refusedWatching: string | null | undefined = undefined;
   private live: LiveShare[] = [];
+  /**
+   * Janela escondida (alt-tab para o jogo, minimizado): para de receber o vídeo das telas.
+   * Quem assiste economiza decodificação enquanto joga, e ao voltar o servidor manda um quadro-chave
+   * novo na hora, em vez da imagem engasgar até se acertar.
+   */
+  private away = false;
+  private awayTimer?: number;
+  private readonly onVisibility = () => {
+    window.clearTimeout(this.awayTimer);
+    if (document.visibilityState === 'visible') {
+      if (!this.away) return;
+      this.away = false;
+      this.followFocus(this.live);
+      return;
+    }
+    // Alt-tab rápido não mexe em nada; janela flutuante (PiP) continua recebendo.
+    this.awayTimer = window.setTimeout(() => {
+      if (document.visibilityState !== 'hidden' || document.pictureInPictureElement !== null) return;
+      this.away = true;
+      this.followFocus(this.live);
+    }, AWAY_AFTER_MS);
+  };
 
   constructor(
     private readonly audioContainer: HTMLElement,
@@ -174,6 +198,7 @@ export class RoomSession {
   }
 
   private bindEvents() {
+    document.addEventListener('visibilitychange', this.onVisibility);
     const changed = () => this.emit();
     this.room
       .on(RoomEvent.ParticipantConnected, changed)
@@ -218,6 +243,8 @@ export class RoomSession {
   }
 
   async disconnect() {
+    document.removeEventListener('visibilitychange', this.onVisibility);
+    window.clearTimeout(this.awayTimer);
     await this.room.disconnect();
   }
 
@@ -437,7 +464,7 @@ export class RoomSession {
     const grid = this.focusedShareId === null;
     const remote = shares.filter((s) => !s.view.isLocal);
     for (const s of remote) {
-      const shown = grid || s.view.id === this.focusedShareId;
+      const shown = !this.away && (grid || s.view.id === this.focusedShareId);
       const pub = s.publication as any;
       pub.setSubscribed(true);
       pub.setEnabled(shown);

@@ -62,6 +62,11 @@ function num(o: any, key: string): number {
   return typeof v === 'number' ? v : 0;
 }
 
+function captureFpsOf(report: RTCStatsReport, id: unknown): number {
+  const src = typeof id === 'string' ? (report.get(id) as any) : undefined;
+  return src === undefined ? 0 : Math.round(num(src, 'framesPerSecond'));
+}
+
 function largestOutboundVideo(report: RTCStatsReport): any | null {
   let best: any = null;
   for (const s of report.values()) {
@@ -192,6 +197,8 @@ export interface OutboundVideo {
   gpu: boolean | null;
   /** Tempo médio para codificar um quadro (ms). */
   encodeMs: number;
+  /** Quadros por segundo que a captura do navegador está entregando (antes do encoder). */
+  captureFps: number;
   scalabilityMode: string;
   limitation: Limitation;
   resolutionChanges: number;
@@ -241,6 +248,7 @@ export class StatsSampler {
       codec: codecName(report, s.codecId),
       encoder: text(s, 'encoderImplementation'),
       gpu: typeof s.powerEfficientEncoder === 'boolean' ? s.powerEfficientEncoder : null,
+      captureFps: captureFpsOf(report, s.mediaSourceId),
       encodeMs: num(s, 'framesEncoded') > 0 ? Math.round((num(s, 'totalEncodeTime') / num(s, 'framesEncoded')) * 1e4) / 10 : 0,
       scalabilityMode: text(s, 'scalabilityMode'),
       limitation: asLimitation(s.qualityLimitationReason),

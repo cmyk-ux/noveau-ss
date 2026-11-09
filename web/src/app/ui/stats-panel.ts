@@ -88,7 +88,8 @@ export class StatsPanel {
       title: 'Enviando',
       rows: [
         row('tamanho', `${s.width}x${s.height}`),
-        row('fps', String(s.fps)),
+        row('fps capturados', `${s.captureFps} / ${this.prefs.stream().frameRate}`, s.captureFps > 0 && s.captureFps < this.prefs.stream().frameRate * 0.9),
+        row('fps enviados', String(s.fps), s.captureFps > 0 && s.fps < s.captureFps * 0.85),
         row('bitrate', formatBitrate(s.bitrate)),
         row('alvo', formatBitrate(s.targetBitrate)),
         row('codec', `${s.codec} ${s.scalabilityMode}`),

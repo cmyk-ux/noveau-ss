@@ -98,9 +98,11 @@ function displayMediaOptions(req: ShareRequest): DisplayMediaStreamOptions {
     selfBrowserSurface: 'include',
     surfaceSwitching: 'include',
     ...(req.includeAudio
-      ? { systemAudio: 'include', windowAudio: 'window' }
+      ? // audioSelection 'preferred' (Chrome 153+): a chave de áudio já vem LIGADA no seletor,
+        // para tela inteira e janela. Navegador mais antigo ignora.
+        { systemAudio: 'include', windowAudio: 'window', audioSelection: 'preferred' }
       : { systemAudio: 'exclude', windowAudio: 'exclude' }),
-  } as DisplayMediaStreamOptions;
+  } as unknown as DisplayMediaStreamOptions;
 }
 
 function videoPublishOptions(req: ShareRequest, codec: Codec, maxBitrate: number): TrackPublishOptions {

@@ -81,8 +81,9 @@ export function planFor(s: StreamSettings): StreamPlan {
     resolution: s.resolution,
     frameRate: s.frameRate,
     contentHint: 'motion',
-    // Equilibrado: com banda sobrando nunca chega a reduzir; se faltar, divide entre nitidez e fluidez.
-    degradation: 'balanced',
+    // Fluidez primeiro: se faltar CPU ou rede, o navegador baixa a resolução, nunca os quadros.
+    // ("balanced" derrubava o fps primeiro, e é isso que mais se nota em jogo.)
+    degradation: 'maintain-framerate',
     maxBitrate: s.maxBitrate,
   };
 }
