@@ -1,0 +1,29 @@
+noveau DAW: manda a saída da sua DAW para uma sala do noveau, sem compressão.
+
+INSTALAR
+
+Windows
+  Copie a pasta "noveau DAW.vst3" para C:\Program Files\Common Files\VST3\
+  e mande a DAW procurar plugins de novo (FL Studio: Options > Manage plugins > Find more plugins;
+  Ableton: Preferências > Plug-ins > Rescan; Reaper: Preferences > VST > Re-scan).
+  "noveau DAW.exe" é a versão avulsa, sem DAW: manda o som de uma entrada da placa de som.
+
+macOS
+  VST3:  copie "noveau DAW.vst3" para ~/Library/Audio/Plug-Ins/VST3/
+  AU (Logic, GarageBand): copie "noveau DAW.component" para ~/Library/Audio/Plug-Ins/Components/
+  O plugin não é assinado por uma conta paga da Apple, então rode isto no Terminal uma vez:
+    xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"noveau DAW.vst3"
+    xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/"noveau DAW.component"
+  No Logic, se não aparecer: feche o Logic, rode "killall -9 AudioComponentRegistrar" e abra de novo.
+
+USAR
+
+1. Coloque o plugin no FIM do master (depois do limiter), para mandar exatamente o que você ouve.
+2. No site, entre na sala, clique na tecla do plugin (barra de baixo, ícone de faders) e gere um código.
+3. Digite o código no plugin e clique em Conectar. Todo mundo da sala passa a ouvir.
+
+O plugin não mexe no som: o que entra sai igual. Ele guarda a conexão no projeto e reconecta
+sozinho por 24 h. Formato: 24-bit (padrão), 32-bit float (idêntico à DAW) ou 16-bit.
+A taxa é a do projeto (44,1 a 192 kHz). 24-bit a 48 kHz gasta ~2,3 Mbps de upload.
+
+Pro Tools não está incluso (precisa do formato AAX, que exige assinatura paga).
