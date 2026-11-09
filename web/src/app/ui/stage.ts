@@ -15,7 +15,7 @@ const QUALITY_EVERY_MS = 2000;
     '(pointermove)': 'onPanMove($event)',
     '(pointerup)': 'onPanEnd($event)',
     '(pointercancel)': 'onPanEnd($event)',
-    '(dblclick)': 'resetZoom()',
+    '(dblclick)': 'onDoubleClick()',
     '[class.zoomed]': 'zoom() > 1',
     '[class.panning]': 'panning',
   },
@@ -91,6 +91,20 @@ export class Stage {
     this._source.set({ width: v.videoWidth, height: v.videoHeight });
   }
 
+  /** iPhone só deixa o próprio vídeo em tela cheia (o player do sistema). */
+  videoFullscreen(): boolean {
+    const v = this.video().nativeElement as HTMLVideoElement & { webkitEnterFullscreen?: () => void };
+    if (typeof v.webkitEnterFullscreen !== 'function') return false;
+    v.webkitEnterFullscreen();
+    return true;
+  }
+
+  /** A imagem é mais larga que alta (tela de PC)? Serve para virar o celular na tela cheia. */
+  isLandscape() {
+    const s = this.source();
+    return s.width >= s.height;
+  }
+
   popout() {
     if (document.pictureInPictureElement !== null) {
       void document.exitPictureInPicture();
@@ -116,13 +130,79 @@ export class Stage {
     this.setView(next, mx - ((mx - p.x) * next) / z, my - ((my - p.y) * next) / z);
   }
 
+  /** Dedos na tela (celular): dois dedos = pinça para aproximar no meio deles. */
+  private readonly touches = new Map<number, { x: number; y: number }>();
+  private pinch: { d: number; z: number; mx: number; my: number; px: number; py: number } | null = null;
+  private lastTap = { at: 0, x: 0, y: 0 };
+
+  private pinchStart() {
+    const [a, b] = [...this.touches.values()];
+    const r = this.host.getBoundingClientRect();
+    this.pinch = {
+      d: Math.max(10, Math.hypot(a.x - b.x, a.y - b.y)),
+      z: this.zoom(),
+      mx: (a.x + b.x) / 2 - r.left,
+      my: (a.y + b.y) / 2 - r.top,
+      px: this.pan().x,
+      py: this.pan().y,
+    };
+    this.panFrom = null;
+    this.moved = true;
+  }
+
+  private pinchMove() {
+    const p = this.pinch;
+    if (p === null) return;
+    const [a, b] = [...this.touches.values()];
+    const r = this.host.getBoundingClientRect();
+    const z = Math.min(8, Math.max(1, (p.z * Math.hypot(a.x - b.x, a.y - b.y)) / p.d));
+    const mx = (a.x + b.x) / 2 - r.left;
+    const my = (a.y + b.y) / 2 - r.top;
+    // O ponto da imagem que estava entre os dedos acompanha os dedos (aproxima e arrasta junto).
+    this.setView(z, mx - ((p.mx - p.px) * z) / p.z, my - ((p.my - p.py) * z) / p.z);
+  }
+
+  /** Toque duplo: aproxima 2.5x no ponto (ou volta, se já estiver aproximado). */
+  private doubleTap(e: PointerEvent) {
+    const now = performance.now();
+    const near = Math.hypot(e.clientX - this.lastTap.x, e.clientY - this.lastTap.y) < 30;
+    if (now - this.lastTap.at < 300 && near) {
+      this.lastTap.at = 0;
+      if (this.zoom() > 1) this.resetZoom();
+      else {
+        const r = this.host.getBoundingClientRect();
+        const mx = e.clientX - r.left;
+        const my = e.clientY - r.top;
+        this.setView(2.5, mx - mx * 2.5, my - my * 2.5);
+      }
+      return;
+    }
+    this.lastTap = { at: now, x: e.clientX, y: e.clientY };
+  }
+
   onPanStart(e: PointerEvent) {
+    if (e.pointerType === 'touch') {
+      this.touchedAt = performance.now();
+      this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (this.touches.size === 1) this.moved = false;
+      if (this.touches.size === 2) {
+        this.pinchStart();
+        return;
+      }
+    }
     if (this.zoom() === 1 || (e.button !== 0 && e.button !== 1)) return;
     this.panFrom = { x: e.clientX, y: e.clientY, px: this.pan().x, py: this.pan().y, id: e.pointerId };
     this.moved = false;
   }
 
   onPanMove(e: PointerEvent) {
+    if (this.touches.has(e.pointerId)) {
+      this.touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+      if (this.pinch !== null && this.touches.size >= 2) {
+        this.pinchMove();
+        return;
+      }
+    }
     const f = this.panFrom;
     if (f === null || e.pointerId !== f.id) return;
     const dx = e.clientX - f.x;
@@ -137,6 +217,13 @@ export class Stage {
   }
 
   onPanEnd(e: PointerEvent) {
+    if (this.touches.delete(e.pointerId)) {
+      if (this.pinch !== null) {
+        if (this.touches.size < 2) this.pinch = null;
+        return;
+      }
+      if (e.type === 'pointerup' && !this.moved) this.doubleTap(e);
+    }
     if (this.panFrom?.id !== e.pointerId) return;
     this.panFrom = null;
     this.panning = false;
@@ -148,6 +235,13 @@ export class Stage {
     this.moved = false;
     e.stopImmediatePropagation();
   }
+
+  onDoubleClick() {
+    // No toque o clique duplo já foi tratado pelo toque duplo.
+    if (this.touchedAt > performance.now() - 800) return;
+    this.resetZoom();
+  }
+  private touchedAt = 0;
 
   resetZoom() {
     this.setView(1, 0, 0);

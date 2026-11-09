@@ -2,6 +2,7 @@ import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
 import { DiscordUser, callMembers, inviteToRoom, pingCall } from '../core/api';
 import { encodeLink, isCallRoom, newKey, randomRoomName } from '../core/link';
+import { IS_MOBILE } from '../core/device';
 import { Prefs } from '../core/prefs';
 import { RoomStore } from '../core/room-store';
 import { Toast } from '../core/toast';
@@ -52,11 +53,14 @@ import { VolumeSlider } from './volume-slider';
     @for (p of store.participants(); track p.identity) {
       <div class="person" [class.speaking]="p.isSpeaking">
         @if (p.avatar) { <img class="avatar" [src]="p.avatar" alt="" width="22" height="22" /> } @else { <span class="dot"></span> }
-        <span class="name">{{ p.name }} @if (p.isLocal) {<span class="you">(você)</span>}</span>
+        <span class="name">{{ p.name }} @if (p.isLocal) {<span class="you">(você{{ isMobile ? ', no celular' : '' }})</span>} @else if (p.myOtherDevice) {<span class="you">(você, {{ p.mobile ? 'no celular' : 'no PC' }})</span>}</span>
+        @if (p.isLocal ? isMobile : p.mobile) { <cen-icon class="device" name="phone" [size]="14" title="Pelo celular" /> }
         @if (p.micEnabled) { <cen-icon name="mic" [size]="14" /> }
         @if (p.isSharing) { <span class="live">AO VIVO</span> }
       </div>
-      @if (!p.isLocal) {
+      @if (p.myOtherDevice) {
+        <p class="hint other">Seu outro aparelho. A voz dele não toca aqui, para não dar eco. Ligar o microfone num desliga no outro.</p>
+      } @else if (!p.isLocal) {
         <cen-volume [volume]="p.volume" [label]="'a voz de ' + p.name"
           (levelChange)="store.setVolume('mic', p.identity, $event)"
           (muteToggle)="store.toggleMute('mic', p.identity)" />
@@ -76,7 +80,7 @@ import { VolumeSlider } from './volume-slider';
           </button>
         </div>
       }
-      <p class="hint">Passe o mouse em alguém para convidar: o bot manda o link no privado do Discord.</p>
+      <p class="hint">{{ isMobile ? 'Toque em convidar' : 'Passe o mouse em alguém para convidar' }}: o bot manda o link no privado do Discord.</p>
     }
 
     @if (callRoom) {
@@ -112,6 +116,10 @@ import { VolumeSlider } from './volume-slider';
     .invite { display: none; }
     .outside:hover .tag { display: none; }
     .outside:hover .invite, .invite.busy { display: inline-flex; }
+    /* Toque não tem "passar o mouse": no celular o botão fica sempre à mostra. */
+    @media (hover: none) { .outside .tag { display: none; } .outside .invite { display: inline-flex; } }
+    .device { color: var(--muted); flex-shrink: 0; }
+    .other { margin: 0.1rem 0 0.5rem 1.9rem; }
   `,
 })
 export class PeoplePanel {
@@ -119,6 +127,7 @@ export class PeoplePanel {
   private readonly toast = inject(Toast);
   private readonly router = inject(Router);
   protected readonly callRoom = isCallRoom();
+  protected readonly isMobile = IS_MOBILE;
   private readonly members = signal<DiscordUser[]>([]);
   protected readonly pinging = signal(false);
   protected readonly inviting = signal<string | null>(null);

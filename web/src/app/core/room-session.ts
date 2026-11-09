@@ -13,6 +13,9 @@ import {
 } from 'livekit-client';
 import { ShareCallbacks, ShareRequest, ShareResult, startShare, stopShare, stopShareAudio } from './share';
 import { Channel, isSilent, Mixer, Volume } from './volume';
+import { IS_MOBILE } from './device';
+
+const DEVICE_TOPIC = 'device';
 
 export type RoomStatus = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 
@@ -45,6 +48,10 @@ export interface PersonView {
   discordId: string | null;
   /** Foto do Discord, nas salas de call. */
   avatar: string | null;
+  /** Entrou pelo celular. */
+  mobile: boolean;
+  /** Outro aparelho da mesma conta do Discord (ex.: eu no PC e no celular). */
+  myOtherDevice: boolean;
 }
 
 export interface RoomSnapshot {
@@ -226,6 +233,7 @@ export class RoomSession {
       .on(RoomEvent.ParticipantConnected, changed)
       .on(RoomEvent.ParticipantDisconnected, changed)
       .on(RoomEvent.ParticipantAttributesChanged, changed)
+      .on(RoomEvent.DataReceived, this.onDeviceData)
       .on(RoomEvent.ConnectionStateChanged, (state) => {
         if (state !== ConnectionState.Connected) {
           this.publishedWatching = undefined;
@@ -355,7 +363,30 @@ export class RoomSession {
   async setMicrophone(on: boolean) {
     await this.room.localParticipant.setMicrophoneEnabled(on);
     this.emit();
+    // Mesma conta em dois aparelhos: o microfone "passa" para este, e o outro desliga o dele.
+    if (on) {
+      const others = [...this.room.remoteParticipants.values()].filter((p) => this.isMyOtherDevice(p)).map((p) => p.identity);
+      if (others.length > 0)
+        void this.room.localParticipant
+          .publishData(new TextEncoder().encode('{"t":"mic-moved"}'), { reliable: true, topic: DEVICE_TOPIC, destinationIdentities: others })
+          .catch(() => undefined);
+    }
   }
+
+  /** Chamado quando meu outro aparelho ligou o microfone e este desligou o seu. */
+  onMicMoved: ((toMobile: boolean) => void) | null = null;
+
+  private readonly onDeviceData = (payload: Uint8Array, p?: RemoteParticipant, _k?: unknown, topic?: string) => {
+    if (topic !== DEVICE_TOPIC || p === undefined || !this.isMyOtherDevice(p)) return;
+    try {
+      if (JSON.parse(new TextDecoder().decode(payload)).t !== 'mic-moved') return;
+    } catch {
+      return;
+    }
+    if (this.room.localParticipant.isMicrophoneEnabled) {
+      void this.setMicrophone(false).then(() => this.onMicMoved?.(p.attributes?.['device'] === 'mobile'));
+    }
+  };
 
   activeDevice(kind: MediaDeviceKind) {
     return this.room.getActiveDevice(kind);
@@ -517,14 +548,21 @@ export class RoomSession {
       const pub = s.publication as any;
       pub.setSubscribed(true);
       pub.setEnabled(shown);
-      if (shown) pub.setVideoQuality(grid && visible > 2 ? VideoQuality.MEDIUM : VideoQuality.HIGH);
+      if (shown) pub.setVideoQuality(grid && (visible > 2 || IS_MOBILE) ? VideoQuality.MEDIUM : VideoQuality.HIGH);
     }
+  }
+
+  /** Mesma conta do Discord em outro aparelho (PC + celular na mesma call). */
+  private isMyOtherDevice(p: Participant) {
+    const mine = this.room.localParticipant.attributes?.['discordId'];
+    return mine !== undefined && mine !== '' && p !== this.room.localParticipant && p.attributes?.['discordId'] === mine;
   }
 
   private mix() {
     for (const p of this.room.remoteParticipants.values()) {
       const id = p.identity;
-      this.tune(p, Track.Source.Microphone, this.mixer.read('mic', id), true);
+      // O microfone do meu outro aparelho não toca aqui: eu me ouviria com atraso (e daria eco).
+      this.tune(p, Track.Source.Microphone, this.mixer.read('mic', id), !this.isMyOtherDevice(p));
       // Na grade, o som de todas as telas toca (cada uma com seu volume); em foco, só a dela.
       this.tune(
         p,
@@ -557,6 +595,8 @@ export class RoomSession {
       volume: this.mixer.read('mic', p.identity),
       discordId: p.attributes?.['discordId'] ?? null,
       avatar: p.attributes?.['avatar'] ?? null,
+      mobile: p.attributes?.['device'] === 'mobile',
+      myOtherDevice: this.isMyOtherDevice(p),
     }));
   }
 }

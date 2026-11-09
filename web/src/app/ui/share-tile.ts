@@ -47,6 +47,8 @@ import { RoomStore } from '../core/room-store';
       border-left: 1px solid rgb(255 255 255 / 0.12); background: none; color: var(--muted); cursor: pointer; }
     .hide:hover { color: var(--text); }
     :host(:hover) .hide { display: grid; }
+    /* Toque: botão sempre visível e com área de dedo. */
+    @media (hover: none) { .hide { display: grid; width: 32px; height: 28px; margin: -8px -8px -8px 0; } .mute { display: grid; } }
     .snd.off { color: var(--muted); text-decoration: line-through; }
   `,
 })

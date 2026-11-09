@@ -99,6 +99,8 @@ export class RoomStore {
   readonly waitingForCamera = computed(() => isWaitingForCamera(this._snapshot(), this._camera() !== null));
 
   constructor() {
+    this.session.onMicMoved = (toMobile) =>
+      this.toast.show(`Seu microfone passou para o ${toMobile ? 'celular' : 'computador'}. Este aqui ficou mudo.`);
     const offChange = this.session.onChange((s) => {
       if (!s.shares.some((x) => x.isLocal && x.kind === 'screen')) this.forgetShare();
       this._snapshot.set(s);

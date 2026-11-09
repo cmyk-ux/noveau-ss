@@ -1,3 +1,4 @@
+import { DEVICE } from './device';
 import { RoomLink } from './link';
 
 export interface JoinGrant {
@@ -29,7 +30,7 @@ async function post<T>(path: string, body: unknown, fallback: string): Promise<T
 }
 
 export function requestToken(link: RoomLink, name: string): Promise<JoinGrant> {
-  return post('/api/token', { ...link, name }, 'Não foi possível entrar na sala.');
+  return post('/api/token', { ...link, name, device: DEVICE }, 'Não foi possível entrar na sala.');
 }
 
 export function requestCamera(link: RoomLink): Promise<CameraAddress> {
@@ -71,7 +72,7 @@ export async function whoAmI(): Promise<Me> {
 }
 
 export function requestCallToken(): Promise<JoinGrant & { call: DiscordCall }> {
-  return post('/api/discord/token', {}, 'Não foi possível entrar na sala da call.');
+  return post('/api/discord/token', { device: DEVICE }, 'Não foi possível entrar na sala da call.');
 }
 
 export interface CallMembers {

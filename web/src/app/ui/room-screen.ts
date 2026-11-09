@@ -1,4 +1,5 @@
-import { Component, DestroyRef, ElementRef, computed, inject, input, output, signal, viewChild } from '@angular/core';
+import { Component, DestroyRef, ElementRef, computed, effect, inject, input, output, signal, viewChild } from '@angular/core';
+import { IS_IOS, IS_MOBILE } from '../core/device';
 import { Prefs } from '../core/prefs';
 import { Invites } from '../core/invites';
 import { isCallRoom, roomUrl } from '../core/link';
@@ -34,7 +35,7 @@ function timecode(ms: number): string {
     '(document:keydown.alt.c)': 'clip()',
   },
   template: `
-    <div class="room">
+    <div class="room" [class.mobile]="isMobile">
       <header class="topbar">
         <div class="brand">
           <img class="mark pixel" src="logo.svg" alt="Noveau" width="32" height="32" />
@@ -63,6 +64,7 @@ function timecode(ms: number): string {
           </div>
         }
         <span class="spacer"></span>
+        @if (!isMobile) {
         <div class="cursor-ctl" [class.on]="prefs.cursorOn()">
           <button type="button" class="btn small" [class.on]="prefs.cursorOn()"
             [title]="prefs.cursorOn() ? 'Esconder meu cursor da sala' : 'Mostrar meu cursor para a sala'"
@@ -79,11 +81,12 @@ function timecode(ms: number): string {
             </label>
           }
         </div>
-        <button type="button" class="btn small" [class.on]="peopleOpen()" title="Pessoas e volumes" (click)="togglePeople()">
+        }
+        <button type="button" class="btn small people-top" [class.on]="peopleOpen()" title="Pessoas e volumes" (click)="togglePeople()">
           <cen-icon name="people" [size]="15" /> <span class="mono">{{ store.participants().length }}</span>
         </button>
         @if (!callRoom) {
-          <button type="button" class="btn small" (click)="copyInvite()"><cen-icon name="link" [size]="15" /> convidar</button>
+          <button type="button" class="btn small" title="Copiar o convite" (click)="copyInvite()"><cen-icon name="link" [size]="15" /> <span class="wide-only">convidar</span></button>
         }
       </header>
 
@@ -119,12 +122,12 @@ function timecode(ms: number): string {
         <div class="banner danger"><span class="flag mono">sinal</span><span class="msg">Conexão perdida. Recarregue a página para voltar.</span></div>
       }
 
-      <main #stageArea class="stage-area" (wheel)="noZoom($event)">
+      <main #stageArea class="stage-area" [class.controls]="controls()" (wheel)="noZoom($event)">
         @if (store.focused(); as f) {
           <cen-stage (click)="clickFocused()" (contextmenu)="openVolume($event, f)" />
           <div class="viewfinder" aria-hidden="true"></div>
           <div class="corner">
-            @if (store.canClip()) {
+            @if (store.canClip() && !isMobile) {
               @if (prefs.clips()) {
                 <button class="btn small ghost buf" [title]="'Guardando os últimos 2 min' + (store.clips.size() ? ' (' + store.clips.size() + ')' : '') + '. Clique para desligar.'"
                   (click)="prefs.setClips(false)"><span class="led" [class.bad]="store.clips.buffered() > 0"></span><span class="mono">{{ mmss(store.clips.buffered()) }}</span></button>
@@ -146,6 +149,9 @@ function timecode(ms: number): string {
                 <cen-icon name="eyeOff" [size]="16" /></button>
             }
             <button class="btn icon small ghost" title="Janela flutuante" (click)="stage()?.popout()"><cen-icon name="popout" [size]="16" /></button>
+            @if (isMobile && !isIOS && isFullscreen()) {
+              <button class="btn icon small ghost" title="Girar a tela" (click)="rotate()"><cen-icon name="rotate" [size]="16" /></button>
+            }
             <button class="btn icon small ghost" [title]="isFullscreen() ? 'Sair da tela cheia' : 'Tela cheia'" (click)="toggleFullscreen()">
               <cen-icon [name]="isFullscreen() ? 'fullscreenExit' : 'fullscreen'" [size]="16" />
             </button>
@@ -269,6 +275,7 @@ function timecode(ms: number): string {
           </div>
 
           @if (store.canPublish()) {
+            @if (canShare || !isMobile) {
             <div class="split" [class.open]="menu() === 'screen'">
               <button class="btn icon" [class.on]="store.sharing()" [disabled]="!canShare || store.busy()" [title]="shareTitle2()"
                 (click)="store.toggleShare()">
@@ -277,6 +284,7 @@ function timecode(ms: number): string {
               <button class="btn caret" [class.on]="store.sharing()" title="Qualidade da transmissão" aria-label="Qualidade da transmissão"
                 [attr.aria-expanded]="menu() === 'screen'" (click)="toggleMenu('screen')"><cen-icon name="caret" [size]="14" /></button>
             </div>
+            }
             <div class="split" [class.open]="menu() === 'camera'">
               <button class="btn icon" [class.on]="store.webcamOn()" [disabled]="store.busy()"
                 [title]="store.webcamOn() ? 'Desligar câmera' : 'Ligar câmera'" (click)="store.toggleWebcam()">
@@ -287,6 +295,9 @@ function timecode(ms: number): string {
             </div>
           }
 
+          @if (isMobile) {
+            <button class="btn icon" [class.on]="peopleOpen()" title="Pessoas e volumes" (click)="togglePeople()"><cen-icon name="people" /></button>
+          }
           <span class="sep" aria-hidden="true"></span>
           <button class="btn danger icon hangup" title="Sair da sala" (click)="leave.emit()"><cen-icon name="hangup" /></button>
         </div>
@@ -462,6 +473,44 @@ function timecode(ms: number): string {
     .panel { position: absolute; top: 60px; right: 0.75rem; bottom: 5rem; width: min(340px, calc(100% - 1.5rem));
       overflow-y: auto; padding: 0.7rem 0.9rem 1rem; z-index: 10; animation: slide-in 220ms var(--ease) both; }
     @media (max-width: 640px) { .now { border-left: 0; padding-left: 0; } .roomname { max-width: 8rem; } .kind { display: none; } }
+
+    /* ================= celular ================= */
+    /* Toque não tem "passar o mouse": os botões do canto aparecem com um toque na tela e somem sozinhos. */
+    .mobile .stage-area.controls .corner, .mobile .stage-area.controls .viewfinder { opacity: 1; transform: none; }
+    .mobile .stage-area:hover .viewfinder, .mobile .stage-area:hover .corner { opacity: 0; }
+    .mobile .stage-area.controls:hover .corner, .mobile .stage-area.controls:hover .viewfinder { opacity: 1; }
+    .mobile .corner { top: 0.7rem; right: 0.7rem; gap: 0.45rem; }
+    .mobile .corner .btn { min-width: 40px; height: 40px; }
+    .mobile .people-top { display: none; }
+    .mobile .wide-only { display: none; }
+    .mobile .topbar { gap: 0.6rem; padding: 0.4rem 0.7rem; padding-top: max(0.4rem, env(safe-area-inset-top)); min-height: 0; flex-wrap: nowrap; }
+    .mobile .mark { width: 24px; height: 24px; }
+    .mobile .plate { height: 34px; }
+    .mobile .now { order: 5; flex-basis: 100%; }
+    .mobile .now .tag:not(.warn) { display: none; }
+    .mobile .topbar:has(.now) { flex-wrap: wrap; }
+    .mobile .banner { flex-wrap: wrap; font-size: 0.82rem; }
+    /* Dock: teclas grandes para o dedo, longe da barra de gestos do sistema. */
+    .mobile .dock { padding: 0.5rem 0.5rem calc(0.6rem + env(safe-area-inset-bottom)); }
+    .mobile .keys { gap: 0.4rem; }
+    .mobile .keys .btn.icon { width: 50px; height: 48px; }
+    .mobile .caret { width: 26px; height: 48px; }
+    .mobile .hangup { width: 58px; }
+    /* Menus da dock, pessoas e volume viram gaveta de baixo, na largura toda. */
+    .mobile .pop, .mobile .pop.wide { position: fixed; left: 0.5rem; right: 0.5rem; width: auto; translate: none;
+      bottom: calc(4.6rem + env(safe-area-inset-bottom)); max-height: 70dvh; }
+    .mobile .panel { position: fixed; top: auto; left: 0.5rem; right: 0.5rem; width: auto;
+      bottom: calc(4.6rem + env(safe-area-inset-bottom)); max-height: 72dvh; animation: unfold-up 160ms linear both; }
+    .mobile .volume-menu { left: 0.5rem !important; right: 0.5rem; top: auto !important; width: auto;
+      bottom: calc(4.6rem + env(safe-area-inset-bottom)); padding: 0.9rem 1rem; }
+    .mobile .check-row { padding: 0.75rem 0.5rem; }
+    .mobile .close { padding: 10px; }
+    .mobile .tray { top: 0.5rem; }
+    .mobile .tray .btn { height: 36px; }
+    .mobile .empty { place-items: start center; }
+    .mobile .testcard { padding-left: 1.1rem; padding-right: 1.1rem; }
+    .mobile .bars { margin: 0 -1.1rem 1.3rem; }
+    .mobile .grid { padding: 6px; gap: 6px; overflow-y: auto; grid-auto-rows: minmax(min(56vw, 40dvh), 1fr); }
   `,
 })
 export class RoomScreen {
@@ -473,6 +522,10 @@ export class RoomScreen {
   protected readonly prefs = inject(Prefs);
   protected readonly canShare = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
   protected readonly menu = signal<Menu | null>(null);
+  protected readonly isMobile = IS_MOBILE;
+  protected readonly isIOS = IS_IOS;
+  protected readonly controls = signal(false);
+  protected readonly portrait = signal(window.innerHeight > window.innerWidth);
   protected readonly peopleOpen = signal(false);
   private readonly joinedAt = Date.now();
   private readonly now = signal(Date.now());
@@ -491,6 +544,8 @@ export class RoomScreen {
   /** Colunas da grade: 2 telas lado a lado, 3-4 em 2x2, 5+ em 3 colunas. */
   protected readonly gridCols = computed(() => {
     const n = this.store.shares().length;
+    // Celular em pé: uma tela embaixo da outra.
+    if (this.isMobile && this.portrait()) return 1;
     return n <= 2 ? n : n <= 4 ? 2 : 3;
   });
 
@@ -522,6 +577,11 @@ export class RoomScreen {
 
   /** Clicar na tela em foco volta para a grade (se não estiver usando o cursor, que também clica). */
   clickFocused() {
+    // No celular, tocar na tela mostra/esconde os botões (não tem "passar o mouse").
+    if (this.isMobile) {
+      this.pokeControls(!this.controls());
+      return;
+    }
     if (this.store.shares().length > 1 && !this.prefs.cursorOn()) this.store.unfocus();
   }
   private readonly stageArea = viewChild.required<ElementRef<HTMLElement>>('stageArea');
@@ -562,7 +622,26 @@ export class RoomScreen {
 
   constructor() {
     const t = window.setInterval(() => this.now.set(Date.now()), 1000);
-    inject(DestroyRef).onDestroy(() => window.clearInterval(t));
+    const onResize = () => this.portrait.set(window.innerHeight > window.innerWidth);
+    const onVisible = () => {
+      if (!document.hidden && this.store.focused() !== null) void this.keepAwake();
+    };
+    window.addEventListener('resize', onResize);
+    document.addEventListener('visibilitychange', onVisible);
+    // Tem alguém transmitindo: não deixa a tela apagar.
+    effect(() => {
+      if (this.store.focused() !== null || this.store.shares().length > 0) void this.keepAwake();
+      else if (this.wakeLock !== null) {
+        void this.wakeLock.release().catch(() => undefined);
+        this.wakeLock = null;
+      }
+    });
+    inject(DestroyRef).onDestroy(() => {
+      window.clearInterval(t);
+      window.removeEventListener('resize', onResize);
+      document.removeEventListener('visibilitychange', onVisible);
+      void this.wakeLock?.release().catch(() => undefined);
+    });
   }
 
   toggleMenu(m: Menu) {
@@ -633,10 +712,59 @@ export class RoomScreen {
   }
 
   toggleFullscreen() {
-    if (document.fullscreenElement === null)
-      this.stageArea()
-        .nativeElement.requestFullscreen()
-        .catch(() => this.toast.show('O navegador recusou a tela cheia.'));
-    else void document.exitFullscreen();
+    const el = this.stageArea().nativeElement;
+    if (document.fullscreenElement !== null) {
+      void document.exitFullscreen();
+      return;
+    }
+    // iPhone: não tem tela cheia de elemento, só o player do próprio vídeo.
+    if (typeof el.requestFullscreen !== 'function') {
+      if (!this.stage()?.videoFullscreen()) this.toast.show('Este navegador não tem tela cheia.');
+      return;
+    }
+    el.requestFullscreen({ navigationUI: 'hide' })
+      .then(() => {
+        // Celular: tela de PC (deitada) já vira o aparelho sozinha.
+        if (this.isMobile && this.stage()?.isLandscape() !== false) void this.lockOrientation('landscape');
+      })
+      .catch(() => {
+        if (!this.stage()?.videoFullscreen()) this.toast.show('O navegador recusou a tela cheia.');
+      });
   }
+
+  /** Alterna em pé/deitado durante a tela cheia (Android). */
+  rotate() {
+    void this.lockOrientation(this.portrait() ? 'landscape' : 'portrait');
+  }
+
+  private async lockOrientation(o: 'landscape' | 'portrait') {
+    const so = screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> };
+    try {
+      await so.lock?.(o);
+    } catch {
+      /* navegador não deixa: segue como está */
+    }
+  }
+
+  /** Mostra os botões por cima da tela por alguns segundos (celular). */
+  pokeControls(show = true) {
+    window.clearTimeout(this.controlsTimer);
+    this.controls.set(show);
+    if (show) this.controlsTimer = window.setTimeout(() => this.controls.set(false), 4000);
+  }
+  private controlsTimer?: number;
+
+  /** Mantém a tela do celular acesa enquanto assiste. */
+  private async keepAwake() {
+    const wl = (navigator as Navigator & { wakeLock?: { request(t: 'screen'): Promise<{ release(): Promise<void> }> } }).wakeLock;
+    if (wl === undefined || document.hidden || this.wakeLock !== null) return;
+    try {
+      const lock = await wl.request('screen');
+      this.wakeLock = lock;
+      (lock as unknown as EventTarget).addEventListener?.('release', () => (this.wakeLock = null));
+    } catch {
+      /* sem bateria sobrando ou negado */
+    }
+  }
+  private wakeLock: { release(): Promise<void> } | null = null;
 }

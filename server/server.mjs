@@ -74,7 +74,9 @@ function publicUrl(req) {
   return `ws://${host}:7880`;
 }
 
-async function grantFor(req, room, name, attributes = undefined) {
+async function grantFor(req, room, name, attributes = undefined, device = undefined) {
+  // Celular entra marcado, para os outros verem o ícone. A mesma conta pode estar no PC e no celular.
+  if (device === 'mobile') attributes = { ...(attributes ?? {}), device: 'mobile' };
   const identity = `${name}#${randomBytes(4).toString('base64url').slice(0, 6)}`;
   const at = new AccessToken(API_KEY, API_SECRET, { identity, name, ttl: TOKEN_TTL, attributes });
   at.addGrant({
@@ -93,16 +95,16 @@ async function token(req, body) {
   const room = checkLink(body);
   const name = cleanName(body.name);
   if (name === '') throw new HttpError(400, 'Digite um apelido.');
-  return grantFor(req, room, name);
+  return grantFor(req, room, name, undefined, body.device);
 }
 
 /** Token para a sala da call do Discord em que o usuário logado está agora. */
-async function discordToken(req) {
+async function discordToken(req, body = {}) {
   const { user, call } = await discord.requireCall(req);
   const grant = await grantFor(req, discord.roomForChannel(call.id), cleanName(user.name) || 'alguém', {
     discordId: user.id,
     ...(user.avatar ? { avatar: user.avatar } : {}),
-  });
+  }, body.device);
   return { ...grant, camera: false, call };
 }
 
@@ -184,7 +186,7 @@ const routes = {
     clips: clips.clipsEnabled ? { ttlMs: clips.CLIP_TTL_MS } : null,
   }),
   'GET /api/me': (req) => discord.me(req),
-  'POST /api/discord/token': (req) => discordToken(req),
+  'POST /api/discord/token': (req, body) => discordToken(req, body),
   'GET /api/discord/members': (req) => discord.callMembers(req),
   'POST /api/discord/ping': (req) => discord.pingMyCall(req),
   'POST /api/discord/invite': (req, body) => discord.inviteToRoom(req, body),
