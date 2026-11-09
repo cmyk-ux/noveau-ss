@@ -49,6 +49,11 @@ function soundRows(a: AudioReading | null): Row[] {
 }
 
 /** Números ao vivo do que está sendo enviado e recebido. */
+function lossPct(lost: number, got: number) {
+  const t = lost + got;
+  return t === 0 ? '0%' : `${((lost * 100) / t).toFixed(lost * 100 < t ? 2 : 1)}%`;
+}
+
 @Component({
   selector: 'cen-stats-panel',
   host: { '[hidden]': '!prefs.showStats()' },
@@ -164,7 +169,8 @@ export class StatsPanel {
         row('bitrate', formatBitrate(r.bitrate)),
         row('codec', r.codec),
         row('decoder', `${r.decoder}${r.gpu === null ? '' : r.gpu ? ' · GPU' : ' · CPU'}`),
-        row('pacotes perdidos', String(r.packetsLost), r.packetsLost > 0),
+        row('pacotes perdidos', `${r.packetsLost} (${lossPct(r.packetsLost, r.packetsReceived)})`, r.packetsLost > 0),
+        row('reenvios', `${r.recovered} recuperados / ${r.nacks} pedidos`),
         row('quadros descartados', String(r.framesDropped), r.framesDropped > 0),
         row('travadas', `${r.freezeCount} (${r.freezeSeconds}s)`, r.freezeCount > 0),
         row('quadro-chave pedido', String(r.keyRequests), r.keyRequests > 0),

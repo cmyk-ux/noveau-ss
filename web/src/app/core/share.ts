@@ -106,13 +106,15 @@ function displayMediaOptions(req: ShareRequest): DisplayMediaStreamOptions {
   } as unknown as DisplayMediaStreamOptions;
 }
 
+const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
+
 function videoPublishOptions(req: ShareRequest, codec: Codec, maxBitrate: number, size: Size): TrackPublishOptions {
   // H.265 só toca em quem tem decodificador de hardware; AV1/VP9 em navegadores antigos podem falhar.
   // Com REGRESSION a reserva só é codificada se alguém da sala não conseguir decodificar. A reserva é
   // VP8 e não H.264: no Chrome do Windows o H.264 do LiveKit é por software (OpenH264, uma thread só)
   // e derrubava o FPS de quem joga assim que alguém de Firefox entrava.
   const needsBackup = codec === 'h265' || ((codec === 'av1' || codec === 'vp9') && req.maxCompatibility);
-  // Automático (bitrate Auto): manda também uma cópia em metade da resolução. O servidor troca para ela
+  // Automático (bitrate Auto): manda também uma cópia menor (2/3 da resolução). O servidor troca para ela
   // só para quem não está aguentando (rede ou PC), em vez de travar; quem aguenta continua no máximo.
   // AV1/VP9 já saem com camadas de tempo (L1T3), que fazem o mesmo cortando quadros.
   const adaptive = req.plan.maxBitrate === 0 && (codec === 'vp8' || codec === 'h264') && Math.max(size.width, size.height) >= 960;
@@ -126,7 +128,8 @@ function videoPublishOptions(req: ShareRequest, codec: Codec, maxBitrate: number
     ...(adaptive
       ? {
           screenShareSimulcastLayers: [
-            new VideoPreset(Math.round(size.width / 2), Math.round(size.height / 2), Math.max(1.5e6, Math.round(maxBitrate / 4)), lowFps, 'high'),
+            // 2/3 do tamanho (1080p -> 720p): se alguém precisar cair, cai pouco.
+            new VideoPreset(even((size.width * 2) / 3), even((size.height * 2) / 3), Math.max(2e6, Math.round(maxBitrate * 0.4)), lowFps, 'high'),
           ],
         }
       : {}),

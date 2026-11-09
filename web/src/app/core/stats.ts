@@ -222,6 +222,11 @@ export interface InboundVideo {
   freezeSeconds: number;
   keyRequests: number;
   jitterMs: number;
+  /** Pacotes recebidos (para a perda em %). */
+  packetsReceived: number;
+  /** Pedidos de reenvio feitos e reenvios que chegaram. */
+  nacks: number;
+  recovered: number;
 }
 export interface AudioReading {
   bitrate: number;
@@ -316,6 +321,9 @@ export class StatsSampler {
         freezeSeconds: Math.round(num(s, 'totalFreezesDuration') * 10) / 10,
         keyRequests: num(s, 'pliCount') + num(s, 'firCount'),
         jitterMs: Math.round(num(s, 'jitter') * 1e3),
+        packetsReceived: num(s, 'packetsReceived'),
+        nacks: num(s, 'nackCount'),
+        recovered: num(s, 'retransmittedPacketsReceived'),
       };
     }
     return null;

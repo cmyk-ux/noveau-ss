@@ -184,6 +184,11 @@ export class RoomStore {
     this.session.hideShare(id);
   }
 
+  /** Sai da proteção contra travadas e volta já para a qualidade máxima. */
+  unshield(id: string) {
+    this.session.unshield(id);
+  }
+
   showShare(id: string) {
     this.session.showShare(id);
   }

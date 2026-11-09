@@ -60,6 +60,12 @@ function timecode(ms: number): string {
               <span class="tag accent" title="Som sem compressão, abra 'pessoas' para ajustar">estúdio {{ st.bits }}-bit</span>
             }
             @if (adaptedBadge(); as a) { <span class="tag warn" [title]="a.title">{{ a.text }}</span> }
+            @if (f.shielded; as sh) {
+              <button type="button" class="tag warn shield" (click)="store.unshield(f.id)"
+                [title]="'Sua conexão travou várias vezes, então você está recebendo a cópia menor desta tela até ' + clockAt(sh.until) + '. Só você. Clique para voltar ao máximo agora.'">
+                {{ sh.height ? sh.height + 'p' : 'menor' }} por travadas · voltar ao máximo
+              </button>
+            }
             <span class="eye mono" [title]="viewersTitle(f.id)"><cen-icon name="eye" [size]="14" /> {{ store.viewersOf(f.id).length }}</span>
           </div>
         }
@@ -358,6 +364,7 @@ function timecode(ms: number): string {
     .onair { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.14em; color: #fff; background: var(--danger);
       padding: 2px 6px; border-radius: 1px; }
     .now.mine .onair { background: var(--accent); }
+    .shield { cursor: pointer; border: 0; font: inherit; font-size: 0.7rem; }
     .eye { display: inline-flex; align-items: center; gap: 0.25rem; color: var(--muted); font-size: 0.78rem; }
     .spacer { flex: 1; }
     .cursor-ctl { display: flex; align-items: center; gap: 0.35rem; }
@@ -680,6 +687,10 @@ export class RoomScreen {
       return;
     }
     this.store.clips.clip();
+  }
+
+  clockAt(t: number) {
+    return new Date(t).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
   }
 
   mmss(seconds: number) {

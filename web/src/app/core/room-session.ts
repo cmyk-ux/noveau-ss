@@ -16,6 +16,11 @@ import { Channel, isSilent, Mixer, Volume } from './volume';
 import { IS_MOBILE } from './device';
 
 const DEVICE_TOPIC = 'device';
+const GUARD_TICK_MS = 2000;
+const GUARD_FREEZES = 3;
+const GUARD_WINDOW_MS = 60_000;
+const GUARD_HOLD_MS = 60_000;
+const GUARD_MAX_MS = 8 * 60_000;
 
 export type RoomStatus = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 
@@ -33,6 +38,8 @@ export interface ShareView {
   volume: Volume;
   /** Escondida por você: não recebe o vídeo nem toca o som dela. */
   hidden?: boolean;
+  /** Travou várias vezes seguidas: recebendo a cópia menor por um tempo (só para você). */
+  shielded?: { until: number; width: number; height: number } | null;
 }
 
 export interface PersonView {
@@ -277,7 +284,91 @@ export class RoomSession {
     this.emit();
   }
 
+  // ---------- proteção contra travadas (por quem assiste)
+  // A qualidade máxima fica sempre, até travar de verdade: 3 travadas em 60 s na tela em foco.
+  // Aí, se a tela tem a cópia menor (simulcast), recebe ela por um tempo e tenta voltar. Travou
+  // de novo logo depois de voltar? Segura o dobro do tempo (até 8 min). Só afeta quem trava.
+  private readonly guards = new Map<string, { freezes: number; times: number[]; until: number; hold: number; lastEnd: number; width: number; height: number; during: number; useless: number }>();
+  private guardTimer = window.setInterval(() => void this.watchFreezes(), GUARD_TICK_MS);
+
+  private shielded(id: string) {
+    const g = this.guards.get(id);
+    return g !== undefined && g.until > Date.now();
+  }
+
+  private async watchFreezes() {
+    const f = this.focusedLive();
+    const now = Date.now();
+    for (const [id, g] of this.guards) {
+      if (g.until !== 0 && g.until <= now) {
+        g.until = 0;
+        g.lastEnd = now;
+        g.times = [];
+        this.followFocus(this.live);
+        this.announce();
+      }
+      // Muito tempo sem travar: esquece o histórico (próxima proteção volta a ser curta).
+      if (g.until === 0 && g.lastEnd !== 0 && now - g.lastEnd > 10 * 60_000) g.hold = GUARD_HOLD_MS;
+      if (f?.view.id !== id && g.until === 0) this.guards.delete(id);
+    }
+    if (f === undefined || f.view.isLocal || this.away) return;
+    const pub = f.publication as any;
+    const layers: { width?: number; height?: number }[] = pub.trackInfo?.layers ?? [];
+    if (!pub.simulcasted || layers.length < 2) return;
+    const report: RTCStatsReport | null = (await pub.track?.getRTCStatsReport?.()) ?? null;
+    if (report === null) return;
+    let freezes = -1;
+    report.forEach((r: any) => {
+      if (r.type === 'inbound-rtp' && r.kind === 'video' && typeof r.freezeCount === 'number') freezes = Math.max(freezes, r.freezeCount);
+    });
+    if (freezes < 0) return;
+    let g = this.guards.get(f.view.id);
+    if (g === undefined) {
+      g = { freezes, times: [], until: 0, hold: GUARD_HOLD_MS, lastEnd: 0, width: 0, height: 0, during: 0, useless: 0 };
+      this.guards.set(f.view.id, g);
+      return;
+    }
+    const fresh = Math.max(0, freezes - g.freezes);
+    g.freezes = freezes;
+    if (g.until > now) {
+      // Continua travando mesmo na cópia menor: o problema é a internet de quem transmite (todo mundo
+      // trava igual), e baixar aqui não resolve. Volta ao máximo e não tenta de novo por 10 min.
+      g.during += fresh;
+      if (g.during >= GUARD_FREEZES) {
+        g.useless = now;
+        this.unshield(f.view.id);
+      }
+      return;
+    }
+    if (g.useless !== 0 && now - g.useless < 10 * 60_000) return;
+    for (let i = 0; i < fresh; i++) g.times.push(now);
+    g.times = g.times.filter((t) => now - t < GUARD_WINDOW_MS);
+    if (g.times.length < GUARD_FREEZES) return;
+    // Voltou e travou de novo em menos de 2 min: segura mais tempo.
+    if (g.lastEnd !== 0 && now - g.lastEnd < 2 * 60_000) g.hold = Math.min(GUARD_MAX_MS, g.hold * 2);
+    const low = [...layers].sort((a, b) => (a.width ?? 0) - (b.width ?? 0))[0];
+    g.width = low.width ?? 0;
+    g.height = low.height ?? 0;
+    g.until = now + g.hold;
+    g.times = [];
+    g.during = 0;
+    this.followFocus(this.live);
+    this.announce();
+  }
+
+  /** Volta já para a qualidade máxima (botão "voltar ao máximo"). */
+  unshield(id: string) {
+    const g = this.guards.get(id);
+    if (g === undefined) return;
+    g.until = 0;
+    g.lastEnd = Date.now();
+    g.times = [];
+    this.followFocus(this.live);
+    this.announce();
+  }
+
   async disconnect() {
+    window.clearInterval(this.guardTimer);
     document.removeEventListener('visibilitychange', this.onVisibility);
     window.clearTimeout(this.awayTimer);
     await this.room.disconnect();
@@ -513,7 +604,11 @@ export class RoomSession {
     return {
       status: statusOf(this.room.state),
       participants: this.collectParticipants(),
-      shares: shares.map((s) => (this.hidden.has(s.view.id) ? { ...s.view, hidden: true } : s.view)),
+      shares: shares.map((s) => {
+        const v = this.hidden.has(s.view.id) ? { ...s.view, hidden: true } : s.view;
+        const g = this.guards.get(s.view.id);
+        return g !== undefined && g.until > Date.now() ? { ...v, shielded: { until: g.until, width: g.width, height: g.height } } : v;
+      }),
       focusedShareId: this.focusedShareId,
       needsAudioUnlock: !this.room.canPlaybackAudio,
       ...(() => {
@@ -552,7 +647,10 @@ export class RoomSession {
       const pub = s.publication as any;
       pub.setSubscribed(true);
       pub.setEnabled(shown);
-      if (shown) pub.setVideoQuality(grid && (visible > 2 || IS_MOBILE) ? VideoQuality.MEDIUM : VideoQuality.HIGH);
+      if (!shown) continue;
+      // Travando seguido: segura na cópia menor (só para quem trava), depois tenta voltar.
+      if (this.shielded(s.view.id)) pub.setVideoQuality(VideoQuality.LOW);
+      else pub.setVideoQuality(grid && (visible > 2 || IS_MOBILE) ? VideoQuality.MEDIUM : VideoQuality.HIGH);
     }
   }
 
