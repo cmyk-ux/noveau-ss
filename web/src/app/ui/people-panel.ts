@@ -23,12 +23,12 @@ import { VolumeSlider } from './volume-slider';
         (levelChange)="store.setVolume('share', s.share.id, $event)"
         (muteToggle)="store.toggleMute('share', s.share.id)" />
     }
-    @for (st of store.studio.streams(); track st.identity) {
+    @for (st of store.studio.streams(); track st.key) {
       <p class="label">som de estúdio · sem compressão</p>
       <div class="studio">
         <div class="person">
           <span class="name">{{ st.name }}</span>
-          <span class="tag">{{ st.bits }}-bit · 48 kHz</span>
+          <span class="tag">{{ st.source === 'daw' ? 'DAW · ' : '' }}{{ st.bits === 32 ? '32f' : st.bits + '-bit' }} · {{ st.rate / 1000 }} kHz</span>
         </div>
         <div class="person">
           <input type="range" min="0" max="1" step="0.01" [value]="studioVolume()" aria-label="Volume do som de estúdio"

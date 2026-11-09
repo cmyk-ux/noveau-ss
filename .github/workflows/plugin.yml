@@ -1,0 +1,107 @@
+# Compila o plugin de DAW (plugin/) para Windows e macOS e testa o envio de ponta a ponta.
+# Os arquivos ficam em "Artifacts" de cada execução. Uma tag plugin-v* (ex.: plugin-v0.1.0)
+# também publica um Release com os zips, que é para onde o site aponta.
+name: Plugin de DAW
+
+on:
+  push:
+    paths: ['plugin/**', 'server/daw.mjs', '.github/workflows/plugin.yml']
+    tags: ['plugin-v*']
+  workflow_dispatch:
+
+jobs:
+  teste:
+    name: Teste de ponta a ponta (Linux)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Dependências
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q ninja-build libasound2-dev libx11-dev libxext-dev libxrandr-dev libxinerama-dev \
+            libxcursor-dev libxi-dev libxcomposite-dev libxrender-dev libfreetype-dev libfontconfig1-dev libgl-dev libssl-dev
+          npm --prefix server ci
+      - name: Compilar os testes
+        run: |
+          cmake -S plugin -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DNOVEAU_TESTS=ON
+          cmake --build build --target packet_test stream_test
+      - name: Testar
+        run: node plugin/Tests/e2e.mjs build/stream_test_artefacts/Release/stream_test build/packet_test
+
+  compilar:
+    name: Compilar (${{ matrix.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            name: windows
+          - os: macos-latest
+            name: macos
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configurar (Windows)
+        if: matrix.name == 'windows'
+        run: cmake -S plugin -B build -A x64
+      - name: Configurar (macOS, Intel + Apple Silicon)
+        if: matrix.name == 'macos'
+        run: cmake -S plugin -B build -G Xcode "-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64"
+
+      - name: Compilar
+        run: cmake --build build --config Release --parallel 4
+
+      - name: Testar o formato dos pacotes
+        shell: bash
+        run: |
+          mkdir -p pk
+          if [ -f build/Release/packet_test.exe ]; then build/Release/packet_test.exe pk; else build/Release/packet_test pk; fi
+
+      - name: Empacotar (Windows)
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $out = "noveau-DAW-windows"
+          New-Item -ItemType Directory $out | Out-Null
+          Copy-Item -Recurse "build/NoveauDAW_artefacts/Release/VST3/noveau DAW.vst3" $out
+          Copy-Item "build/NoveauDAW_artefacts/Release/Standalone/noveau DAW.exe" $out
+          Copy-Item plugin/LEIA-ME.txt $out
+          Compress-Archive -Path "$out/*" -DestinationPath "$out.zip"
+
+      - name: Empacotar (macOS)
+        if: matrix.name == 'macos'
+        run: |
+          out=noveau-DAW-macos
+          mkdir "$out"
+          cp -R "build/NoveauDAW_artefacts/Release/VST3/noveau DAW.vst3" "$out/"
+          cp -R "build/NoveauDAW_artefacts/Release/AU/noveau DAW.component" "$out/"
+          cp -R "build/NoveauDAW_artefacts/Release/Standalone/noveau DAW.app" "$out/"
+          cp plugin/LEIA-ME.txt "$out/"
+          # Sem conta paga da Apple: assinatura "ad hoc" (o Apple Silicon exige alguma assinatura).
+          for f in "$out"/*.vst3 "$out"/*.component "$out"/*.app; do codesign --force --deep -s - "$f"; done
+          ditto -c -k --keepParent "$out" "$out.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: noveau-DAW-${{ matrix.name }}
+          path: noveau-DAW-${{ matrix.name }}.zip
+
+  publicar:
+    name: Publicar Release
+    if: startsWith(github.ref, 'refs/tags/plugin-v')
+    needs: [teste, compilar]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Plugin de DAW ${{ github.ref_name }}
+          files: noveau-DAW-*.zip

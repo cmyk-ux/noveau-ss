@@ -1,7 +1,7 @@
 import { signal } from '@angular/core';
 
 // Clipes como no Discord: guarda os últimos 2 min da tela em foco e, ao clipar, sobe um MP4
-// para o servidor, que devolve um link de download válido por 5 min. Só quem clipou vê o
+// direto para o Cloudflare R2 e recebe um link de download válido por 5 min. Só quem clipou vê o
 // link e pode apagar antes.
 
 export const CLIP_SECONDS = 120;
@@ -193,37 +193,49 @@ export class ClipRecorder {
     });
   }
 
-  private upload(item: ClipItem, blob: Blob, seconds: number) {
+  private async upload(item: ClipItem, blob: Blob, seconds: number) {
     const mb = blob.size / 1e6;
     this.upsert({ ...item, state: 'uploading', progress: 0, mb, seconds });
-    return new Promise<void>((resolve) => {
+    const fail = (error: string) => this.upsert({ ...item, state: 'failed', error, mb, seconds });
+    // 1) O servidor reserva o clipe e assina um endereço do R2 só para este arquivo.
+    let start: { id?: string; token?: string; uploadUrl?: string; error?: string };
+    try {
+      const res = await fetch('/api/clips', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${this.token()}` },
+        body: JSON.stringify({ name: item.name, bytes: blob.size }),
+      });
+      start = await res.json().catch(() => ({ error: `Erro ${res.status} ao preparar o envio.` }));
+      if (!res.ok || start.id === undefined || start.uploadUrl === undefined) return fail(start.error ?? `Erro ${res.status} ao preparar o envio.`);
+    } catch {
+      return fail('Sem conexão com o servidor.');
+    }
+    const { id, token, uploadUrl } = start as { id: string; token: string; uploadUrl: string };
+    // 2) O arquivo vai direto do navegador para o R2 (não passa pelo servidor do site).
+    const sent = await new Promise<string | null>((resolve) => {
       const xhr = new XMLHttpRequest();
-      xhr.open('POST', '/api/clips');
-      xhr.setRequestHeader('authorization', `Bearer ${this.token()}`);
-      xhr.setRequestHeader('x-clip-name', encodeURIComponent(item.name));
+      xhr.open('PUT', uploadUrl);
+      xhr.setRequestHeader('content-type', 'video/mp4');
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable) this.upsert({ ...item, state: 'uploading', progress: e.loaded / e.total, mb, seconds });
       };
-      const fail = (error: string) => {
-        this.upsert({ ...item, state: 'failed', error, mb, seconds });
-        resolve();
-      };
-      xhr.onerror = () => fail('A conexão caiu no meio do envio.');
-      xhr.onload = () => {
-        let body: { id?: string; url?: string; token?: string; expiresAt?: number; error?: string } = {};
-        try {
-          body = JSON.parse(xhr.responseText);
-        } catch {
-          /* resposta vazia */
-        }
-        if (xhr.status !== 200 || body.id === undefined) return fail(body.error ?? `Erro ${xhr.status} ao enviar.`);
-        this.upsert(
-          { id: body.id, name: item.name, state: 'ready', progress: 1, url: body.url, token: body.token, expiresAt: body.expiresAt, mb, seconds },
-          item.id,
-        );
-        resolve();
-      };
+      // Status 0 = o navegador barrou a resposta: quase sempre falta a regra de CORS no bucket.
+      xhr.onerror = () => resolve('O envio para o R2 foi barrado (confira o CORS do bucket) ou a conexão caiu.');
+      xhr.onload = () => resolve(xhr.status >= 200 && xhr.status < 300 ? null : `O R2 recusou o envio (erro ${xhr.status}).`);
       xhr.send(blob);
     });
+    if (sent !== null) {
+      void fetch(`/api/clips/${encodeURIComponent(id)}`, { method: 'DELETE', headers: { 'x-clip-token': token } }).catch(() => undefined);
+      return fail(sent);
+    }
+    // 3) Avisa o servidor, que confere o arquivo e devolve o link de download.
+    try {
+      const res = await fetch(`/api/clips/${encodeURIComponent(id)}/done`, { method: 'POST', headers: { 'x-clip-token': token } });
+      const body: { url?: string; expiresAt?: number; error?: string } = await res.json().catch(() => ({}));
+      if (!res.ok || body.url === undefined) return fail(body.error ?? `Erro ${res.status} ao finalizar.`);
+      this.upsert({ id, name: item.name, state: 'ready', progress: 1, url: body.url, token, expiresAt: body.expiresAt, mb, seconds }, item.id);
+    } catch {
+      fail('Sem conexão com o servidor.');
+    }
   }
 }
