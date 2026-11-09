@@ -133,6 +133,25 @@ function focusIfOnly(ids: string[], arriving: string, _current: string | null) {
   return ids.length === 1 && ids[0] === arriving ? arriving : null;
 }
 
+/**
+ * Folga para a tela de quem transmite: o navegador segura ~150 ms antes de mostrar.
+ * Quando entra uma cena pesada (vídeo do TikTok, menu do jogo, tela preta para imagem) o quadro
+ * fica enorme e demora mais para chegar; sem folga a imagem engasga. A folga também dá tempo de
+ * pedir de novo um pacote perdido em vez de travar até o próximo quadro-chave. Vídeo e som da
+ * tela ganham a mesma folga para continuarem juntos. A voz não muda (fica sem atraso).
+ */
+const SCREEN_CUSHION_MS = 150;
+function cushion(track: Track) {
+  if (track.source !== Track.Source.ScreenShare && track.source !== Track.Source.ScreenShareAudio) return;
+  const receiver = (track as unknown as { receiver?: RTCRtpReceiver & { jitterBufferTarget?: number | null } }).receiver;
+  if (receiver === undefined || !('jitterBufferTarget' in receiver)) return;
+  try {
+    receiver.jitterBufferTarget = SCREEN_CUSHION_MS;
+  } catch {
+    /* navegador sem suporte */
+  }
+}
+
 function isVisual(source: Track.Source) {
   return source === Track.Source.ScreenShare || source === Track.Source.Camera;
 }
@@ -229,6 +248,7 @@ export class RoomSession {
       })
       .on(RoomEvent.TrackUnpublished, changed)
       .on(RoomEvent.TrackSubscribed, (track) => {
+        cushion(track);
         if (track.kind === Track.Kind.Audio) this.audioContainer.appendChild(track.attach());
         changed();
       })

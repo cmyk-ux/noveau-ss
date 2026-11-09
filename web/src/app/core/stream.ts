@@ -191,15 +191,21 @@ export async function probeEncoders(size: Size, fps: number): Promise<Partial<Re
   return out;
 }
 
-/** Preferência entre os codecs de GPU: AV1 e H.265 dão mais qualidade por bit que H.264. */
-const GPU_ORDER: Codec[] = ['av1', 'h265', 'h264', 'vp9', 'vp8'];
+/**
+ * Preferência entre os codecs de GPU. AV1 primeiro: tem camadas de tempo (o servidor pode mandar
+ * menos quadros só para quem não aguenta) e quase todo navegador decodifica, inclusive o Firefox.
+ * H.265 só toca em Chrome/Edge com decodificador de hardware; quem não tem recebe a reserva (VP8).
+ */
+const GPU_ORDER: Codec[] = ['av1', 'h265', 'vp9', 'h264'];
 
 export function pickCodec(choice: CodecChoice): Codec {
   const ok = supportedCodecs();
   if (choice !== 'auto' && ok.includes(choice)) return choice;
   // Automático: o primeiro que a placa de vídeo codifica. Assim quem transmite quase não perde FPS.
   for (const c of GPU_ORDER) if (ok.includes(c) && probed[c]?.gpu === true) return c;
-  for (const c of ['vp9', 'h264', 'vp8'] as Codec[]) if (ok.includes(c)) return c;
+  // Sem placa de vídeo: VP8. No Chrome do Windows o H.264 do LiveKit sai no OpenH264 (uma thread só)
+  // e o VP9 por software pesa muito; o VP8 usa vários núcleos e todo navegador toca.
+  for (const c of ['vp8', 'vp9', 'h264'] as Codec[]) if (ok.includes(c)) return c;
   return ok[0] ?? 'vp8';
 }
 

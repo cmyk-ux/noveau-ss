@@ -8,6 +8,7 @@ import {
   Room,
   Track,
   type TrackPublishOptions,
+  VideoPreset,
 } from 'livekit-client';
 import { Codec, CodecChoice, cappedBitrate, pickCodec, planSize, probeEncoders, StreamPlan, Size } from './stream';
 import { LoadGovernor, LoadState } from './load';
@@ -105,18 +106,31 @@ function displayMediaOptions(req: ShareRequest): DisplayMediaStreamOptions {
   } as unknown as DisplayMediaStreamOptions;
 }
 
-function videoPublishOptions(req: ShareRequest, codec: Codec, maxBitrate: number): TrackPublishOptions {
+function videoPublishOptions(req: ShareRequest, codec: Codec, maxBitrate: number, size: Size): TrackPublishOptions {
   // H.265 só toca em quem tem decodificador de hardware; AV1/VP9 em navegadores antigos podem falhar.
-  // Com REGRESSION o H.264 de reserva só é codificado se alguém da sala não conseguir decodificar.
-  const needsBackup = codec === 'h265' || ((codec === 'av1' || codec === 'vp9') && (req.maxCompatibility || req.preferredCodec === 'auto'));
+  // Com REGRESSION a reserva só é codificada se alguém da sala não conseguir decodificar. A reserva é
+  // VP8 e não H.264: no Chrome do Windows o H.264 do LiveKit é por software (OpenH264, uma thread só)
+  // e derrubava o FPS de quem joga assim que alguém de Firefox entrava.
+  const needsBackup = codec === 'h265' || ((codec === 'av1' || codec === 'vp9') && req.maxCompatibility);
+  // Automático (bitrate Auto): manda também uma cópia em metade da resolução. O servidor troca para ela
+  // só para quem não está aguentando (rede ou PC), em vez de travar; quem aguenta continua no máximo.
+  // AV1/VP9 já saem com camadas de tempo (L1T3), que fazem o mesmo cortando quadros.
+  const adaptive = req.plan.maxBitrate === 0 && (codec === 'vp8' || codec === 'h264') && Math.max(size.width, size.height) >= 960;
+  const lowFps = Math.min(req.plan.frameRate, 60);
   return {
     source: Track.Source.ScreenShare,
     videoCodec: codec,
     screenShareEncoding: { maxBitrate, maxFramerate: req.plan.frameRate, priority: 'high' },
     degradationPreference: req.plan.degradation,
-    // Uma camada só: simulcast codificaria a tela 2-3 vezes (mais custo para quem transmite).
-    simulcast: false,
-    ...(needsBackup ? { backupCodec: { codec: 'h264' }, backupCodecPolicy: BackupCodecPolicy.REGRESSION } : {}),
+    simulcast: adaptive,
+    ...(adaptive
+      ? {
+          screenShareSimulcastLayers: [
+            new VideoPreset(Math.round(size.width / 2), Math.round(size.height / 2), Math.max(1.5e6, Math.round(maxBitrate / 4)), lowFps, 'high'),
+          ],
+        }
+      : {}),
+    ...(needsBackup ? { backupCodec: { codec: 'vp8' }, backupCodecPolicy: BackupCodecPolicy.REGRESSION } : {}),
   } as TrackPublishOptions;
 }
 
@@ -201,7 +215,7 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
     },
     { once: true },
   );
-  await room.localParticipant.publishTrack(video, videoPublishOptions(req, codec, bitrate));
+  await room.localParticipant.publishTrack(video, videoPublishOptions(req, codec, bitrate, resolution));
   let audioState: ShareResult['audio'] = req.includeAudio ? 'refused' : 'not-requested';
   stopStudio();
   if (audio !== undefined && req.studio !== null) {

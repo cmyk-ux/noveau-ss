@@ -17,6 +17,24 @@ interface Section {
 
 const REFRESH_MS = 1000;
 
+/** Taxa de atualização da tela de quem assiste, medida pelos quadros de animação do navegador. */
+let monitorHz = 0;
+function measureMonitor() {
+  let n = 0;
+  const start = performance.now();
+  const step = (t: number) => {
+    n++;
+    if (t - start < 1000) requestAnimationFrame(step);
+    else {
+      const hz = (n * 1000) / (t - start);
+      // Arredonda para as taxas comuns (60, 75, 120, 144, 165, 240...).
+      const common = [30, 50, 60, 75, 90, 100, 120, 144, 165, 170, 180, 240, 280, 360];
+      monitorHz = common.reduce((a, b) => (Math.abs(b - hz) < Math.abs(a - hz) ? b : a));
+    }
+  };
+  requestAnimationFrame(step);
+}
+
 function row(label: string, value: string, warn = false): Row {
   return { label, value, warn };
 }
@@ -68,6 +86,7 @@ export class StatsPanel {
         this.sections.set([]);
         return;
       }
+      if (!document.hidden) measureMonitor();
       void this.refresh();
       const t = window.setInterval(() => void this.refresh(), REFRESH_MS);
       onCleanup(() => window.clearInterval(t));
@@ -129,6 +148,8 @@ export class StatsPanel {
       rows: [
         row('tamanho', `${r.width}x${r.height}`),
         row('fps', String(r.fps)),
+        // Mais quadros que o monitor atualiza não aparecem: 120 fps só se vê num monitor de 120 Hz+.
+        row('seu monitor', monitorHz > 0 ? `${monitorHz} Hz` : 'medindo…', monitorHz > 0 && r.fps > monitorHz + 3),
         row('bitrate', formatBitrate(r.bitrate)),
         row('codec', r.codec),
         row('decoder', `${r.decoder}${r.gpu === null ? '' : r.gpu ? ' · GPU' : ' · CPU'}`),

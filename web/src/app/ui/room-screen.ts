@@ -38,13 +38,15 @@ function timecode(ms: number): string {
       <header class="topbar">
         <div class="brand">
           <img class="mark pixel" src="logo.svg" alt="Noveau" width="32" height="32" />
-          @if (callRoom) {
-            <span class="roomname" [title]="'Sala da call ' + label()">{{ label() }}</span>
-          } @else {
-            <button type="button" class="roomname" [title]="chipTitle()" (click)="copyInvite()">{{ label() }}</button>
-          }
-          <span class="led" [class]="ledClass()" [title]="statusText()"></span>
-          <span class="lcd" [title]="statusText()">{{ clock() }}</span>
+          <!-- Plaqueta da sala: nome impresso em cima, tipo da sala embaixo, LED e contador no visor. -->
+          <div class="plate" [title]="callRoom ? 'Sala da call ' + label() : chipTitle()" [class.clickable]="!callRoom"
+            (click)="callRoom ? null : copyInvite()">
+            <span class="who">
+              <span class="roomname">{{ label() }}</span>
+              <span class="kind">{{ callRoom ? 'sala da call' : 'sala privada · clique p/ convidar' }}</span>
+            </span>
+            <span class="lcd" [title]="statusText()"><span class="led" [class]="ledClass()"></span>{{ clock() }}</span>
+          </div>
         </div>
 
         @if (store.focused(); as f) {
@@ -135,6 +137,10 @@ function timecode(ms: number): string {
             @if (store.shares().length > 1) {
               <button class="btn icon small ghost" title="Ver todas as telas" (click)="store.unfocus()"><cen-icon name="grid" [size]="16" /></button>
             }
+            @if (!f.isLocal && f.hasAudio) {
+              <button class="btn icon small ghost" title="Volume desta tela" (click)="openVolumeAt($event, f)">
+                <cen-icon [name]="f.volume.muted || f.volume.level === 0 ? 'speakerOff' : 'speaker'" [size]="16" /></button>
+            }
             @if (!f.isLocal || store.shares().length > 1) {
               <button class="btn icon small ghost" title="Esconder esta tela (para de baixar o vídeo e o som dela)" (click)="store.hideShare(f.id)">
                 <cen-icon name="eyeOff" [size]="16" /></button>
@@ -192,29 +198,33 @@ function timecode(ms: number): string {
           </div>
         }
         <cen-stats-panel />
+        @if (volumeMenu(); as m) {
+          <div class="menu-backdrop" (click)="volumeMenu.set(null)" (contextmenu)="$event.preventDefault(); volumeMenu.set(null)"></div>
+          <div class="volume-menu panel-surface" [style.left.px]="m.x" [style.top.px]="m.y" (click)="$event.stopPropagation()">
+            <p class="label">volume · {{ m.name }}</p>
+            @if (shareById(m.id); as sh) {
+              <cen-volume [volume]="sh.volume" [label]="'som da tela de ' + m.name"
+                (levelChange)="store.setVolume('share', sh.id, $event)"
+                (muteToggle)="store.toggleMute('share', sh.id)" />
+              <button type="button" class="check-row" role="menuitemcheckbox" [attr.aria-checked]="sh.volume.muted"
+                (click)="store.toggleMute('share', sh.id)">
+                <span>Mutar</span>
+                <span class="checkbox" [class.on]="sh.volume.muted">
+                  @if (sh.volume.muted) {
+                    <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                  }
+                </span>
+              </button>
+            }
+            @if (shareById(m.id); as sh) {
+              <button type="button" class="check-row" (click)="volumeMenu.set(null); store.hideShare(sh.id)">
+                <span>Esconder esta tela</span><cen-icon name="eyeOff" [size]="16" />
+              </button>
+            }
+            <p class="hint">Vai até 200%. Vale só para você.</p>
+          </div>
+        }
       </main>
-
-      @if (volumeMenu(); as m) {
-        <div class="menu-backdrop" (click)="volumeMenu.set(null)" (contextmenu)="$event.preventDefault(); volumeMenu.set(null)"></div>
-        <div class="volume-menu panel-surface" [style.left.px]="m.x" [style.top.px]="m.y" (click)="$event.stopPropagation()">
-          <p class="label">volume · {{ m.name }}</p>
-          @if (shareById(m.id); as sh) {
-            <cen-volume [volume]="sh.volume" [label]="'som da tela de ' + m.name"
-              (levelChange)="store.setVolume('share', sh.id, $event)"
-              (muteToggle)="store.toggleMute('share', sh.id)" />
-            <button type="button" class="check-row" role="menuitemcheckbox" [attr.aria-checked]="sh.volume.muted"
-              (click)="store.toggleMute('share', sh.id)">
-              <span>Mutar</span>
-              <span class="checkbox" [class.on]="sh.volume.muted">
-                @if (sh.volume.muted) {
-                  <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>
-                }
-              </span>
-            </button>
-          }
-          <p class="hint">Vai até 200%. Vale só para você.</p>
-        </div>
-      }
 
       @if (store.clips.items().length > 0) {
         <div class="shelf">
@@ -318,9 +328,20 @@ function timecode(ms: number): string {
       box-shadow: inset 0 -1px 0 rgb(255 255 255 / 0.04), 0 1px 0 #000; }
     .brand { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
     .mark { width: 32px; height: 32px; display: block; }
-    .roomname { font-family: var(--display); font-style: italic; font-size: 1.3rem; line-height: 1; background: none; border: 0;
-      padding: 0; max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    button.roomname:hover { color: var(--accent-hi); }
+    .plate { display: flex; align-items: center; gap: 0.75rem; height: 38px; padding: 0 4px 0 0.7rem; min-width: 0;
+      border-radius: 3px; background: var(--well); box-shadow: var(--inset); }
+    .plate.clickable { cursor: pointer; }
+    .plate.clickable:hover .roomname { color: var(--accent-hi); }
+    .who { display: flex; flex-direction: column; min-width: 0; }
+    .roomname { font-weight: 600; font-size: 0.92rem; line-height: 1.15; max-width: 14rem; overflow: hidden;
+      text-overflow: ellipsis; white-space: nowrap; }
+    .kind { font: 500 0.56rem/1.2 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); white-space: nowrap; }
+    .plate .lcd { height: 28px; padding: 0 0.55rem; gap: 0.4rem; }
+    /* No visor o LED vira um segmento escuro aceso/apagado, como num LCD. */
+    .plate .lcd .led { width: 6px; height: 6px; background: rgb(29 34 25 / 0.25); box-shadow: none; animation: none; }
+    .plate .lcd .led.ok { background: var(--lcd-ink); }
+    .plate .lcd .led.warn { background: var(--lcd-ink); animation: blink 1.2s steps(1) infinite; }
+    .plate .lcd .led.bad { background: #6b1d16; }
     .now { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.9rem; min-width: 0;
       padding-left: 0.9rem; border-left: 1px solid var(--line); animation: slide-in 260ms var(--ease) both; }
     .onair { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.14em; color: #fff; background: var(--danger);
@@ -440,7 +461,7 @@ function timecode(ms: number): string {
     /* ---------- painel de pessoas */
     .panel { position: absolute; top: 60px; right: 0.75rem; bottom: 5rem; width: min(340px, calc(100% - 1.5rem));
       overflow-y: auto; padding: 0.7rem 0.9rem 1rem; z-index: 10; animation: slide-in 220ms var(--ease) both; }
-    @media (max-width: 640px) { .now { border-left: 0; padding-left: 0; } .roomname { max-width: 10rem; } }
+    @media (max-width: 640px) { .now { border-left: 0; padding-left: 0; } .roomname { max-width: 8rem; } .kind { display: none; } }
   `,
 })
 export class RoomScreen {
@@ -487,8 +508,16 @@ export class RoomScreen {
     e.preventDefault();
     if (s.isLocal) return;
     const x = Math.min(e.clientX, window.innerWidth - 276);
-    const y = Math.min(e.clientY, window.innerHeight - 140);
+    const y = Math.min(e.clientY, window.innerHeight - 190);
     this.volumeMenu.set({ id: s.id, name: s.ownerName, x, y });
+  }
+
+  /** Botão de som no canto da tela (funciona em tela cheia, onde o botão direito some de vista). */
+  openVolumeAt(e: MouseEvent, s: ShareView) {
+    e.stopPropagation();
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const x = Math.max(8, Math.min(r.right - 270, window.innerWidth - 278));
+    this.volumeMenu.set({ id: s.id, name: s.ownerName, x, y: r.bottom + 6 });
   }
 
   /** Clicar na tela em foco volta para a grade (se não estiver usando o cursor, que também clica). */
