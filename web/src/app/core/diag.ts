@@ -120,6 +120,10 @@ export interface FreezeWindow {
   arrivedDuring: number;
   /** Pedidos de quadro-chave que o meu navegador fez. */
   plis: number;
+  /** Pacotes que não chegaram nem com reenvio. */
+  lost: number;
+  /** Quadros jogados fora (por exemplo, à espera de um quadro-chave). */
+  dropped: number;
   codec: string;
 }
 
@@ -156,24 +160,35 @@ export function classify(
         : 'Sua conexão com o servidor está ruim. Só você trava.',
     };
   }
+  // 4) Um pacote se perdeu de vez e a imagem esperou um quadro inteiro novo (os quadros seguintes
+  //    dependiam dele e foram jogados fora). Uma perda só já basta, mesmo que a % pareça zero.
+  if (w !== null && w.lost > 0 && (w.plis > 0 || w.dropped > 0)) {
+    const theirs = tx !== null && tx.l >= 0.1;
+    return {
+      cause: theirs ? 'their-net' : 'my-net',
+      text: theirs
+        ? `${w.lost} pacote(s) de ${who} se perderam na subida e o reenvio não chegou a tempo; a imagem esperou um quadro inteiro novo.`
+        : `${w.lost} pacote(s) se perderam e o reenvio não chegou a tempo; a imagem esperou um quadro inteiro novo. A subida de ${who} não acusou perda, então provavelmente foi no caminho até você.`,
+    };
+  }
   if (w !== null && w.fpsBefore >= 5) {
     const codec = w.codec === '' ? '' : ` (${w.codec})`;
-    // 4) Chegou tudo, mas o meu navegador pediu quadro-chave: o decodificador não conseguiu ler
+    // 5) Chegou tudo, mas o meu navegador pediu quadro-chave: o decodificador não conseguiu ler
     //    um quadro. Sem perda nenhuma, isso é o decodificador (comum com H.265 na placa de vídeo).
-    if (w.plis > 0 && d.lossPct < 0.05) {
+    if (w.plis > 0) {
       return {
         cause: 'my-decoder',
         text: `Seu navegador não conseguiu decodificar um quadro de ${who}${codec} e teve de esperar um quadro inteiro novo. Chegou tudo, então é o decodificador, não a rede.`,
       };
     }
-    // 5) Os quadros chegaram e ficaram presos sem ser decodificados.
+    // 6) Os quadros chegaram e ficaram presos sem ser decodificados.
     if (w.stuck >= Math.max(3, w.fpsBefore * w.freezeSec * 0.5)) {
       return {
         cause: 'my-decoder',
         text: `Os quadros de ${who} chegaram, mas o decodificador do seu navegador${codec} engasgou com eles.`,
       };
     }
-    // 6) Nada chegou durante a pausa, sem perda: quem transmite parou de mandar quadros.
+    // 7) Nada chegou durante a pausa, sem perda: quem transmite parou de mandar quadros.
     if (w.arrivedDuring <= w.fpsBefore * w.freezeSec * 0.2) {
       return {
         cause: 'their-idle',
@@ -181,7 +196,7 @@ export function classify(
       };
     }
   }
-  // 7) O meu PC: chegou tudo, mas o navegador descartou quadros ao mostrar.
+  // 8) O meu PC: chegou tudo, sem pedir quadro-chave, mas o navegador descartou quadros ao mostrar.
   if (d.dropped > 0) {
     return {
       cause: 'my-pc',
@@ -272,6 +287,7 @@ export class Diagnostics {
       quadrosPresos: w?.stuck ?? -1,
       quadrosNaPausa: w?.arrivedDuring ?? -1,
       pedidosChave: w?.plis ?? -1,
+      pacotesPerdidos: w?.lost ?? -1,
       perdaMinha: Number(d.lossPct.toFixed(3)),
       perdaDele: tx?.l ?? -1,
       reenviosPedidos: d.nacks,
@@ -279,7 +295,6 @@ export class Diagnostics {
       quadrosDescartados: d.dropped,
       jitterMs: d.jitterMs,
       qualidadeDele: p.theirQuality,
-      qualidadeMinha: p.myQuality,
       cpuDele: tx?.cpu ?? '',
       tetoDele: tx === null ? '' : `${tx.cap}/${tx.max}`,
     });
@@ -310,6 +325,8 @@ export class Diagnostics {
       stuck: Math.max(0, rx - (now.framesDec - base.framesDec) - (now.dropped - base.dropped)),
       arrivedDuring: Math.max(0, Math.round(rx - fpsBefore * Math.max(0, span - freezeSec))),
       plis: Math.max(0, now.plis - base.plis),
+      lost: Math.max(0, now.lost - base.lost),
+      dropped: Math.max(0, now.dropped - base.dropped),
       codec: now.codec,
     };
   }
