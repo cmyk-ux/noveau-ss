@@ -154,9 +154,9 @@ async function pumpVideo(reader: ReadableStreamDefaultReader<VideoFrame>, gen: n
     }
     lastFrame = at;
     const want = fit(frame.displayWidth, frame.displayHeight, opts!.maxWidth, opts!.maxHeight);
+    let input: VideoFrame | null = null;
     try {
       if (video === null || want.width !== size.width || want.height !== size.height) await openVideo(want.width, want.height);
-      let input = frame;
       if (frame.displayWidth !== want.width || frame.displayHeight !== want.height) {
         if (canvas === null || canvas.width !== want.width || canvas.height !== want.height) {
           canvas = new OffscreenCanvas(want.width, want.height);
@@ -170,10 +170,11 @@ async function pumpVideo(reader: ReadableStreamDefaultReader<VideoFrame>, gen: n
       const key = at - lastKey >= KEY_EVERY_US;
       if (key) lastKey = at;
       video!.encode(input, { keyFrame: key });
-      input.close();
     } catch (e) {
       post({ type: 'error', message: e instanceof Error ? e.message : String(e) });
     } finally {
+      // Quadro não fechado trava a captura do navegador (o estoque de quadros é pequeno).
+      input?.close();
       frame.close();
     }
   }
@@ -207,27 +208,41 @@ async function pumpAudio(reader: ReadableStreamDefaultReader<AudioData>, gen: nu
 let audioShift = 0;
 
 async function clip() {
-  if (video === null || videoConfig === null || frames.length === 0) {
-    post({ type: 'clip-error', message: 'Ainda não tem nada gravado. Espere alguns segundos.' });
-    return;
+  try {
+    if (video === null || videoConfig === null || frames.length === 0) {
+      post({ type: 'clip-error', message: 'Ainda não tem nada gravado. Espere alguns segundos.' });
+      return;
+    }
+    // Sem flush(): no Windows, o codificador H.264 da placa de vídeo pode demorar (ou nunca
+    // responder) para esvaziar enquanto continua recebendo quadros. Usa o que já saiu dele,
+    // o que só deixa de fora os últimos milissegundos.
+    const vids = frames.slice();
+    const start = vids[0].at;
+    const end = vids.at(-1)!.at;
+    const snd = audioConfig !== null && audioFormat !== null ? monotonic(sounds.filter((s) => s.at >= start && s.at <= end)) : [];
+    const muxer = new Muxer({
+      target: new ArrayBufferTarget(),
+      video: { codec: 'avc', width: size.width, height: size.height, frameRate: opts!.fps },
+      audio: snd.length > 0 ? { codec: audioCodec, numberOfChannels: audioFormat!.channels, sampleRate: audioFormat!.sampleRate } : undefined,
+      fastStart: 'in-memory',
+      firstTimestampBehavior: 'cross-track-offset',
+    });
+    vids.forEach((f, i) => muxer.addVideoChunk(f.chunk, i === 0 ? { decoderConfig: videoConfig! } : undefined, f.at - start));
+    snd.forEach((s, i) => muxer.addAudioChunk(s.chunk, i === 0 ? { decoderConfig: audioConfig! } : undefined, s.at - start));
+    muxer.finalize();
+    const buffer = muxer.target.buffer;
+    post({ type: 'clip', buffer, seconds: (end - start) / 1e6, width: size.width, height: size.height }, [buffer]);
+  } catch (e) {
+    // Nunca deixa o clipe preso em "montando": devolve o motivo para aparecer no cartão.
+    post({ type: 'clip-error', message: `Não consegui montar o vídeo: ${e instanceof Error ? e.message : String(e)}` });
   }
-  await video.flush().catch(() => undefined);
-  await audio?.flush().catch(() => undefined);
-  const vids = frames.slice();
-  const start = vids[0].at;
-  const snd = audioConfig !== null && audioFormat !== null ? sounds.filter((s) => s.at >= start) : [];
-  const muxer = new Muxer({
-    target: new ArrayBufferTarget(),
-    video: { codec: 'avc', width: size.width, height: size.height, frameRate: opts!.fps },
-    audio: snd.length > 0 ? { codec: audioCodec, numberOfChannels: audioFormat!.channels, sampleRate: audioFormat!.sampleRate } : undefined,
-    fastStart: 'in-memory',
-    firstTimestampBehavior: 'cross-track-offset',
-  });
-  vids.forEach((f, i) => muxer.addVideoChunk(f.chunk, i === 0 ? { decoderConfig: videoConfig! } : undefined, f.at - start));
-  snd.forEach((s, i) => muxer.addAudioChunk(s.chunk, i === 0 ? { decoderConfig: audioConfig! } : undefined, s.at - start));
-  muxer.finalize();
-  const buffer = muxer.target.buffer;
-  post({ type: 'clip', buffer, seconds: (vids.at(-1)!.at - start) / 1e6, width: size.width, height: size.height }, [buffer]);
+}
+
+/** O MP4 exige tempos sempre crescentes; descarta pedaços de som fora de ordem. */
+function monotonic<T extends { at: number }>(list: T[]): T[] {
+  const out: T[] = [];
+  for (const s of list) if (out.length === 0 || s.at > out.at(-1)!.at) out.push(s);
+  return out;
 }
 
 function stop() {
