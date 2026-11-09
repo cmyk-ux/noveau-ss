@@ -22,6 +22,7 @@ import {
 } from './room-session';
 import { ScreenShareCancelledError } from './share';
 import { StudioHub } from './studio';
+import { DawListener, requestDawCode } from './daw';
 import { ShareHealth, StatsSampler } from './stats';
 import { formatBitrate, planFor } from './stream';
 import { Toast } from './toast';
@@ -120,6 +121,7 @@ export class RoomStore {
       window.removeEventListener('beforeunload', leave);
       offChange();
       this.watch?.stop();
+      this.daw.stop();
       this.studio.dispose();
       this.clips.stop();
       this.diag.stop();
@@ -188,6 +190,7 @@ export class RoomStore {
       this.link = link ?? { key: '', secret: '' };
       this._join.set('joined');
       this.diag.start();
+      this.daw.start();
     } catch (e) {
       const msg = e instanceof Error ? e.message : '';
       this._error.set(
@@ -262,6 +265,13 @@ export class RoomStore {
 
   /** Som de estúdio (sem compressão) que chega de quem transmite. */
   readonly studio = new StudioHub(this.session.room);
+  /** Som dos plugins de DAW desta sala (chega pelo servidor, não pelo LiveKit). */
+  readonly daw = new DawListener(this.studio, () => this.token);
+
+  /** Código para digitar no plugin de DAW (vale 10 min). */
+  dawCode() {
+    return requestDawCode(this.token);
+  }
 
   /** A sala do LiveKit, para recursos que falam direto por ela (cursores). */
   get liveRoom() {

@@ -15,8 +15,9 @@ import { Stage } from './stage';
 import { VolumeSlider } from './volume-slider';
 import { StatsPanel } from './stats-panel';
 import { StreamPanel } from './stream-panel';
+import { DawPanel } from './daw-panel';
 
-type Menu = 'mic' | 'screen' | 'camera';
+type Menu = 'mic' | 'screen' | 'camera' | 'daw';
 
 /** Tempo desde que entrou, como o contador de uma fita: 00:12:34. */
 function timecode(ms: number): string {
@@ -27,7 +28,7 @@ function timecode(ms: number): string {
 
 @Component({
   selector: 'cen-room-screen',
-  imports: [Icon, Stage, ShareTile, VolumeSlider, StatsPanel, PeoplePanel, StreamPanel, DevicesPanel],
+  imports: [Icon, Stage, ShareTile, VolumeSlider, StatsPanel, PeoplePanel, StreamPanel, DevicesPanel, DawPanel],
   host: {
     '(document:fullscreenchange)': 'isFullscreen.set(fullscreenActive())',
     '(document:keydown.escape)': 'closeAll()',
@@ -56,8 +57,8 @@ function timecode(ms: number): string {
             <strong>{{ shareTitle() }}</strong>
             @if (stage()?.measured(); as m) { <span class="tag mono">{{ m }}</span> }
             @if (f.hasAudio) { <span class="tag">com som</span> }
-            @for (st of store.studio.streams(); track st.identity) {
-              <span class="tag accent" title="Som sem compressão, abra 'pessoas' para ajustar">estúdio {{ st.bits }}-bit</span>
+            @for (st of store.studio.streams(); track st.key) {
+              <span class="tag accent" title="Som sem compressão, abra 'pessoas' para ajustar">{{ st.source === 'daw' ? 'DAW de ' + st.name : 'estúdio ' + st.bits + '-bit' }}</span>
             }
             @if (adaptedBadge(); as a) { <span class="tag warn" [title]="a.title">{{ a.text }}</span> }
             @if (f.isLocal && store.upload(); as u) {
@@ -336,6 +337,11 @@ function timecode(ms: number): string {
             </div>
           }
 
+          @if (!isMobile) {
+            <button class="btn icon" [class.on]="menu() === 'daw' || dawPlaying()" title="Plugin de DAW: som da sua DAW sem compressão"
+              aria-label="Plugin de DAW" [attr.aria-expanded]="menu() === 'daw'" (click)="toggleMenu('daw')"><cen-icon name="fader" /></button>
+          }
+
           @if (isMobile) {
             <button class="btn icon" [class.on]="peopleOpen()" title="Pessoas e volumes" (click)="togglePeople()"><cen-icon name="people" /></button>
           }
@@ -353,6 +359,7 @@ function timecode(ms: number): string {
               @case ('mic') { <cen-devices-panel section="mic" [open]="true" /> }
               @case ('screen') { <cen-stream-panel /> }
               @case ('camera') { <cen-devices-panel section="camera" [open]="true" /> }
+              @case ('daw') { <cen-daw-panel /> }
             }
           </div>
         }
@@ -578,6 +585,8 @@ export class RoomScreen {
   protected readonly prefs = inject(Prefs);
   protected readonly canShare = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
   protected readonly menu = signal<Menu | null>(null);
+  /** Algum plugin de DAW tocando na sala: a tecla do plugin fica acesa. */
+  protected readonly dawPlaying = computed(() => this.store.studio.streams().some((s) => s.source === 'daw'));
   protected readonly diagOpen = signal(false);
   /** A travada mais recente, por 8 s, numa faixa sobre a tela. */
   protected readonly freshIssue = computed(() => {
@@ -744,7 +753,7 @@ export class RoomScreen {
   }
 
   menuTitle(m: Menu) {
-    return m === 'mic' ? 'microfone' : m === 'screen' ? 'transmissão da tela' : 'câmera';
+    return m === 'mic' ? 'microfone' : m === 'screen' ? 'transmissão da tela' : m === 'daw' ? 'plugin de DAW' : 'câmera';
   }
 
   closeAll() {
@@ -757,7 +766,7 @@ export class RoomScreen {
   outside(e: PointerEvent) {
     if (this.menu() === null) return;
     const el = e.target instanceof Element ? e.target : null;
-    if (el?.closest('.pop, .caret') == null) this.menu.set(null);
+    if (el?.closest('.pop, .caret, [aria-label="Plugin de DAW"]') == null) this.menu.set(null);
   }
 
   /**
