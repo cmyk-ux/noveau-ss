@@ -123,6 +123,11 @@ export class ClipRecorder {
     const id = `local-${Date.now()}`;
     this.upsert({ id, name: this.pendingName, state: 'saving', progress: 0 });
     this.worker.postMessage({ type: 'clip', id });
+    // Rede de segurança: se o gravador não responder, o cartão não fica preso em "montando".
+    window.setTimeout(() => {
+      const item = this._items().find((i) => i.id === id);
+      if (item?.state === 'saving') this.upsert({ ...item, state: 'failed', error: 'O navegador não terminou de montar o vídeo (30 s). Tente de novo.' });
+    }, 30_000);
   }
 
   async remove(item: ClipItem) {

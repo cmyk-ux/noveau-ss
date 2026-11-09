@@ -172,14 +172,10 @@ function timecode(ms: number): string {
           }
           <div class="corner">
             @if (store.canClip() && !isMobile) {
-              @if (prefs.clips()) {
-                <button class="btn small ghost buf" [title]="'Guardando os últimos 2 min' + (store.clips.size() ? ' (' + store.clips.size() + ')' : '') + '. Clique para desligar.'"
-                  (click)="prefs.setClips(false)"><span class="led" [class.bad]="store.clips.buffered() > 0"></span><span class="mono">{{ mmss(store.clips.buffered()) }}</span></button>
-                <button class="btn small ghost" title="Clipar os últimos 2 min (Alt+C)" (click)="clip()"><cen-icon name="scissors" [size]="15" /> clipar</button>
-              } @else {
-                <button class="btn small ghost" title="Começa a guardar os últimos 2 min desta tela para você poder clipar" (click)="prefs.setClips(true)">
-                  <cen-icon name="scissors" [size]="15" /> clipes</button>
-              }
+              <button class="btn small ghost" (click)="clip()"
+                [title]="'Clipa os últimos 2 min desta tela (Alt+C). Guardado até agora: ' + mmss(store.clips.buffered()) + (store.clips.size() ? ' (' + store.clips.size() + ')' : '')">
+                <cen-icon name="scissors" [size]="15" /> clipar
+                <span class="mono buf">{{ mmss(store.clips.buffered()) }}</span></button>
             }
             @if (store.shares().length > 1) {
               <button class="btn icon small ghost" title="Ver todas as telas" (click)="store.unfocus()"><cen-icon name="grid" [size]="16" /></button>
@@ -532,7 +528,7 @@ function timecode(ms: number): string {
     .countdown { flex: 1; text-align: center; font-size: 0.8rem; color: var(--warn); }
     .meter { height: 6px; margin-top: 0.55rem; border-radius: 1px; background: var(--well); box-shadow: var(--inset); overflow: hidden; }
     .meter i { display: block; height: 100%; background: var(--accent); transition: width 200ms linear; }
-    .buf { gap: 0.4rem; }
+    .buf { color: var(--muted); font-size: 0.75rem; margin-left: 0.1rem; }
 
     /* ---------- painel de pessoas */
     .panel { position: absolute; top: 60px; right: 0.75rem; bottom: 5rem; width: min(340px, calc(100% - 1.5rem));
@@ -802,9 +798,8 @@ export class RoomScreen {
    */
   clip() {
     if (!this.store.canClip() || this.store.focused() === null) return;
-    if (!this.prefs.clips()) {
-      this.prefs.setClips(true);
-      this.toast.show('Clipes ligados: a partir de agora ficam guardados os últimos 2 min desta tela.');
+    if (this.store.clips.buffered() < 1) {
+      this.toast.show('Ainda começando a guardar esta tela. Tente de novo em alguns segundos.');
       return;
     }
     this.store.clips.clip();
