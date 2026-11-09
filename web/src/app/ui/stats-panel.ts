@@ -185,7 +185,8 @@ export class StatsPanel {
         row('codec', r.codec),
         row('decoder', `${r.decoder}${r.gpu === null ? '' : r.gpu ? ' · GPU' : ' · CPU'}`),
         row('pacotes perdidos', `${r.packetsLost} (${lossPct(r.packetsLost, r.packetsReceived)})`, r.packetsLost > 0),
-        row('reenvios', `${r.recovered} recuperados / ${r.nacks} pedidos`),
+        // nackCount conta mensagens (cada uma pode pedir vários pacotes, e repete): não dá para dividir.
+        row('pedidos de reenvio', `${r.nacks} (chegaram ${r.recovered})`),
         row('proteção', this.store.shieldStatus() || '—'),
         row('quadros descartados', String(r.framesDropped), r.framesDropped > 0),
         row('travadas', `${r.freezeCount} (${r.freezeSeconds}s)`, r.freezeCount > 0),
