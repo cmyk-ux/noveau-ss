@@ -26,7 +26,13 @@ O plugin não mexe no som: o que entra sai igual. Ele guarda a conexão no proje
 sozinho por 24 h. Formato: 24-bit (padrão), 32-bit float (idêntico à DAW) ou 16-bit.
 A taxa é a do projeto (44,1 a 192 kHz). 24-bit a 48 kHz gasta ~2,3 Mbps de upload.
 
-PRO TOOLS (AAX)
+PRO TOOLS (jeito que funciona hoje)
+  1. Instale o Plugin Buddy (grátis, AAX assinado): https://www.modalics.com/products/plugin-buddy-free
+  2. Instale o "noveau DAW.vst3" como no Windows/macOS acima (pasta VST3).
+  3. No Pro Tools, crie um Master Fader e coloque o Plugin Buddy no último insert dele.
+  4. Dentro do Plugin Buddy, carregue o "noveau DAW" (VST3), abra a tela dele e conecte com o código.
+
+PRO TOOLS (AAX próprio, quando for assinado)
   Windows: copie "noveau DAW.aaxplugin" para C:\Program Files\Common Files\Avid\Audio\Plug-Ins\
   macOS:   copie "noveau DAW.aaxplugin" para /Library/Application Support/Avid/Audio/Plug-Ins/
   Por enquanto ele ainda não é assinado pela PACE/iLok, então só abre no "Pro Tools Developer"

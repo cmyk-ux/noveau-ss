@@ -66,7 +66,9 @@ tem licença comercial. VST3 é MIT desde a versão 3.8 do SDK (out/2025).
 
 ## Limites conhecidos
 
-- Pro Tools (AAX): compilado (o SDK vem na JUCE, GPLv3), mas **sem assinatura** só abre no Pro Tools
+- Pro Tools hoje: o **Plugin Buddy** (Modalics, grátis, AAX assinado) carrega VST3 dentro do Pro Tools.
+  Coloca o Plugin Buddy no último insert do Master Fader e o noveau DAW (VST3) dentro dele.
+- Pro Tools (AAX próprio): compilado (o SDK vem na JUCE, GPLv3), mas **sem assinatura** só abre no Pro Tools
   Developer. Para o Pro Tools comum: criar conta em developer.avid.com/aax, pedir as ferramentas de
   assinatura (e-mail para audiosdk@avid.com, assunto "PACE Eden Signing Tools Request", com descrição
   do plugin e um vídeo), ter uma conta iLok, e então assinar com o `wraptool` da PACE.
