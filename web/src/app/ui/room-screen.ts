@@ -722,10 +722,14 @@ export class RoomScreen {
         return 'internet de quem transmite';
       case 'their-pc':
         return 'PC de quem transmite';
+      case 'their-idle':
+        return 'nada novo de quem transmite';
       case 'my-net':
         return 'sua internet';
       case 'my-pc':
         return 'seu PC';
+      case 'my-decoder':
+        return 'decodificador do seu navegador';
       default:
         return 'sem causa clara';
     }

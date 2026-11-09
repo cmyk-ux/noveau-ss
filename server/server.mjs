@@ -313,7 +313,7 @@ async function clipRoute(req, res, path) {
 // arquivo JSONL (um registro por linha), que gira em 10 MB.
 const DIAG_FILE = process.env.DIAG_FILE ?? '';
 const DIAG_MAX_BYTES = 10 * 1024 * 1024;
-const DIAG_CAUSES = new Set(['their-net', 'their-pc', 'my-net', 'my-pc', 'unknown']);
+const DIAG_CAUSES = new Set(['their-net', 'their-pc', 'their-idle', 'my-net', 'my-pc', 'my-decoder', 'unknown']);
 const diagRate = new Map(); // identidade -> { minute, count }
 
 async function diagRoute(req, res) {
