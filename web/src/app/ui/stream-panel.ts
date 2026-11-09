@@ -148,7 +148,7 @@ import {
       padding: 0.55rem 0.75rem; margin-bottom: 0.35rem; border-radius: var(--radius);
       border: 1px solid var(--line); background: transparent; }
     .option span { color: var(--muted); font-size: 0.82rem; }
-    .option.lit { border-color: var(--accent); background: #e9a9301a; }
+    .option.lit { border-color: var(--accent); background: #7c4dff26; }
     .switch { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.6rem; cursor: pointer; }
     .switch input { accent-color: var(--accent); width: 16px; height: 16px; }
     .summary { margin-top: 1.2rem; padding-top: 0.8rem; border-top: 1px solid var(--line); font-size: 0.88rem; }
