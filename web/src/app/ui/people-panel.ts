@@ -49,7 +49,7 @@ import { VolumeSlider } from './volume-slider';
         <p class="hint">Engasgando? Aumente o atraso. Ele só afeta o som de estúdio.</p>
       </div>
     }
-    <p class="label">na sala</p>
+    <p class="label">na sala <span class="count">{{ store.participants().length }}</span></p>
     @for (p of store.participants(); track p.identity) {
       <div class="person" [class.speaking]="p.isSpeaking">
         @if (p.avatar) { <img class="avatar" [src]="p.avatar" alt="" width="22" height="22" /> } @else { <span class="dot"></span> }
@@ -75,7 +75,7 @@ import { VolumeSlider } from './volume-slider';
     }
 
     @if (outside().length > 0) {
-      <p class="label">{{ callRoom ? 'na call, fora do site' : 'na sua call do Discord' }}</p>
+      <p class="label">{{ callRoom ? 'na call, fora do site' : 'na sua call do Discord' }} <span class="count">{{ outside().length }}</span></p>
       @for (m of outside(); track m.id) {
         <div class="person outside">
           @if (m.avatar) { <img class="avatar" [src]="m.avatar" alt="" width="22" height="22" /> } @else { <span class="dot"></span> }
@@ -87,27 +87,44 @@ import { VolumeSlider } from './volume-slider';
           </button>
         </div>
       }
-      <p class="hint">{{ isMobile ? 'Toque em convidar' : 'Passe o mouse em alguém para convidar' }}: o bot manda o link no privado do Discord.</p>
+      <p class="hint tight">{{ isMobile ? 'Toque em convidar' : 'Passe o mouse para convidar' }}: o bot manda o link no privado.</p>
     }
 
     @if (callRoom && iAmDiscord()) {
-      <button type="button" class="btn small wide action" [disabled]="makingGuest()" (click)="guestInvite()">
-        {{ makingGuest() ? 'Criando…' : 'Convite de 1 uso (sem Discord)' }}
-      </button>
-      <p class="hint">Gera um link que só uma pessoa usa. Ela escolhe um apelido e entra nesta sala. Qualquer um daqui com Discord pode expulsar.</p>
-      <button type="button" class="btn small wide action" [disabled]="pinging()" (click)="ping()">
-        {{ pinging() ? 'Avisando…' : 'Chamar a call no Discord' }}
-      </button>
-      <p class="hint">O bot marca todo mundo da call no chat do canal de voz com o link do site.</p>
-      <button type="button" class="btn small wide action" (click)="privateRoom()">Abrir uma sala privada</button>
-      <p class="hint">Cria uma sala só com quem você convidar, para passar tela em particular.</p>
+      <p class="label">chamar gente</p>
+      <div class="acts">
+        <button type="button" class="act" [disabled]="pinging()" (click)="ping()">
+          <strong>{{ pinging() ? 'Avisando…' : 'Chamar a call' }}</strong>
+          <span>o bot marca todo mundo no chat do canal de voz</span>
+        </button>
+        <button type="button" class="act" [disabled]="makingGuest()" (click)="guestInvite()"
+          title="Link que só uma pessoa usa. Ela escolhe um apelido e entra nesta sala. Qualquer um daqui com Discord pode expulsar.">
+          <strong>{{ makingGuest() ? 'Criando…' : 'Convite de 1 uso' }}</strong>
+          <span>para quem não tem Discord</span>
+        </button>
+        <button type="button" class="act" (click)="privateRoom()">
+          <strong>Sala privada</strong>
+          <span>só com quem você convidar</span>
+        </button>
+      </div>
     }
-    <p class="hint">O ponto acende em quem está falando. Os volumes aqui valem só para você.</p>
+    <p class="foot">Os volumes valem só para você. O contorno verde é quem está falando.</p>
   `,
   styles: `
     :host { display: block; }
     .person { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.7rem; }
-    .person + cen-volume { margin-top: 0.25rem; }
+    .person + cen-volume { display: block; margin: 0.15rem 0 0 calc(22px + 0.5rem); }
+    .label .count { color: var(--muted); margin-left: 0.3rem; }
+    .tight { margin-top: 0.4rem; }
+    .acts { display: grid; gap: 1px; margin-top: 0.5rem; border: 1px solid var(--line-2); border-radius: 6px; overflow: hidden;
+      background: var(--line-2); }
+    .act { display: grid; gap: 0.1rem; text-align: left; padding: 0.55rem 0.7rem; border: 0; background: var(--surface);
+      color: inherit; font: inherit; cursor: pointer; }
+    .act:hover:not(:disabled) { background: var(--surface-3); }
+    .act:disabled { opacity: 0.6; cursor: default; }
+    .act strong { font-size: 0.85rem; font-weight: 600; }
+    .act span { font-size: 0.75rem; color: var(--muted); }
+    .foot { margin-top: 1rem; font-size: 0.72rem; color: var(--muted); }
     .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .you { color: var(--muted); font-size: 0.85rem; margin-left: 0.25rem; }
     .dot { width: 8px; height: 8px; margin: 0 7px; border-radius: 50%; background: var(--line-2); flex-shrink: 0; }
@@ -118,7 +135,6 @@ import { VolumeSlider } from './volume-slider';
       border-radius: 1px; }
     .outside { color: var(--muted); }
     .outside .avatar { opacity: 0.6; filter: grayscale(1); }
-    .action { margin-top: 1rem; }
     .studio { border: 1px solid var(--line-2); border-radius: 6px; padding: 0.25rem 0.6rem 0.6rem; margin-bottom: 0.5rem;
       background: #09080c; box-shadow: inset 0 1px 4px #000a; }
     .studio input[type=range] { flex: 1; accent-color: var(--accent); }

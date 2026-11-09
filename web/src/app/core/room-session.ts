@@ -386,6 +386,14 @@ export class RoomSession {
     };
   }
 
+  /** Quem transmite a tela em foco e o que ele conta sobre o envio (atributo "tx"). */
+  focusedSender(): { name: string; tx: string | null } | null {
+    const f = this.focusedLive();
+    if (f === undefined || f.view.isLocal) return null;
+    const owner = this.room.remoteParticipants.get(f.view.ownerIdentity);
+    return { name: f.view.ownerName, tx: owner?.attributes?.['tx'] ?? null };
+  }
+
   /** Para as estatísticas: a proteção contra travadas está disponível/ligada para a tela em foco? */
   shieldStatus(): string {
     const f = this.focusedLive();

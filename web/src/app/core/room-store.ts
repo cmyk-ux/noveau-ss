@@ -103,6 +103,9 @@ export class RoomStore {
   readonly webcamOn = computed(() => isWebcamOn(this._snapshot()));
   readonly micOn = computed(() => isMicOn(this._snapshot()));
   readonly focused = computed(() => focusedShare(this._snapshot()));
+  focusedSender() {
+    return this.session.focusedSender();
+  }
   readonly focusedWatchers = computed(() => focusedWatchers(this._snapshot()));
   readonly waitingForCamera = computed(() => isWaitingForCamera(this._snapshot(), this._camera() !== null));
 

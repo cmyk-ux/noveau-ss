@@ -22,7 +22,7 @@ export function encodeSendHealth(h: SendHealth): string {
   return JSON.stringify(h);
 }
 
-function parseSendHealth(raw: string | null): SendHealth | null {
+export function parseSendHealth(raw: string | null): SendHealth | null {
   if (raw === null || raw === '') return null;
   try {
     const v = JSON.parse(raw);

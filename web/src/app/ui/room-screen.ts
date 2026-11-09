@@ -1,3 +1,4 @@
+import { parseSendHealth } from '../core/diag';
 import { Component, DestroyRef, ElementRef, computed, effect, inject, input, output, signal, viewChild } from '@angular/core';
 import { IS_IOS, IS_MOBILE } from '../core/device';
 import { Prefs } from '../core/prefs';
@@ -55,6 +56,7 @@ function timecode(ms: number): string {
             <span class="onair mono">{{ f.isLocal ? 'enviando' : 'no ar' }}</span>
             <strong>{{ shareTitle() }}</strong>
             @if (stage()?.measured(); as m) { <span class="tag mono">{{ m }}</span> }
+            @if (senderNote(); as n) { <span class="tag warn sender-note" [title]="n.title">{{ n.text }}</span> }
             @if (f.hasAudio) { <span class="tag">com som</span> }
             @for (st of store.studio.streams(); track st.identity) {
               <span class="tag accent" title="Som sem compressão, abra 'pessoas' para ajustar">estúdio {{ st.bits }}-bit</span>
@@ -714,6 +716,31 @@ export class RoomScreen {
   openDiag() {
     this.diagOpen.set(true);
     this.store.diag.markSeen();
+  }
+
+  /**
+   * Por que a tela de quem transmite está mais leve: o PC ou a internet dele não aguentam o máximo
+   * e o navegador dele reduziu sozinho. Sem limitação (inclusive quando ele mesmo escolheu menos),
+   * não aparece nada.
+   */
+  senderNote(): { text: string; title: string } | null {
+    this.now();
+    const s = this.store.focusedSender();
+    const tx = s === null ? null : parseSendHealth(s.tx);
+    if (s === null || tx === null) return null;
+    if (tx.lim === 'cpu' || tx.cpu === 'serious' || tx.cpu === 'critical') {
+      return {
+        text: `PC de ${s.name} no limite`,
+        title: `O PC de ${s.name} não aguenta transmitir no máximo agora, então o navegador dele baixou resolução ou fps para a transmissão não travar. Volta sozinho quando sobrar folga (por exemplo, limitando o fps do jogo).`,
+      };
+    }
+    if (tx.lim === 'bandwidth' || (tx.max > 0 && tx.cap < tx.max)) {
+      return {
+        text: `internet de ${s.name} no limite`,
+        title: `A internet de ${s.name} não comporta o máximo agora, então a transmissão saiu mais leve para não travar. Volta sozinho quando a conexão melhorar.`,
+      };
+    }
+    return null;
   }
 
   causeLabel(c: string) {
