@@ -1,6 +1,7 @@
 // Estado da sala para a interface. Uma instância por página de sala.
 import { LoadGovernor, LoadState } from './load';
 import { UploadGuard, UploadState } from './upload-guard';
+import { Diagnostics, encodeSendHealth } from './diag';
 import { DestroyRef, Injectable, computed, effect, inject, signal } from '@angular/core';
 import { CameraAddress, JoinGrant, requestCamera, requestToken, revokeCamera } from './api';
 import { DeviceList, listMicrophones, listWebcams } from './devices';
@@ -70,6 +71,8 @@ export class RoomStore {
   private governor: LoadGovernor | null = null;
   private uploadGuard: UploadGuard | null = null;
   private readonly _upload = signal<UploadState | null>(null);
+  /** Diário de problemas da tela que estou assistindo. */
+  readonly diag = new Diagnostics(() => this.session.focusedProbe(), () => this.token);
   /** Teto de bitrate por perda na subida (null = sem transmitir). */
   readonly upload = this._upload.asReadonly();
   private readonly _load = signal<LoadState | null>(null);
@@ -119,7 +122,26 @@ export class RoomStore {
       this.watch?.stop();
       this.studio.dispose();
       this.clips.stop();
+      this.diag.stop();
       void this.session.disconnect();
+    });
+    // Quem transmite conta aos outros como está o envio, para o diagnóstico deles dizer o motivo.
+    effect(() => {
+      const u = this._upload();
+      const l = this._load();
+      const h = this._health();
+      if (u === null || this._join() !== 'joined') return;
+      const round = (n: number) => Math.round(n * 10) / 10;
+      this.session.publishSendHealth(
+        encodeSendHealth({
+          // Em degraus de 0,25%, para não reescrever o atributo a cada leitura.
+          l: Math.round(u.loss * 400) / 4,
+          cap: round(u.cap / 1e6),
+          max: round(u.target / 1e6),
+          cpu: l?.pressure ?? '',
+          lim: h?.sustained ? h.reason : 'none',
+        }),
+      );
     });
     void clipServer().then((c) => this._clipServer.set(c));
     // Gravação contínua para clipes: segue a tela em foco (e o som dela) enquanto estiver ligada.
@@ -165,6 +187,7 @@ export class RoomStore {
       this._cameraOffered.set(grant.camera);
       this.link = link ?? { key: '', secret: '' };
       this._join.set('joined');
+      this.diag.start();
     } catch (e) {
       const msg = e instanceof Error ? e.message : '';
       this._error.set(

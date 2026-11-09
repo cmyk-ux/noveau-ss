@@ -24,6 +24,8 @@ WORKDIR /app
 COPY --from=api /src/server/node_modules ./server/node_modules
 COPY server/package.json server/*.mjs ./server/
 COPY --from=web /src/web/dist/noveau-ss/browser ./web
+# Pasta do diário de travadas (volume app_data); precisa ser do usuário node.
+RUN mkdir -p /data && chown node:node /data
 USER node
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \

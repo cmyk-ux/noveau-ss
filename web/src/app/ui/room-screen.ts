@@ -94,6 +94,30 @@ function timecode(ms: number): string {
           }
         </div>
         }
+        <div class="diag-wrap">
+          <button type="button" class="btn small" [class.on]="diagOpen()" [class.alert]="store.diag.unseen() > 0"
+            title="Diário: por que a tela travou" (click)="toggleDiag()">
+            <cen-icon name="pulse" [size]="15" />
+            @if (store.diag.unseen() > 0) { <span class="mono">{{ store.diag.unseen() }}</span> }
+          </button>
+          @if (diagOpen()) {
+            <div class="diag panel-surface" role="dialog" aria-label="Diário de travadas">
+              <div class="pop-head">
+                <span class="label">diário de travadas</span>
+                <button class="close" title="Fechar" (click)="diagOpen.set(false)"><cen-icon name="close" [size]="15" /></button>
+              </div>
+              @for (e of store.diag.events(); track e.id) {
+                <div class="ev" [attr.data-cause]="e.cause">
+                  <span class="when mono">{{ clockAt(e.at) }}</span>
+                  <span class="what"><span class="cause">{{ causeLabel(e.cause) }}</span>@if (e.count > 1) { <span class="mono times">×{{ e.count }}</span> }<br />{{ e.text }}</span>
+                </div>
+              } @empty {
+                <p class="hint">Nenhuma travada na tela que você está vendo. Quando travar, aparece aqui o motivo provável.</p>
+              }
+              <p class="hint">Os registros também vão para o servidor (só apelidos e números), para a gente ver o que mais acontece e corrigir.</p>
+            </div>
+          }
+        </div>
         <button type="button" class="btn small people-top" [class.on]="peopleOpen()" title="Pessoas e volumes" (click)="togglePeople()">
           <cen-icon name="people" [size]="15" /> <span class="mono">{{ store.participants().length }}</span>
         </button>
@@ -138,6 +162,11 @@ function timecode(ms: number): string {
         @if (store.focused(); as f) {
           <cen-stage (click)="clickFocused()" (contextmenu)="openVolume($event, f)" />
           <div class="viewfinder" aria-hidden="true"></div>
+          @if (freshIssue(); as e) {
+            <button type="button" class="issue" [attr.data-cause]="e.cause" (click)="openDiag()" title="Abrir o diário de travadas">
+              <span class="cause">{{ causeLabel(e.cause) }}</span> {{ e.text }}
+            </button>
+          }
           <div class="corner">
             @if (store.canClip() && !isMobile) {
               @if (prefs.clips()) {
@@ -370,6 +399,20 @@ function timecode(ms: number): string {
     .onair { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.14em; color: #fff; background: var(--danger);
       padding: 2px 6px; border-radius: 1px; }
     .now.mine .onair { background: var(--accent); }
+    .diag-wrap { position: relative; }
+    .btn.alert { color: var(--warn); }
+    .diag { position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; width: min(380px, calc(100vw - 1.5rem));
+      max-height: 60dvh; overflow-y: auto; padding: 0.7rem 0.9rem 0.8rem; animation: unfold-down 140ms linear both; }
+    .ev { display: grid; grid-template-columns: auto 1fr; gap: 0.6rem; padding: 0.5rem 0; border-top: 1px solid var(--line); font-size: 0.82rem; }
+    .ev .when { color: var(--faint); font-size: 0.72rem; padding-top: 2px; }
+    .cause { font: 500 0.62rem/1.4 var(--mono); text-transform: uppercase; letter-spacing: 0.1em; color: var(--warn); }
+    [data-cause='my-net'] .cause, [data-cause='my-pc'] .cause { color: var(--accent-hi); }
+    .times { color: var(--muted); font-size: 0.72rem; margin-left: 0.35rem; }
+    .issue { position: absolute; left: 1rem; bottom: 1rem; z-index: 5; max-width: min(560px, calc(100% - 2rem)); text-align: left;
+      padding: 0.45rem 0.7rem; border: 1px solid #0b0b0c; border-left: 3px solid var(--warn); border-radius: 2px;
+      background: rgb(16 16 17 / 0.9); color: var(--text); font-size: 0.8rem; cursor: pointer; animation: slide-in 160ms linear both; }
+    .issue[data-cause='my-net'], .issue[data-cause='my-pc'] { border-left-color: var(--accent); }
+    .issue .cause { margin-right: 0.35rem; }
     .shield { cursor: pointer; border: 0; font: inherit; font-size: 0.7rem; }
     .eye { display: inline-flex; align-items: center; gap: 0.25rem; color: var(--muted); font-size: 0.78rem; }
     .spacer { flex: 1; }
@@ -535,6 +578,12 @@ export class RoomScreen {
   protected readonly prefs = inject(Prefs);
   protected readonly canShare = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
   protected readonly menu = signal<Menu | null>(null);
+  protected readonly diagOpen = signal(false);
+  /** A travada mais recente, por 8 s, numa faixa sobre a tela. */
+  protected readonly freshIssue = computed(() => {
+    const e = this.store.diag.events()[0];
+    return e !== undefined && this.now() - e.at < 8000 ? e : null;
+  });
   protected readonly isMobile = IS_MOBILE;
   protected readonly isIOS = IS_IOS;
   protected readonly controls = signal(false);
@@ -657,6 +706,31 @@ export class RoomScreen {
     });
   }
 
+  toggleDiag() {
+    this.diagOpen.update((v) => !v);
+    this.store.diag.markSeen();
+  }
+
+  openDiag() {
+    this.diagOpen.set(true);
+    this.store.diag.markSeen();
+  }
+
+  causeLabel(c: string) {
+    switch (c) {
+      case 'their-net':
+        return 'internet de quem transmite';
+      case 'their-pc':
+        return 'PC de quem transmite';
+      case 'my-net':
+        return 'sua internet';
+      case 'my-pc':
+        return 'seu PC';
+      default:
+        return 'sem causa clara';
+    }
+  }
+
   toggleMenu(m: Menu) {
     this.menu.set(this.menu() === m ? null : m);
   }
@@ -671,6 +745,7 @@ export class RoomScreen {
 
   closeAll() {
     this.menu.set(null);
+    this.diagOpen.set(false);
     this.volumeMenu.set(null);
   }
 

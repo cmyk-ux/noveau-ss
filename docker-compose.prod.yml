@@ -52,10 +52,15 @@ services:
       R2_ACCESS_KEY_ID: ${R2_ACCESS_KEY_ID:-}
       R2_SECRET_ACCESS_KEY: ${R2_SECRET_ACCESS_KEY:-}
       R2_BUCKET: ${R2_BUCKET:-}
+      # Diário de travadas (um JSON por linha): docker compose exec app tail -n 50 /data/diagnosticos.jsonl
+      DIAG_FILE: /data/diagnosticos.jsonl
+    volumes:
+      - app_data:/data
     depends_on:
       - livekit
     # a porta 3000 também não é publicada: só o Caddy fala com ela.
 
 volumes:
+  app_data:
   caddy_data:
   caddy_config:

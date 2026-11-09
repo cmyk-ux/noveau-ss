@@ -308,9 +308,61 @@ async function clipRoute(req, res, path) {
   }
 }
 
+// ---------- Diário de problemas: cada navegador manda as travadas que viu e o motivo provável.
+// Vai para o log (docker compose logs app | grep diag) e, se DIAG_FILE estiver definido, para um
+// arquivo JSONL (um registro por linha), que gira em 10 MB.
+const DIAG_FILE = process.env.DIAG_FILE ?? '';
+const DIAG_MAX_BYTES = 10 * 1024 * 1024;
+const DIAG_CAUSES = new Set(['their-net', 'their-pc', 'my-net', 'my-pc', 'unknown']);
+const diagRate = new Map(); // identidade -> { minute, count }
+
+async function diagRoute(req, res) {
+  try {
+    const who = await roomMember(req);
+    const claims = await verifier.verify(String(req.headers.authorization).slice(7));
+    const body = await readJson(req);
+    const minute = Math.floor(Date.now() / 60_000);
+    const r = diagRate.get(who.identity);
+    const used = r?.minute === minute ? r.count : 0;
+    const events = (Array.isArray(body.events) ? body.events : []).slice(0, Math.max(0, 30 - used));
+    diagRate.set(who.identity, { minute, count: used + events.length });
+    const clean = (v, n = 60) => String(v ?? '').slice(0, n);
+    const lines = [];
+    for (const e of events) {
+      if (!DIAG_CAUSES.has(e?.cause)) continue;
+      const metrics = {};
+      for (const [k, v] of Object.entries(e.metrics ?? {}).slice(0, 16)) {
+        metrics[clean(k, 32)] = typeof v === 'number' && Number.isFinite(v) ? v : clean(v, 32);
+      }
+      const rec = {
+        at: new Date(Number(e.at) || Date.now()).toISOString(),
+        room: clean(claims.video?.room, 40),
+        viewer: clean(who.name, 40),
+        streamer: clean(e.who, 40),
+        cause: e.cause,
+        freezes: Math.min(999, Number(e.count) || 1),
+        ...metrics,
+      };
+      lines.push(JSON.stringify(rec));
+      console.log(`[diag] ${rec.viewer} viu ${rec.freezes} travada(s) em ${rec.streamer}: ${rec.cause}`);
+    }
+    if (DIAG_FILE !== '' && lines.length > 0) {
+      const { appendFile, rename, stat } = await import('node:fs/promises');
+      const size = await stat(DIAG_FILE).then((s) => s.size).catch(() => 0);
+      if (size > DIAG_MAX_BYTES) await rename(DIAG_FILE, `${DIAG_FILE}.1`).catch(() => undefined);
+      await appendFile(DIAG_FILE, lines.join('\n') + '\n').catch((e) => console.error('[diag] arquivo:', e.message));
+    }
+    send(res, 200, { ok: true, saved: lines.length });
+  } catch (e) {
+    const status = e instanceof clips.ClipError || e instanceof HttpError ? e.status : 500;
+    if (!res.headersSent) send(res, status, { error: status === 500 ? 'Erro no servidor.' : e.message });
+  }
+}
+
 const server = createServer(async (req, res) => {
   const path = new URL(req.url, 'http://x').pathname;
   if (path === '/api/clips' || path.startsWith('/api/clips/')) return clipRoute(req, res, path);
+  if (path === '/api/diag' && req.method === 'POST') return diagRoute(req, res);
   const redirectRoute = redirects[`${req.method} ${path}`];
   if (redirectRoute !== undefined) return redirectRoute(req, res);
   const route = routes[`${req.method} ${path}`];

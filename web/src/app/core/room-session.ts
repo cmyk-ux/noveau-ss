@@ -356,6 +356,36 @@ export class RoomSession {
     this.announce();
   }
 
+  /** Quem transmite conta aos outros como está o envio (atributo "tx"), para o diagnóstico deles. */
+  private publishedTx = '';
+  publishSendHealth(tx: string) {
+    if (tx === this.publishedTx || this.room.state !== ConnectionState.Connected) return;
+    this.publishedTx = tx;
+    this.room.localParticipant.setAttributes({ tx }).catch(() => (this.publishedTx = ''));
+  }
+
+  /** Para o diagnóstico: quem transmite a tela em foco, como está a rede dele e a minha. */
+  focusedProbe(): {
+    shareId: string;
+    owner: string;
+    tx: string | null;
+    theirQuality: string;
+    myQuality: string;
+    report: Promise<RTCStatsReport | null>;
+  } | null {
+    const f = this.focusedLive();
+    if (f === undefined || f.view.isLocal || this.away) return null;
+    const owner = this.room.remoteParticipants.get(f.view.ownerIdentity);
+    return {
+      shareId: f.view.id,
+      owner: f.view.ownerName,
+      tx: owner?.attributes?.['tx'] ?? null,
+      theirQuality: String(owner?.connectionQuality ?? 'unknown'),
+      myQuality: String(this.room.localParticipant.connectionQuality ?? 'unknown'),
+      report: Promise.resolve((f.publication.track as any)?.getRTCStatsReport?.() ?? null).catch(() => null),
+    };
+  }
+
   /** Para as estatísticas: a proteção contra travadas está disponível/ligada para a tela em foco? */
   shieldStatus(): string {
     const f = this.focusedLive();
