@@ -1,7 +1,7 @@
 // Presets de transmissão de tela: resolução, fps, codec e bitrate.
 // Recuperado do bundle deployado (chunk-CzevgFlM.js).
 
-export type Resolution = 'p720' | 'p1080' | 'p1440' | 'source';
+export type Resolution = 'p720' | 'p1080' | 'p1440' | 'source' | 'auto';
 export type Codec = 'av1' | 'h265' | 'vp9' | 'h264' | 'vp8';
 export type CodecChoice = Codec | 'auto';
 export type Degradation = 'maintain-framerate' | 'maintain-resolution' | 'balanced';
@@ -56,6 +56,7 @@ function fpsMultiplier(fps: number): number {
 }
 
 export const RESOLUTIONS: { id: Resolution; label: string }[] = [
+  { id: 'auto', label: 'Auto' },
   { id: 'source', label: 'Original' },
   { id: 'p1440', label: '1440p' },
   { id: 'p1080', label: '1080p' },
@@ -76,9 +77,21 @@ export const BITRATE_LIMITS: { bps: number; label: string }[] = [
   { bps: 6e6, label: '6 Mbps' },
 ];
 
+/**
+ * Auto: a tela original até 60 fps; acima disso, 1080p.
+ * O Chrome copia cada quadro da placa de vídeo para a memória e converte a cor numa thread só, e
+ * limita essa cópia a meio núcleo (desktop_capture_device.cc: espera o dobro do tempo que a captura
+ * levou). Em 1440p cada quadro tem 78% mais pixels que em 1080p e a 120 fps não sobra tempo:
+ * a captura engasga. Em 1080p ela fecha.
+ */
+export const AUTO_HIGH_FPS = 60;
+export function autoResolution(frameRate: number): Resolution {
+  return frameRate > AUTO_HIGH_FPS ? 'p1080' : 'source';
+}
+
 export function planFor(s: StreamSettings): StreamPlan {
   return {
-    resolution: s.resolution,
+    resolution: s.resolution === 'auto' ? autoResolution(s.frameRate) : s.resolution,
     frameRate: s.frameRate,
     contentHint: 'motion',
     // Fluidez primeiro: se faltar CPU ou rede, o navegador baixa a resolução, nunca os quadros.
@@ -100,12 +113,13 @@ function screenKnown(): boolean {
 }
 
 export function planSize(plan: { resolution: Resolution }): Size {
-  if (plan.resolution === 'source') return screenSize();
+  if (plan.resolution === 'source' || plan.resolution === 'auto') return screenSize();
   const r = LADDER[plan.resolution];
   return { width: r.width, height: r.height };
 }
 
 export function resolutionLabel(r: Resolution): string {
+  if (r === 'auto') return 'Auto';
   if (r !== 'source') return `${LADDER[r].height}p`;
   if (!screenKnown()) return 'Original';
   const { width, height } = screenSize();
@@ -246,4 +260,4 @@ export function formatBitrate(bps: number): string {
         : `${Math.round(bps / 1e3)} kbps`;
 }
 
-export const DEFAULT_STREAM: StreamSettings = { resolution: 'source', frameRate: 60, maxBitrate: 0 };
+export const DEFAULT_STREAM: StreamSettings = { resolution: 'auto', frameRate: 60, maxBitrate: 0 };

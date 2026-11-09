@@ -31,7 +31,7 @@ import {
         <button class="btn small primary" (click)="store.restartShare()">Aplicar agora</button>
       </div>
     }
-    <p class="hint">Por padrão vai a tela original, do jeito que está no seu monitor. Só mexa abaixo se quiser limitar.</p>
+    <p class="hint">No Auto vai a tela original até 60fps e 1080p acima disso. Só mexa abaixo se quiser fixar.</p>
     <p class="label">resolução máxima</p>
     <div class="chips">
       @for (r of resolutions; track r.id) {
@@ -44,8 +44,18 @@ import {
         <button type="button" class="chip" [class.lit]="f === settings().frameRate" (click)="pickFrameRate(f)">{{ f }}fps</button>
       }
     </div>
+    @if (settings().resolution === 'auto') {
+      <p class="hint">
+        @if (settings().frameRate > 60) {
+          Auto acima de 60fps: vai em <strong>1080p</strong>. Em 1440p o navegador não consegue copiar a tela tão rápido e a imagem engasga.
+          Para forçar mais resolução, escolha Original ou 1440p.
+        } @else {
+          Auto a até 60fps: vai a tela original, sem reduzir.
+        }
+      </p>
+    }
     @if (settings().frameRate > 60) {
-      <p class="hint">Acima de 60 só faz diferença para quem assiste num monitor de 120 Hz ou mais, e pesa mais para capturar. 120 é o máximo que o navegador captura.</p>
+      <p class="hint">Acima de 60 só aparece para quem assiste num monitor de 120 Hz ou mais. 120 é o máximo que o navegador captura.</p>
     }
     <p class="label">bitrate máximo</p>
     <div class="chips">

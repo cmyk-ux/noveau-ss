@@ -15,10 +15,14 @@ const store = {
   },
   get stream(): StreamSettings {
     // Chave nova: os presets antigos (Games/Film/Code) saíram, todo mundo começa no Original a 60fps.
-    const raw = localStorage.getItem('cenaculum:stream2');
+    // stream3: entrou a resolução Auto. Quem vinha do stream2 com "Original" (o único padrão
+    // que existia) passa para o Auto; quem tinha escolhido um teto mantém.
+    const fresh = localStorage.getItem('cenaculum:stream3');
+    const raw = fresh ?? localStorage.getItem('cenaculum:stream2');
     if (raw === null) return DEFAULT_STREAM;
     try {
       const s = JSON.parse(raw);
+      if (fresh === null && s.resolution === 'source') s.resolution = 'auto';
       return {
         resolution: oneOf(s.resolution, RESOLUTIONS.map((r) => r.id), DEFAULT_STREAM.resolution),
         frameRate: oneOf(s.frameRate, FRAME_RATES, DEFAULT_STREAM.frameRate),
@@ -29,7 +33,7 @@ const store = {
     }
   },
   set stream(v: StreamSettings) {
-    localStorage.setItem('cenaculum:stream2', JSON.stringify(v));
+    localStorage.setItem('cenaculum:stream3', JSON.stringify(v));
   },
   get codec(): CodecChoice {
     return (localStorage.getItem('cenaculum:codec') as CodecChoice) ?? 'auto';
