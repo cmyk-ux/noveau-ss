@@ -1,4 +1,4 @@
-import { Component, ElementRef, computed, inject, input, output, signal, viewChild } from '@angular/core';
+import { Component, DestroyRef, ElementRef, computed, inject, input, output, signal, viewChild } from '@angular/core';
 import { Prefs } from '../core/prefs';
 import { Invites } from '../core/invites';
 import { isCallRoom, roomUrl } from '../core/link';
@@ -15,30 +15,49 @@ import { VolumeSlider } from './volume-slider';
 import { StatsPanel } from './stats-panel';
 import { StreamPanel } from './stream-panel';
 
-type Tab = 'people' | 'share' | 'devices';
+type Menu = 'mic' | 'screen' | 'camera';
+
+/** Tempo desde que entrou, como o contador de uma fita: 00:12:34. */
+function timecode(ms: number): string {
+  const t = Math.max(0, Math.floor(ms / 1000));
+  const two = (n: number) => String(n).padStart(2, '0');
+  return `${two(Math.floor(t / 3600))}:${two(Math.floor((t % 3600) / 60))}:${two(t % 60)}`;
+}
 
 @Component({
   selector: 'cen-room-screen',
   imports: [Icon, Stage, ShareTile, VolumeSlider, StatsPanel, PeoplePanel, StreamPanel, DevicesPanel],
-  host: { '(document:fullscreenchange)': 'isFullscreen.set(fullscreenActive())', '(keydown.escape)': 'tab.set(null)' },
+  host: {
+    '(document:fullscreenchange)': 'isFullscreen.set(fullscreenActive())',
+    '(document:keydown.escape)': 'closeAll()',
+    '(document:pointerdown)': 'outside($event)',
+  },
   template: `
     <div class="room">
       <header class="topbar">
-        <button type="button" class="roomname" [title]="chipTitle()" (click)="copyInvite()">
-          <span class="status" [class]="store.status()"></span>
-          <span class="mono">{{ label() }}</span>
-          <cen-icon name="link" [size]="14" />
-        </button>
+        <div class="brand">
+          <cen-icon name="logo" [size]="22" class="mark" />
+          @if (callRoom) {
+            <span class="roomname" [title]="'Sala da call ' + label()">{{ label() }}</span>
+          } @else {
+            <button type="button" class="roomname" [title]="chipTitle()" (click)="copyInvite()">{{ label() }}</button>
+          }
+          <span class="deck mono" [title]="statusText()">
+            <span class="led" [class]="ledClass()"></span>{{ clock() }}
+          </span>
+        </div>
+
         @if (store.focused(); as f) {
-          <div class="now">
+          <div class="now" [class.mine]="f.isLocal">
+            <span class="onair mono">{{ f.isLocal ? 'enviando' : 'no ar' }}</span>
             <strong>{{ shareTitle() }}</strong>
             @if (stage()?.measured(); as m) { <span class="tag mono">{{ m }}</span> }
             @if (f.hasAudio) { <span class="tag">com som</span> }
             @for (st of store.studio.streams(); track st.identity) {
-              <span class="tag studio-tag" title="Som sem compressão, abra 'pessoas' para ajustar">som estúdio {{ st.bits }}-bit</span>
+              <span class="tag accent" title="Som sem compressão, abra 'pessoas' para ajustar">estúdio {{ st.bits }}-bit</span>
             }
             @if (adaptedBadge(); as a) { <span class="tag warn" [title]="a.title">{{ a.text }}</span> }
-            <span class="eye" [title]="viewersTitle(f.id)"><cen-icon name="eye" [size]="15" /> {{ store.viewersOf(f.id).length }}</span>
+            <span class="eye mono" [title]="viewersTitle(f.id)"><cen-icon name="eye" [size]="14" /> {{ store.viewersOf(f.id).length }}</span>
           </div>
         }
         <span class="spacer"></span>
@@ -46,7 +65,7 @@ type Tab = 'people' | 'share' | 'devices';
           <button type="button" class="btn small" [class.on]="prefs.cursorOn()"
             [title]="prefs.cursorOn() ? 'Esconder meu cursor da sala' : 'Mostrar meu cursor para a sala'"
             (click)="prefs.setCursorOn(!prefs.cursorOn())">
-            <svg width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
+            <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true">
               <path d="M4.2 2.6 19.6 10.3a.8.8 0 0 1-.1 1.5l-6.2 1.9-2.9 5.9a.8.8 0 0 1-1.5-.1L3.1 3.6a.8.8 0 0 1 1.1-1Z"
                 [attr.fill]="prefs.cursorOn() ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
             </svg>
@@ -58,15 +77,18 @@ type Tab = 'people' | 'share' | 'devices';
             </label>
           }
         </div>
-        <button type="button" class="btn small" [class.on]="tab() === 'people'" (click)="toggle('people')">
-          <cen-icon name="people" [size]="15" /> {{ store.participants().length }}
+        <button type="button" class="btn small" [class.on]="peopleOpen()" title="Pessoas e volumes" (click)="togglePeople()">
+          <cen-icon name="people" [size]="15" /> <span class="mono">{{ store.participants().length }}</span>
         </button>
-        <button type="button" class="btn small" (click)="copyInvite()"><cen-icon name="link" [size]="15" /> convidar</button>
+        @if (!callRoom) {
+          <button type="button" class="btn small" (click)="copyInvite()"><cen-icon name="link" [size]="15" /> convidar</button>
+        }
       </header>
 
       @if (store.soundProblem(); as problem) {
         <div class="banner">
-          <span>
+          <span class="flag mono">som</span>
+          <span class="msg">
             @if (problem === 'refused') {
               Compartilhando sem som: o navegador não entregou faixa de áudio. Na janela de escolha, marque
               "compartilhar o áudio deste app" (janela), "áudio da aba" (aba) ou "áudio do sistema" (tela inteira).
@@ -86,23 +108,25 @@ type Tab = 'people' | 'share' | 'devices';
       }
       @if (store.needsAudioUnlock()) {
         <div class="banner">
-          <span>O navegador bloqueou o áudio até você interagir com a página.</span>
+          <span class="flag mono">som</span>
+          <span class="msg">O navegador bloqueou o áudio até você interagir com a página.</span>
           <button class="btn small primary" (click)="store.unlockAudio()">Ativar áudio</button>
         </div>
       }
       @if (store.status() === 'disconnected') {
-        <div class="banner danger"><span>Conexão perdida. Recarregue a página para voltar.</span></div>
+        <div class="banner danger"><span class="flag mono">sinal</span><span class="msg">Conexão perdida. Recarregue a página para voltar.</span></div>
       }
 
-      <main #stageArea class="stage-area">
+      <main #stageArea class="stage-area" (wheel)="noZoom($event)">
         @if (store.focused(); as f) {
           <cen-stage (click)="clickFocused()" (contextmenu)="openVolume($event, f)" />
+          <div class="viewfinder" aria-hidden="true"></div>
           <div class="corner">
             @if (store.shares().length > 1) {
-              <button class="btn icon small" title="Ver todas as telas" (click)="store.unfocus()"><cen-icon name="grid" [size]="16" /></button>
+              <button class="btn icon small ghost" title="Ver todas as telas" (click)="store.unfocus()"><cen-icon name="grid" [size]="16" /></button>
             }
-            <button class="btn icon small" title="Janela flutuante" (click)="stage()?.popout()"><cen-icon name="popout" [size]="16" /></button>
-            <button class="btn icon small" [title]="isFullscreen() ? 'Sair da tela cheia' : 'Tela cheia'" (click)="toggleFullscreen()">
+            <button class="btn icon small ghost" title="Janela flutuante" (click)="stage()?.popout()"><cen-icon name="popout" [size]="16" /></button>
+            <button class="btn icon small ghost" [title]="isFullscreen() ? 'Sair da tela cheia' : 'Tela cheia'" (click)="toggleFullscreen()">
               <cen-icon [name]="isFullscreen() ? 'fullscreenExit' : 'fullscreen'" [size]="16" />
             </button>
           </div>
@@ -115,21 +139,29 @@ type Tab = 'people' | 'share' | 'devices';
           </div>
         } @else {
           <div class="empty">
-            <h2>{{ store.waitingForCamera() ? 'Esperando a câmera.' : 'Ninguém está compartilhando.' }}</h2>
-            <p class="hint">{{ emptyHint() }}</p>
-            @if (store.canPublish() && canShare) {
-              <div class="actions">
-                <button class="btn primary" (click)="store.toggleShare()"><cen-icon name="screen" [size]="17" /> Compartilhar tela</button>
-                <button class="btn" (click)="copyInvite()"><cen-icon name="link" [size]="16" /> Copiar convite</button>
+            <div class="testcard card marks">
+              <div class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+              <p class="nosignal mono"><span class="led warn"></span>{{ store.waitingForCamera() ? 'aguardando câmera' : 'sem sinal' }}</p>
+              <h2>{{ store.waitingForCamera() ? 'Esperando a câmera.' : 'Ninguém está compartilhando.' }}</h2>
+              <p class="hint">{{ emptyHint() }}</p>
+              @if (store.canPublish() && canShare) {
+                <div class="actions">
+                  <button class="btn primary" (click)="store.toggleShare()"><cen-icon name="screen" [size]="17" /> Compartilhar tela</button>
+                  @if (!callRoom) {
+                    <button class="btn" (click)="copyInvite()"><cen-icon name="link" [size]="16" /> Copiar convite</button>
+                  }
+                </div>
+              }
+              <div class="slip">
+                <p class="label">{{ callRoom ? 'endereço do site' : 'link da sala' }}</p>
+                <p class="mono link">{{ link() }}</p>
+                <p class="hint">
+                  {{ callRoom
+                    ? 'quem estiver na mesma call do Discord abre o site, entra com Discord e cai nesta sala'
+                    : 'o que vem depois do # é o que deixa alguém entrar' }}
+                </p>
               </div>
-            }
-            <p class="label">{{ callRoom ? 'o endereço do site' : 'o link inteiro' }}</p>
-            <p class="mono link">{{ link() }}</p>
-            <p class="hint">
-              {{ callRoom
-                ? 'quem estiver na mesma call do Discord abre o site, entra com Discord e cai nesta sala'
-                : 'o que vem depois do # é o que deixa alguém entrar' }}
-            </p>
+            </div>
           </div>
         }
         <cen-stats-panel />
@@ -137,14 +169,12 @@ type Tab = 'people' | 'share' | 'devices';
 
       @if (volumeMenu(); as m) {
         <div class="menu-backdrop" (click)="volumeMenu.set(null)" (contextmenu)="$event.preventDefault(); volumeMenu.set(null)"></div>
-        <div class="volume-menu" [style.left.px]="m.x" [style.top.px]="m.y" (click)="$event.stopPropagation()">
-          <p class="label">volume da tela de {{ m.name }}</p>
+        <div class="volume-menu panel-surface" [style.left.px]="m.x" [style.top.px]="m.y" (click)="$event.stopPropagation()">
+          <p class="label">volume · {{ m.name }}</p>
           @if (shareById(m.id); as sh) {
             <cen-volume [volume]="sh.volume" [label]="'som da tela de ' + m.name"
               (levelChange)="store.setVolume('share', sh.id, $event)"
               (muteToggle)="store.toggleMute('share', sh.id)" />
-          }
-          @if (shareById(m.id); as sh) {
             <button type="button" class="check-row" role="menuitemcheckbox" [attr.aria-checked]="sh.volume.muted"
               (click)="store.toggleMute('share', sh.id)">
               <span>Mutar</span>
@@ -160,100 +190,181 @@ type Tab = 'people' | 'share' | 'devices';
       }
 
       <footer class="dock">
-        <button class="btn icon" [class.off]="!store.micOn()" [title]="store.micOn() ? 'Desligar microfone' : 'Ligar microfone'"
-          (click)="store.toggleMic()">
-          <cen-icon [name]="store.micOn() ? 'mic' : 'micOff'" />
-        </button>
-        @if (store.canPublish()) {
-          <button class="btn icon" [class.on]="store.sharing()" [disabled]="!canShare || store.busy()" [title]="shareTitle2()"
-            (click)="store.toggleShare()">
-            <cen-icon [name]="store.sharing() ? 'screenOff' : 'screen'" />
-          </button>
-          <button class="btn small" [class.on]="tab() === 'share'" (click)="toggle('share')">qualidade</button>
-          <button class="btn icon" [class.on]="store.webcamOn()" [disabled]="store.busy()"
-            [title]="store.webcamOn() ? 'Desligar câmera' : 'Ligar câmera'" (click)="store.toggleWebcam()">
-            <cen-icon [name]="store.webcamOn() ? 'cameraOff' : 'camera'" />
-          </button>
+        <div class="keys">
+          <div class="split" [class.open]="menu() === 'mic'">
+            <button class="btn icon" [class.off]="!store.micOn()" [title]="store.micOn() ? 'Desligar microfone' : 'Ligar microfone'"
+              (click)="store.toggleMic()">
+              <cen-icon [name]="store.micOn() ? 'mic' : 'micOff'" />
+            </button>
+            <button class="btn caret" title="Microfone" aria-label="Escolher microfone" [attr.aria-expanded]="menu() === 'mic'"
+              (click)="toggleMenu('mic')"><cen-icon name="caret" [size]="14" /></button>
+          </div>
+
+          @if (store.canPublish()) {
+            <div class="split" [class.open]="menu() === 'screen'">
+              <button class="btn icon" [class.on]="store.sharing()" [disabled]="!canShare || store.busy()" [title]="shareTitle2()"
+                (click)="store.toggleShare()">
+                <cen-icon [name]="store.sharing() ? 'screenOff' : 'screen'" />
+              </button>
+              <button class="btn caret" [class.on]="store.sharing()" title="Qualidade da transmissão" aria-label="Qualidade da transmissão"
+                [attr.aria-expanded]="menu() === 'screen'" (click)="toggleMenu('screen')"><cen-icon name="caret" [size]="14" /></button>
+            </div>
+            <div class="split" [class.open]="menu() === 'camera'">
+              <button class="btn icon" [class.on]="store.webcamOn()" [disabled]="store.busy()"
+                [title]="store.webcamOn() ? 'Desligar câmera' : 'Ligar câmera'" (click)="store.toggleWebcam()">
+                <cen-icon [name]="store.webcamOn() ? 'cameraOff' : 'camera'" />
+              </button>
+              <button class="btn caret" [class.on]="store.webcamOn()" title="Câmera" aria-label="Escolher câmera"
+                [attr.aria-expanded]="menu() === 'camera'" (click)="toggleMenu('camera')"><cen-icon name="caret" [size]="14" /></button>
+            </div>
+          }
+
+          <span class="sep" aria-hidden="true"></span>
+          <button class="btn danger icon hangup" title="Sair da sala" (click)="leave.emit()"><cen-icon name="hangup" /></button>
+        </div>
+
+        @if (menu(); as m) {
+          <div class="pop panel-surface" [class.wide]="m === 'screen'" role="dialog" [attr.aria-label]="menuTitle(m)">
+            <div class="pop-head">
+              <span class="label">{{ menuTitle(m) }}</span>
+              <button class="close" title="Fechar" (click)="menu.set(null)"><cen-icon name="close" [size]="15" /></button>
+            </div>
+            @switch (m) {
+              @case ('mic') { <cen-devices-panel section="mic" [open]="true" /> }
+              @case ('screen') { <cen-stream-panel /> }
+              @case ('camera') { <cen-devices-panel section="camera" [open]="true" /> }
+            }
+          </div>
         }
-        <button class="btn small" [class.on]="tab() === 'devices'" (click)="toggle('devices')">dispositivos</button>
-        <button class="btn danger icon" title="Sair da sala" (click)="leave.emit()"><cen-icon name="hangup" /></button>
       </footer>
 
-      @if (tab(); as t) {
-        <aside class="panel">
-          <div class="tabs">
-            <button class="chip" [class.lit]="t === 'people'" (click)="tab.set('people')">pessoas</button>
-            @if (store.canPublish()) {
-              <button class="chip" [class.lit]="t === 'share'" (click)="tab.set('share')">transmissão</button>
-            }
-            <button class="chip" [class.lit]="t === 'devices'" (click)="tab.set('devices')">dispositivos</button>
-            <button class="close" title="Fechar" (click)="tab.set(null)"><cen-icon name="close" [size]="16" /></button>
+      @if (peopleOpen()) {
+        <aside class="panel panel-surface">
+          <div class="pop-head">
+            <span class="label">pessoas · {{ store.participants().length }}</span>
+            <button class="close" title="Fechar" (click)="peopleOpen.set(false)"><cen-icon name="close" [size]="16" /></button>
           </div>
-          @switch (t) {
-            @case ('people') { <cen-people-panel /> }
-            @case ('share') { <cen-stream-panel /> }
-            @case ('devices') { <cen-devices-panel [open]="true" /> }
-          }
+          <cen-people-panel />
         </aside>
       }
     </div>
   `,
   styles: `
-    :host { display: block; height: 100dvh; }
+    :host { display: block; height: 100dvh; overflow: hidden; }
     .room { position: relative; display: flex; flex-direction: column; height: 100%; }
-    .topbar { display: flex; align-items: center; gap: 0.75rem; padding: 0.6rem 1rem; border-bottom: 1px solid var(--line);
-      flex-wrap: wrap; }
-    .grid { position: absolute; inset: 0; padding: 10px; display: grid; gap: 10px;
-      grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); }
-    .menu-backdrop { position: fixed; inset: 0; z-index: 40; }
-    .volume-menu { position: fixed; z-index: 41; width: 260px; padding: 0.6rem 0.8rem; border-radius: 10px;
-      background: var(--surface); border: 1px solid var(--line); box-shadow: 0 10px 30px #0008; }
-    .volume-menu .label { margin: 0 0 0.3rem; }
-    /* Igual ao menu do Discord: linha "Mutar" com uma caixinha que ganha um check. */
-    .check-row { display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: 0.5rem;
-      padding: 0.45rem 0.5rem; border: 0; border-radius: 6px; background: none; color: inherit; font: inherit; cursor: pointer; }
-    .check-row:hover { background: var(--accent); color: #fff; }
-    .checkbox { width: 18px; height: 18px; border-radius: 4px; border: 2px solid var(--muted); display: grid; place-items: center;
-      flex-shrink: 0; }
-    .check-row:hover .checkbox { border-color: #fff; }
-    .checkbox.on { background: var(--accent); border-color: var(--accent); color: #fff; }
-    .check-row:hover .checkbox.on { background: #fff; border-color: #fff; color: var(--accent); }
-    .eye { display: inline-flex; align-items: center; gap: 0.25rem; color: var(--muted); font-size: 0.8rem; }
-    .studio-tag { border-color: var(--accent); color: var(--accent); }
+
+    /* ---------- barra de cima */
+    .topbar { display: flex; align-items: center; gap: 0.9rem; padding: 0.5rem 0.9rem; min-height: 52px; flex-wrap: wrap;
+      border-bottom: 1px solid var(--line); box-shadow: 0 1px 0 #000;
+      background: linear-gradient(180deg, #16131c, #0f0d13), var(--grain); background-size: auto, 160px 160px; }
+    .brand { display: flex; align-items: center; gap: 0.6rem; min-width: 0; }
+    .mark { color: var(--accent-hi); filter: drop-shadow(0 0 6px var(--accent-glow)); }
+    .roomname { font-family: var(--display); font-style: italic; font-size: 1.3rem; line-height: 1; background: none; border: 0;
+      padding: 0; max-width: 16rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    button.roomname:hover { color: var(--accent-hi); }
+    .deck { display: inline-flex; align-items: center; gap: 0.4rem; height: 22px; padding: 0 0.5rem; border-radius: 4px;
+      background: #07060a; border: 1px solid var(--line); box-shadow: inset 0 1px 3px #000c; font-size: 0.72rem;
+      color: var(--muted); letter-spacing: 0.06em; }
+    .now { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.9rem; min-width: 0;
+      padding-left: 0.9rem; border-left: 1px solid var(--line); animation: slide-in 260ms var(--ease) both; }
+    .onair { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.14em; color: #fff; background: var(--danger);
+      padding: 1px 6px; border-radius: 3px; box-shadow: 0 0 12px -2px var(--danger); }
+    .now.mine .onair { background: var(--accent); box-shadow: 0 0 12px -2px var(--accent); }
+    .eye { display: inline-flex; align-items: center; gap: 0.25rem; color: var(--muted); font-size: 0.78rem; }
+    .spacer { flex: 1; }
     .cursor-ctl { display: flex; align-items: center; gap: 0.35rem; }
-    .cursor-ctl svg { vertical-align: -2px; }
     .swatch { width: 18px; height: 18px; border-radius: 50%; border: 2px solid #fff8; cursor: pointer; position: relative; overflow: hidden; }
     .swatch input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
     /* A cor só aparece passando o mouse no controle do cursor. */
     .swatch.hover-only { display: none; }
     .cursor-ctl:hover .swatch.hover-only, .cursor-ctl:focus-within .swatch.hover-only { display: block; }
-    .roomname { display: flex; align-items: center; gap: 0.5rem; background: none; border: 0; padding: 0; }
-    .status { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
-    .status.connected { background: var(--ok); }
-    .status.reconnecting, .status.connecting { background: var(--accent); }
-    .status.disconnected { background: var(--danger); }
-    .now { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; font-size: 0.9rem; }
-    .tag { font-size: 0.75rem; color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 0 0.5rem; }
-    .tag.warn { color: var(--accent); border-color: var(--accent); }
-    .spacer { flex: 1; }
-    .banner { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 0.55rem 1rem;
-      background: var(--surface-2); border-bottom: 1px solid var(--line); font-size: 0.88rem; }
-    .banner.danger { background: #d2463c33; }
-    .stage-area { position: relative; flex: 1; min-height: 0; background: #000; }
-    .corner { position: absolute; top: 0.75rem; right: 0.75rem; display: flex; gap: 0.4rem; z-index: 4; }
-    .empty { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center;
-      text-align: center; padding: 1rem; background: var(--bg); }
-    .empty h2 { margin: 0; }
-    .actions { display: flex; gap: 0.5rem; margin: 1rem 0; flex-wrap: wrap; justify-content: center; }
-    .link { word-break: break-all; font-size: 0.85rem; max-width: 40rem; margin: 0; }
-    .strip { position: absolute; bottom: 0.75rem; left: 50%; transform: translateX(-50%); display: flex; gap: 0.4rem; z-index: 4; }
-    .dock { display: flex; justify-content: center; gap: 0.5rem; padding: 0.7rem; border-top: 1px solid var(--line);
-      flex-wrap: wrap; }
-    .panel { position: absolute; top: 3.2rem; right: 0.75rem; bottom: 4.6rem; width: min(360px, calc(100% - 1.5rem));
-      overflow-y: auto; padding: 0.8rem 1rem; z-index: 10; background: var(--surface); border: 1px solid var(--line);
-      border-radius: 12px; }
-    .tabs { display: flex; gap: 0.35rem; align-items: center; }
-    .close { margin-left: auto; background: none; border: 0; color: var(--muted); display: grid; place-items: center; }
+
+    /* ---------- avisos: fita de atenção */
+    .banner { display: flex; align-items: center; gap: 0.8rem; padding: 0.5rem 0.9rem; font-size: 0.86rem;
+      border-bottom: 1px solid var(--line); animation: unfold-down 240ms var(--ease) both;
+      background: repeating-linear-gradient(-45deg, rgb(255 181 74 / 0.06) 0 10px, transparent 10px 20px), var(--surface); }
+    .banner .msg { flex: 1; }
+    .flag { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.14em; color: #120d05; background: var(--warn);
+      padding: 1px 6px; border-radius: 3px; }
+    .banner.danger { background: repeating-linear-gradient(-45deg, rgb(255 74 61 / 0.1) 0 10px, transparent 10px 20px), var(--surface); }
+    .banner.danger .flag { background: var(--danger); color: #fff; }
+
+    /* ---------- palco */
+    .stage-area { position: relative; flex: 1; min-height: 0; background: #000; touch-action: pan-x pan-y; overscroll-behavior: none; }
+    /* Cantos de visor de câmera; aparecem com o mouse por cima. */
+    .viewfinder { position: absolute; inset: 14px; pointer-events: none; z-index: 3; opacity: 0; transition: opacity 200ms;
+      --m: rgb(255 255 255 / 0.55);
+      background:
+        linear-gradient(var(--m), var(--m)) 0 0 / 22px 1.5px, linear-gradient(var(--m), var(--m)) 0 0 / 1.5px 22px,
+        linear-gradient(var(--m), var(--m)) 100% 0 / 22px 1.5px, linear-gradient(var(--m), var(--m)) 100% 0 / 1.5px 22px,
+        linear-gradient(var(--m), var(--m)) 0 100% / 22px 1.5px, linear-gradient(var(--m), var(--m)) 0 100% / 1.5px 22px,
+        linear-gradient(var(--m), var(--m)) 100% 100% / 22px 1.5px, linear-gradient(var(--m), var(--m)) 100% 100% / 1.5px 22px;
+      background-repeat: no-repeat; }
+    .corner { position: absolute; top: 1.4rem; right: 1.4rem; display: flex; gap: 0.35rem; z-index: 4; opacity: 0;
+      transform: translateY(-4px); transition: opacity 200ms, transform 200ms var(--ease); }
+    .stage-area:hover .viewfinder, .stage-area:hover .corner, .corner:focus-within { opacity: 1; transform: none; }
+    .grid { position: absolute; inset: 0; padding: 10px; display: grid; gap: 10px;
+      grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); }
+
+    /* ---------- sem sinal */
+    .empty { height: 100%; display: grid; place-items: center; padding: 1.5rem 1rem; overflow-y: auto;
+      background: radial-gradient(90% 70% at 50% 40%, #17121f 0%, var(--bg) 70%), var(--grain); background-size: auto, 160px 160px; }
+    .testcard { width: min(520px, 100%); text-align: center; padding-top: 0; overflow: visible; }
+    .bars { display: grid; grid-template-columns: repeat(7, 1fr); height: 8px; margin: 0 -2rem 1.6rem;
+      border-radius: var(--radius-lg) var(--radius-lg) 0 0; overflow: hidden; opacity: 0.85; }
+    .bars i:nth-child(1) { background: #c9c4d4; } .bars i:nth-child(2) { background: #c9b85a; }
+    .bars i:nth-child(3) { background: #5ab8bf; } .bars i:nth-child(4) { background: #63b874; }
+    .bars i:nth-child(5) { background: #ab8eff; } .bars i:nth-child(6) { background: #d0554b; }
+    .bars i:nth-child(7) { background: #4f4bbf; }
+    .nosignal { display: inline-flex; align-items: center; gap: 0.45rem; margin: 0 0 0.6rem; font-size: 0.7rem;
+      text-transform: uppercase; letter-spacing: 0.22em; color: var(--warn); }
+    .testcard h2 { margin: 0; }
+    .actions { display: flex; gap: 0.5rem; margin: 1.2rem 0 0.4rem; flex-wrap: wrap; justify-content: center; }
+    .slip { margin-top: 1.3rem; padding-top: 1rem; border-top: 1px dashed var(--line-2); }
+    .slip .label { margin: 0 0 0.3rem; }
+    .link { word-break: break-all; font-size: 0.8rem; margin: 0; color: var(--text); }
+
+    /* ---------- menu de volume (botão direito) */
+    .menu-backdrop { position: fixed; inset: 0; z-index: 40; }
+    .volume-menu { position: fixed; z-index: 41; width: 270px; padding: 0.7rem 0.8rem; animation: unfold-down 160ms var(--ease) both; }
+    .volume-menu .label { margin: 0 0 0.4rem; }
+    /* Igual ao menu do Discord: linha "Mutar" com uma caixinha que ganha um check. */
+    .check-row { display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: 0.5rem;
+      padding: 0.45rem 0.5rem; border: 0; border-radius: 5px; background: none; color: inherit; font: inherit; cursor: pointer; }
+    .check-row:hover { background: var(--accent); color: #fff; }
+    .checkbox { width: 18px; height: 18px; border-radius: 4px; border: 2px solid var(--muted); display: grid; place-items: center; flex-shrink: 0; }
+    .check-row:hover .checkbox { border-color: #fff; }
+    .checkbox.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .check-row:hover .checkbox.on { background: #fff; border-color: #fff; color: var(--accent); }
+
+    /* ---------- barra de baixo: teclas com setinha, como no Discord */
+    .dock { position: relative; display: flex; justify-content: center; padding: 0.6rem 0.8rem 0.75rem;
+      border-top: 1px solid var(--line); box-shadow: 0 -1px 0 #000;
+      background: linear-gradient(0deg, #16131c, #0f0d13), var(--grain); background-size: auto, 160px 160px; }
+    .keys { display: flex; align-items: center; gap: 0.55rem; padding: 0.3rem; border-radius: 10px;
+      background: #07060a; border: 1px solid var(--line); box-shadow: inset 0 2px 6px #000c; }
+    .split { display: inline-flex; }
+    .split > .btn:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+    .caret { width: 22px; padding: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; border-left-color: #000;
+      color: var(--muted); }
+    .caret cen-icon { transform: rotate(180deg); transition: transform 180ms var(--ease); }
+    .split.open .caret { color: var(--accent-hi); }
+    .split.open .caret cen-icon { transform: none; }
+    .sep { width: 1px; height: 26px; background: var(--line-2); margin: 0 0.15rem; }
+    .hangup { width: 52px; }
+    .pop { position: absolute; bottom: calc(100% + 8px); left: 50%; translate: -50% 0; z-index: 20;
+      width: min(320px, calc(100vw - 1.5rem)); max-height: calc(100dvh - 9.5rem); overflow-y: auto;
+      padding: 0.7rem 0.9rem 0.9rem; animation: unfold-up 200ms var(--ease) both; }
+    .pop.wide { width: min(400px, calc(100vw - 1.5rem)); }
+    .pop-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.3rem; }
+    .pop-head .label { margin: 0; }
+    .close { background: none; border: 0; color: var(--muted); display: grid; place-items: center; padding: 4px; border-radius: 4px; }
+    .close:hover { color: var(--text); background: var(--surface-3); }
+
+    /* ---------- painel de pessoas */
+    .panel { position: absolute; top: 60px; right: 0.75rem; bottom: 5rem; width: min(340px, calc(100% - 1.5rem));
+      overflow-y: auto; padding: 0.7rem 0.9rem 1rem; z-index: 10; animation: slide-in 220ms var(--ease) both; }
+    @media (max-width: 640px) { .now { border-left: 0; padding-left: 0; } .roomname { max-width: 10rem; } }
   `,
 })
 export class RoomScreen {
@@ -264,7 +375,19 @@ export class RoomScreen {
   private readonly invites = inject(Invites);
   protected readonly prefs = inject(Prefs);
   protected readonly canShare = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
-  protected readonly tab = signal<Tab | null>(null);
+  protected readonly menu = signal<Menu | null>(null);
+  protected readonly peopleOpen = signal(false);
+  private readonly joinedAt = Date.now();
+  private readonly now = signal(Date.now());
+  protected readonly clock = computed(() => timecode(this.now() - this.joinedAt));
+  protected readonly ledClass = computed(() => {
+    const s = this.store.status();
+    return 'led ' + (s === 'connected' ? 'ok' : s === 'disconnected' ? 'bad' : 'warn');
+  });
+  protected readonly statusText = computed(() => {
+    const s = this.store.status();
+    return s === 'connected' ? 'Conectado · tempo na sala' : s === 'disconnected' ? 'Desconectado' : 'Reconectando…';
+  });
   protected readonly isFullscreen = signal(false);
   protected readonly stage = viewChild(Stage);
   protected readonly volumeMenu = signal<{ id: string; name: string; x: number; y: number } | null>(null);
@@ -332,8 +455,41 @@ export class RoomScreen {
       : 'Você entrou como espectador. Quando alguém compartilhar, aparece aqui.',
   );
 
-  toggle(t: Tab) {
-    this.tab.set(this.tab() === t ? null : t);
+  constructor() {
+    const t = window.setInterval(() => this.now.set(Date.now()), 1000);
+    inject(DestroyRef).onDestroy(() => window.clearInterval(t));
+  }
+
+  toggleMenu(m: Menu) {
+    this.menu.set(this.menu() === m ? null : m);
+  }
+
+  togglePeople() {
+    this.peopleOpen.update((v) => !v);
+  }
+
+  menuTitle(m: Menu) {
+    return m === 'mic' ? 'microfone' : m === 'screen' ? 'transmissão da tela' : 'câmera';
+  }
+
+  closeAll() {
+    this.menu.set(null);
+    this.volumeMenu.set(null);
+  }
+
+  /** Clique fora do submenu da barra fecha o submenu. */
+  outside(e: PointerEvent) {
+    if (this.menu() === null) return;
+    const el = e.target instanceof Element ? e.target : null;
+    if (el?.closest('.pop, .caret') == null) this.menu.set(null);
+  }
+
+  /**
+   * Ctrl + roda (e a pinça do touchpad, que o navegador entrega como Ctrl + roda) dava zoom na
+   * página inteira em cima do vídeo. Na área da tela isso não faz sentido: bloqueia.
+   */
+  noZoom(e: WheelEvent) {
+    if (e.ctrlKey || e.metaKey) e.preventDefault();
   }
 
   copyInvite() {

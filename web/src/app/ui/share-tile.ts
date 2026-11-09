@@ -18,22 +18,26 @@ import { RoomStore } from '../core/room-store';
       </button>
     }
     <div class="name">
+      <span class="led" [class.live]="!share().isLocal" [class.accent]="share().isLocal"></span>
       @if (share().isLocal) { Sua tela } @else { {{ share().ownerName }} }
       @if (share().hasAudio || hasStudio()) { <span class="snd" [class.off]="share().volume.muted || share().volume.level === 0">♪</span> }
     </div>
   `,
   styles: `
-    :host { position: relative; display: block; min-width: 0; min-height: 0; background: #000; border-radius: 10px;
-      overflow: hidden; cursor: pointer; outline: 2px solid transparent; transition: outline-color 0.15s; }
-    :host(:hover) { outline-color: var(--accent); }
+    /* Monitor de ilha de edição: liga como tubo de TV, plaqueta com o nome embaixo. */
+    :host { position: relative; display: block; min-width: 0; min-height: 0; background: #000; border-radius: 4px;
+      overflow: hidden; cursor: pointer; box-shadow: 0 0 0 1px var(--line-2), 0 12px 30px -16px #000;
+      transition: box-shadow 160ms; animation: crt-on 420ms var(--ease) both; }
+    :host(:hover) { box-shadow: 0 0 0 1px var(--accent), 0 0 24px -8px var(--accent-glow); }
     video { width: 100%; height: 100%; object-fit: contain; display: block; }
-    .name { position: absolute; left: 8px; bottom: 8px; padding: 2px 8px; border-radius: 6px; background: #000a;
-      font-size: 0.8rem; font-weight: 600; display: flex; gap: 0.4rem; align-items: center; }
-    .snd { color: var(--accent); }
-    .eye { position: absolute; right: 8px; top: 8px; padding: 2px 7px; border-radius: 6px; background: #000a;
-      font-size: 0.8rem; display: flex; gap: 0.3rem; align-items: center; }
-    .mute { position: absolute; right: 8px; bottom: 8px; border: 0; border-radius: 6px; padding: 4px 6px; background: #000a;
-      color: #fff; display: none; cursor: pointer; }
+    .name { position: absolute; left: 8px; bottom: 8px; padding: 3px 8px; border-radius: 3px; background: rgb(8 7 11 / 0.82);
+      border: 1px solid rgb(255 255 255 / 0.08); font: 500 0.7rem/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase;
+      display: flex; gap: 0.45rem; align-items: center; }
+    .snd { color: var(--accent-hi); }
+    .eye { position: absolute; right: 8px; top: 8px; padding: 2px 7px; border-radius: 3px; background: rgb(8 7 11 / 0.82);
+      font: 0.72rem var(--mono); display: flex; gap: 0.3rem; align-items: center; }
+    .mute { position: absolute; right: 8px; bottom: 8px; border: 1px solid rgb(255 255 255 / 0.1); border-radius: 3px; padding: 4px 6px;
+      background: rgb(8 7 11 / 0.82); color: #fff; display: none; cursor: pointer; }
     .mute.on { display: grid; color: var(--danger); }
     :host(:hover) .mute { display: grid; }
     .snd.off { color: var(--muted); text-decoration: line-through; }

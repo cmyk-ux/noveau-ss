@@ -24,10 +24,7 @@ import {
 @Component({
   selector: 'cen-stream-panel',
   template: `
-    <div class="head">
-      <p class="label">transmissão</p>
-      @if (sharing()) { <span class="on-air">no ar</span> }
-    </div>
+    @if (sharing()) { <p class="on-air mono"><span class="led live"></span>no ar</p> }
     @if (changedWhileLive()) {
       <div class="apply">
         <span>A transmissão ainda está com os ajustes antigos.</span>
@@ -140,18 +137,15 @@ import {
   `,
   styles: `
     :host { display: block; }
-    .head { display: flex; justify-content: space-between; align-items: baseline; }
-    .on-air { color: var(--danger); font-size: 0.75rem; font-weight: 700; text-transform: uppercase; }
+    .on-air { display: inline-flex; align-items: center; gap: 0.4rem; margin: 0 0 0.4rem; color: var(--danger);
+      font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.16em; }
     .apply { display: flex; gap: 0.5rem; align-items: center; justify-content: space-between; padding: 0.6rem;
-      border: 1px solid var(--accent); border-radius: var(--radius); margin-bottom: 0.5rem; font-size: 0.85rem; }
-    .option { display: flex; flex-direction: column; align-items: flex-start; width: 100%; text-align: left;
-      padding: 0.55rem 0.75rem; margin-bottom: 0.35rem; border-radius: var(--radius);
-      border: 1px solid var(--line); background: transparent; }
-    .option span { color: var(--muted); font-size: 0.82rem; }
-    .option.lit { border-color: var(--accent); background: #7c4dff26; }
-    .switch { display: flex; gap: 0.5rem; align-items: center; margin-top: 0.6rem; cursor: pointer; }
-    .switch input { accent-color: var(--accent); width: 16px; height: 16px; }
-    .summary { margin-top: 1.2rem; padding-top: 0.8rem; border-top: 1px solid var(--line); font-size: 0.88rem; }
+      border: 1px solid var(--accent); border-radius: var(--radius); margin-bottom: 0.5rem; font-size: 0.85rem;
+      background: rgb(124 77 255 / 0.1); animation: unfold-down 200ms var(--ease) both; }
+    /* Leitura final como um recibo impresso. */
+    .summary { margin: 1.2rem 0 0; padding: 0.7rem 0.8rem; border: 1px dashed var(--line-2); border-radius: 4px;
+      background: #09080c; font: 0.78rem/1.55 var(--mono); color: var(--muted); }
+    .summary strong { color: var(--text); font-weight: 500; }
   `,
 })
 export class StreamPanel {

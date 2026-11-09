@@ -8,26 +8,30 @@ import { Icon } from './icon';
   selector: 'cen-devices-panel',
   imports: [Icon],
   template: `
-    <p class="label">microfone</p>
+    @if (section() !== 'camera') {
+    @if (section() === 'all') { <p class="label">microfone</p> }
     @if (store.microphones.devices().length === 0) {
       <p class="hint">{{ store.micOn() ? 'Nenhum microfone encontrado.' : 'Ligue o microfone uma vez para o navegador mostrar a lista.' }}</p>
     } @else {
       @for (d of store.microphones.devices(); track d.deviceId) {
         <button type="button" class="item" [class.selected]="store.microphones.isSelected(d.deviceId)" (click)="pickMic(d.deviceId)">
-          <span>{{ d.label }}</span>
+          <span class="led" [class.accent]="store.microphones.isSelected(d.deviceId)"></span>
+          <span class="dev">{{ d.label }}</span>
           @if (store.microphones.isSelected(d.deviceId)) { <cen-icon name="check" [size]="14" /> }
         </button>
       }
     }
+    }
 
-    @if (store.canPublish()) {
-      <p class="label">câmera</p>
+    @if (section() !== 'mic' && store.canPublish()) {
+      @if (section() === 'all') { <p class="label">câmera</p> }
       @if (store.webcams.devices().length === 0) {
         <p class="hint">Nenhuma câmera neste aparelho.</p>
       } @else {
         @for (d of store.webcams.devices(); track d.deviceId) {
           <button type="button" class="item" [class.selected]="store.webcams.isSelected(d.deviceId)" (click)="pickCamera(d.deviceId)">
-            <span>{{ d.label || 'Câmera' }}</span>
+            <span class="led" [class.accent]="store.webcams.isSelected(d.deviceId)"></span>
+            <span class="dev">{{ d.label || 'Câmera' }}</span>
             @if (store.webcams.isSelected(d.deviceId)) { <cen-icon name="check" [size]="14" /> }
           </button>
         }
@@ -65,18 +69,23 @@ import { Icon } from './icon';
   `,
   styles: `
     :host { display: block; }
-    .item { display: flex; justify-content: space-between; align-items: center; width: 100%; text-align: left;
-      padding: 0.5rem 0.6rem; border: 0; border-radius: var(--radius); background: transparent; }
-    .item:hover { background: var(--surface-2); }
-    .item.selected { color: var(--accent); }
-    .btn { margin-top: 0.5rem; }
-    .copy { display: block; width: 100%; text-align: left; padding: 0.45rem 0.6rem; border-radius: var(--radius);
-      border: 1px solid var(--line); background: var(--bg); font-size: 0.8rem; word-break: break-all; }
+    .item { display: flex; gap: 0.6rem; align-items: center; width: 100%; text-align: left;
+      padding: 0.5rem 0.55rem; border: 0; border-radius: 5px; background: transparent; font-size: 0.9rem; }
+    .item:hover { background: var(--surface-3); }
+    .item.selected { color: var(--accent-hi); }
+    .dev { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .btn { margin-top: 0.6rem; }
+    .copy { display: block; width: 100%; text-align: left; padding: 0.45rem 0.6rem; border-radius: 5px;
+      border: 1px solid var(--line-2); background: #09080c; box-shadow: inset 0 1px 4px #000a; font-size: 0.78rem;
+      word-break: break-all; }
+    .copy:hover { border-color: var(--accent); }
     .live { color: var(--ok); margin-left: 0.5rem; }
   `,
 })
 export class DevicesPanel {
   readonly open = input(false);
+  /** 'mic' e 'camera' viram os submenus da barra de baixo. */
+  readonly section = input<'all' | 'mic' | 'camera'>('all');
   protected readonly store = inject(RoomStore);
   protected readonly invites = inject(Invites);
 

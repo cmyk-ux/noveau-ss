@@ -12,10 +12,14 @@ import { Toast } from './core/toast';
     }
   `,
   styles: `
+    /* Aviso como um recibo saindo da impressora: papel claro, texto em mono, borda serrilhada. */
     .toast {
-      position: fixed; bottom: 6.5rem; left: 50%; transform: translateX(-50%); z-index: 30;
-      background: var(--surface-2); border: 1px solid var(--line); border-radius: var(--radius);
-      padding: 0.55rem 1.1rem; font-size: 0.9rem;
+      position: fixed; bottom: 6.2rem; left: 50%; translate: -50% 0; z-index: 60; max-width: min(440px, calc(100vw - 2rem));
+      padding: 0.6rem 1rem 0.75rem; background: #e9e3f1; color: #17131d; font: 500 0.8rem/1.45 var(--mono);
+      border-radius: 2px; box-shadow: 0 14px 40px -12px #000, 0 0 0 1px #000;
+      -webkit-mask: radial-gradient(4px at 50% 100%, #0000 98%, #000) 50% 100% / 10px 100% repeat-x;
+      mask: radial-gradient(4px at 50% 100%, #0000 98%, #000) 50% 100% / 10px 100% repeat-x;
+      animation: print 340ms steps(8) both;
     }
   `,
 })

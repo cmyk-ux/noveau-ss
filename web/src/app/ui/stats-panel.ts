@@ -45,10 +45,13 @@ function soundRows(a: AudioReading | null): Row[] {
     }
   `,
   styles: `
-    :host { position: absolute; top: 0.75rem; left: 0.75rem; z-index: 5; min-width: 230px; padding: 0.6rem 0.75rem;
-      background: #000a; border: 1px solid var(--line); border-radius: var(--radius); font: 12px/1.5 var(--mono); }
+    /* Leitura de equipamento: fósforo sobre preto. */
+    :host { position: absolute; top: 0.75rem; left: 0.75rem; z-index: 5; min-width: 240px; padding: 0.55rem 0.75rem 0.65rem;
+      background: rgb(6 5 9 / 0.82); border: 1px solid rgb(255 255 255 / 0.08); border-radius: 4px; font: 11.5px/1.55 var(--mono);
+      backdrop-filter: blur(4px); box-shadow: 0 10px 30px -14px #000; pointer-events: none; }
     :host([hidden]) { display: none; }
-    .title { color: var(--accent); margin-top: 0.3rem; }
+    .title { color: var(--accent-hi); margin-top: 0.35rem; text-transform: uppercase; letter-spacing: 0.14em; font-size: 10px; }
+    .row strong { font-weight: 500; color: var(--ok); }
     .row { display: flex; justify-content: space-between; gap: 1rem; }
     .row span { color: var(--muted); }
     .row.warn strong { color: var(--danger); }

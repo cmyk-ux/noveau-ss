@@ -15,8 +15,8 @@ import { RoomScreen } from '../ui/room-screen';
       <cen-room-screen [label]="label()" (leave)="goHome()" />
     } @else if (key() === '') {
       <div class="center">
-        <div class="card">
-          <h1 class="mono">{{ label() }}</h1>
+        <div class="card marks">
+          <h1>{{ label() }}</h1>
           <p class="hint">
             Este endereço não tem a chave da sala, então não abre nenhuma sala. Peça o link inteiro a quem te
             convidou: o que vem depois do # é o que deixa você entrar.
@@ -29,9 +29,9 @@ import { RoomScreen } from '../ui/room-screen';
       </div>
     } @else {
       <div class="center">
-        <form class="card" (submit)="submit($event)">
+        <form class="card marks" (submit)="submit($event)">
           <p class="label">Entrando em</p>
-          <h1 class="mono">{{ label() }}</h1>
+          <h1>{{ label() }}</h1>
           <div class="field">
             <label class="label" for="nickname">Como te chamamos</label>
             <input id="nickname" class="input" type="text" maxlength="24" autocomplete="nickname"

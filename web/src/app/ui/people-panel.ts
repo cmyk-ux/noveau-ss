@@ -91,19 +91,21 @@ import { VolumeSlider } from './volume-slider';
   `,
   styles: `
     :host { display: block; }
-    .person { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.6rem; }
+    .person { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.7rem; }
+    .person + cen-volume { margin-top: 0.25rem; }
     .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .you { color: var(--muted); font-size: 0.85rem; margin-left: 0.25rem; }
-    .dot { width: 8px; height: 8px; margin: 0 7px; border-radius: 50%; background: var(--line); flex-shrink: 0; }
-    .avatar { border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 0 2px transparent; transition: box-shadow 0.15s; }
-    .speaking .dot { background: var(--ok); box-shadow: 0 0 0 3px #5cc88a33; }
-    .speaking .avatar { box-shadow: 0 0 0 2px var(--ok); }
-    .live { font-size: 0.7rem; font-weight: 700; color: var(--danger); }
+    .dot { width: 8px; height: 8px; margin: 0 7px; border-radius: 50%; background: var(--line-2); flex-shrink: 0; }
+    .avatar { border-radius: 50%; flex-shrink: 0; box-shadow: 0 0 0 2px transparent; transition: box-shadow 0.12s; }
+    .speaking .dot { background: var(--ok); box-shadow: 0 0 8px -1px var(--ok); }
+    .speaking .avatar { box-shadow: 0 0 0 2px var(--ok), 0 0 12px -2px var(--ok); }
+    .live { font: 500 0.62rem var(--mono); letter-spacing: 0.12em; color: #fff; background: var(--danger); padding: 1px 5px;
+      border-radius: 3px; }
     .outside { color: var(--muted); }
     .outside .avatar { opacity: 0.6; filter: grayscale(1); }
-    .tag { font-size: 0.7rem; border: 1px solid var(--line); border-radius: 4px; padding: 0 0.3rem; }
     .action { margin-top: 1rem; }
-    .studio { border: 1px solid var(--line); border-radius: 8px; padding: 0.25rem 0.6rem 0.6rem; margin-bottom: 0.5rem; }
+    .studio { border: 1px solid var(--line-2); border-radius: 6px; padding: 0.25rem 0.6rem 0.6rem; margin-bottom: 0.5rem;
+      background: #09080c; box-shadow: inset 0 1px 4px #000a; }
     .studio input[type=range] { flex: 1; accent-color: var(--accent); }
     .small { font-size: 0.75rem; }
     .chips { display: flex; flex-wrap: wrap; gap: 0.3rem; margin-top: 0.4rem; }
@@ -152,7 +154,8 @@ export class PeoplePanel {
         .then((r) => this.members.set(r.people))
         .catch(() => this.members.set([]));
     void load();
-    const timer = setInterval(load, 5000);
+    // Vem do cache do bot (não chama a API do Discord), então dá para olhar a cada 2 s.
+    const timer = setInterval(load, 2000);
     inject(DestroyRef).onDestroy(() => clearInterval(timer));
   }
 

@@ -14,9 +14,9 @@ import { RoomScreen } from '../ui/room-screen';
       <cen-room-screen [label]="label()" (leave)="goHome()" />
     } @else {
       <div class="center">
-        <div class="card">
+        <div class="card marks">
           <p class="label">Sala da call</p>
-          <h1 class="mono">{{ call()?.name ?? '…' }}</h1>
+          <h1>{{ call()?.name ?? '…' }}</h1>
           @if (store.error()) {
             <p class="error" role="alert">{{ store.error() }}</p>
             <div class="stack">
