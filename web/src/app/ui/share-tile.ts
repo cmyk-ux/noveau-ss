@@ -10,6 +10,10 @@ import { RoomStore } from '../core/room-store';
   template: `
     <video #video autoplay playsinline muted></video>
     <div class="eye" [title]="viewersTitle()"><cen-icon name="eye" [size]="14" /> {{ viewers().length }}</div>
+    <button type="button" class="hide" title="Esconder esta tela (para de baixar o vídeo e o som dela)"
+      (click)="$event.stopPropagation(); store.hideShare(share().id)">
+      <cen-icon name="eyeOff" [size]="14" /> esconder
+    </button>
     @if (!share().isLocal) {
       <button type="button" class="mute" [class.on]="share().volume.muted"
         [title]="share().volume.muted ? 'Ativar o som' : 'Mutar'"
@@ -40,6 +44,11 @@ import { RoomStore } from '../core/room-store';
       background: rgb(8 7 11 / 0.82); color: #fff; display: none; cursor: pointer; }
     .mute.on { display: grid; color: var(--danger); }
     :host(:hover) .mute { display: grid; }
+    .hide { position: absolute; left: 8px; top: 8px; display: none; align-items: center; gap: 0.3rem; height: 24px; padding: 0 0.5rem;
+      border: 1px solid #0b0b0c; border-radius: 2px; background: rgb(22 22 23 / 0.88); color: var(--text); cursor: pointer;
+      font: 500 0.66rem/1 var(--mono); letter-spacing: 0.06em; text-transform: uppercase; box-shadow: var(--key-shadow); }
+    .hide:active { transform: translateY(2px); box-shadow: var(--key-pressed); }
+    :host(:hover) .hide { display: inline-flex; }
     .snd.off { color: var(--muted); text-decoration: line-through; }
   `,
 })

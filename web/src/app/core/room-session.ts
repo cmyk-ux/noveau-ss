@@ -28,6 +28,8 @@ export interface ShareView {
   hasAudio: boolean;
   trackSid: string;
   volume: Volume;
+  /** Escondida por você: não recebe o vídeo nem toca o som dela. */
+  hidden?: boolean;
 }
 
 export interface PersonView {
@@ -128,7 +130,7 @@ function keepFocus(ids: string[], current: string | null) {
 /** Quando a primeira tela aparece, ela ganha o foco; com várias, o foco fica onde estava. */
 function focusIfOnly(ids: string[], arriving: string, _current: string | null) {
   // Chegou outra tela: mostra todas em grade, como o Discord.
-  return ids.length === 1 ? arriving : null;
+  return ids.length === 1 && ids[0] === arriving ? arriving : null;
 }
 
 function isVisual(source: Track.Source) {
@@ -149,6 +151,7 @@ const WEBCAM_RESOLUTION = VideoPresets.h720.resolution;
 
 export class RoomSession {
   private focusedShareId: string | null = null;
+  private readonly hidden = new Set<string>();
   private readonly listeners = new Set<(s: RoomSnapshot) => void>();
   private readonly mixer = new Mixer();
   private publishedWatching: string | null | undefined = undefined;
@@ -255,6 +258,18 @@ export class RoomSession {
 
   focusShare(id: string) {
     this.focusedShareId = id;
+    this.emit();
+  }
+
+  /** Esconde uma tela só para você: para de baixar o vídeo e de tocar o som dela. */
+  hideShare(id: string) {
+    this.hidden.add(id);
+    if (this.focusedShareId === id) this.focusedShareId = null;
+    this.emit();
+  }
+
+  showShare(id: string) {
+    this.hidden.delete(id);
     this.emit();
   }
 
@@ -428,7 +443,7 @@ export class RoomSession {
     }
     const shares = this.collectShares();
     this.live = shares;
-    this.focusedShareId = keepFocus(shares.map((s) => s.view.id), this.focusedShareId);
+    this.focusedShareId = keepFocus(shares.filter((s) => !this.hidden.has(s.view.id)).map((s) => s.view.id), this.focusedShareId);
     this.followFocus(shares);
     this.mix();
     this.publishWatching();
@@ -436,14 +451,14 @@ export class RoomSession {
   }
 
   private liveIds() {
-    return this.collectShares().map((s) => s.view.id);
+    return this.collectShares().map((s) => s.view.id).filter((id) => !this.hidden.has(id));
   }
 
   private describe(shares: LiveShare[]): RoomSnapshot {
     return {
       status: statusOf(this.room.state),
       participants: this.collectParticipants(),
-      shares: shares.map((s) => s.view),
+      shares: shares.map((s) => (this.hidden.has(s.view.id) ? { ...s.view, hidden: true } : s.view)),
       focusedShareId: this.focusedShareId,
       needsAudioUnlock: !this.room.canPlaybackAudio,
       ...(() => {
@@ -476,12 +491,13 @@ export class RoomSession {
   private followFocus(shares: LiveShare[]) {
     const grid = this.focusedShareId === null;
     const remote = shares.filter((s) => !s.view.isLocal);
+    const visible = shares.filter((s) => !this.hidden.has(s.view.id)).length;
     for (const s of remote) {
-      const shown = !this.away && (grid || s.view.id === this.focusedShareId);
+      const shown = !this.away && !this.hidden.has(s.view.id) && (grid || s.view.id === this.focusedShareId);
       const pub = s.publication as any;
       pub.setSubscribed(true);
       pub.setEnabled(shown);
-      if (shown) pub.setVideoQuality(grid && shares.length > 2 ? VideoQuality.MEDIUM : VideoQuality.HIGH);
+      if (shown) pub.setVideoQuality(grid && visible > 2 ? VideoQuality.MEDIUM : VideoQuality.HIGH);
     }
   }
 
@@ -490,7 +506,12 @@ export class RoomSession {
       const id = p.identity;
       this.tune(p, Track.Source.Microphone, this.mixer.read('mic', id), true);
       // Na grade, o som de todas as telas toca (cada uma com seu volume); em foco, só a dela.
-      this.tune(p, Track.Source.ScreenShareAudio, this.mixer.read('share', id), this.focusedShareId === null || id === this.focusedShareId);
+      this.tune(
+        p,
+        Track.Source.ScreenShareAudio,
+        this.mixer.read('share', id),
+        !this.hidden.has(id) && (this.focusedShareId === null || id === this.focusedShareId),
+      );
     }
   }
 

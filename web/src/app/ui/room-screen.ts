@@ -135,6 +135,10 @@ function timecode(ms: number): string {
             @if (store.shares().length > 1) {
               <button class="btn icon small ghost" title="Ver todas as telas" (click)="store.unfocus()"><cen-icon name="grid" [size]="16" /></button>
             }
+            @if (!f.isLocal || store.shares().length > 1) {
+              <button class="btn icon small ghost" title="Esconder esta tela (para de baixar o vídeo e o som dela)" (click)="store.hideShare(f.id)">
+                <cen-icon name="eyeOff" [size]="16" /></button>
+            }
             <button class="btn icon small ghost" title="Janela flutuante" (click)="stage()?.popout()"><cen-icon name="popout" [size]="16" /></button>
             <button class="btn icon small ghost" [title]="isFullscreen() ? 'Sair da tela cheia' : 'Tela cheia'" (click)="toggleFullscreen()">
               <cen-icon [name]="isFullscreen() ? 'fullscreenExit' : 'fullscreen'" [size]="16" />
@@ -152,7 +156,7 @@ function timecode(ms: number): string {
             <div class="testcard card screws">
               <div class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
               <p class="nosignal mono"><span class="led warn"></span>{{ store.waitingForCamera() ? 'aguardando câmera' : 'sem sinal' }}</p>
-              <h2>{{ store.waitingForCamera() ? 'Esperando a câmera.' : 'Ninguém está compartilhando.' }}</h2>
+              <h2>{{ store.waitingForCamera() ? 'Esperando a câmera.' : store.hiddenShares().length > 0 ? 'Você escondeu todas as telas.' : 'Ninguém está compartilhando.' }}</h2>
               <p class="hint">{{ emptyHint() }}</p>
               @if (store.canPublish() && canShare) {
                 <div class="actions">
@@ -172,6 +176,19 @@ function timecode(ms: number): string {
                 </p>
               </div>
             </div>
+          </div>
+        }
+        @if (store.hiddenShares().length > 0) {
+          <div class="tray">
+            <span class="label">escondidas</span>
+            @for (h of store.hiddenShares(); track h.id) {
+              <button type="button" class="btn small" [title]="'Voltar a ver ' + hiddenName(h)" (click)="store.showShare(h.id)">
+                <span class="led"></span>{{ hiddenName(h) }} <cen-icon name="eye" [size]="14" />
+              </button>
+            }
+            @if (store.hiddenShares().length > 1) {
+              <button type="button" class="btn small ghost-plain" (click)="showAll()">mostrar todas</button>
+            }
           </div>
         }
         <cen-stats-panel />
@@ -399,6 +416,14 @@ function timecode(ms: number): string {
     .close:hover { color: var(--text); background: var(--surface-3); }
     .brand .wordmark { display: none; }
 
+    /* ---------- telas escondidas: faixa sempre à vista, no alto e no meio do palco */
+    .tray { position: absolute; left: 50%; top: 0.75rem; translate: -50% 0; z-index: 6; display: flex; align-items: center; flex-wrap: wrap;
+      gap: 0.4rem; max-width: calc(100% - 1.5rem); padding: 0.35rem 0.5rem 0.45rem; border-radius: 3px;
+      background: rgb(22 22 23 / 0.9); border: 1px solid #0b0b0c; box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 6px 18px -8px #000;
+      animation: slide-in 160ms linear both; }
+    .tray .label { margin: 0 0.2rem 0 0; }
+    .ghost-plain { background: transparent; box-shadow: none; color: var(--muted); }
+
     /* ---------- clipes */
     .shelf { position: absolute; right: 0.75rem; bottom: 5.2rem; z-index: 15; display: flex; flex-direction: column; gap: 0.5rem;
       width: min(300px, calc(100% - 1.5rem)); }
@@ -556,6 +581,14 @@ export class RoomScreen {
 
   left(expiresAt: number | undefined) {
     return expiresAt === undefined ? '' : this.mmss((expiresAt - this.now()) / 1000);
+  }
+
+  hiddenName(s: ShareView) {
+    return s.isLocal ? 'sua tela' : s.ownerName;
+  }
+
+  showAll() {
+    for (const h of this.store.hiddenShares()) this.store.showShare(h.id);
   }
 
   noZoom(e: WheelEvent) {

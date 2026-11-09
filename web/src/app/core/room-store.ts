@@ -86,7 +86,10 @@ export class RoomStore {
   readonly liveSignature = this._liveSignature.asReadonly();
   readonly status = computed(() => this._snapshot().status);
   readonly participants = computed(() => this._snapshot().participants);
-  readonly shares = computed(() => this._snapshot().shares);
+  /** Telas à mostra (sem as que você escondeu). */
+  readonly shares = computed(() => this._snapshot().shares.filter((s) => !s.hidden));
+  /** Telas que você escondeu, para a faixa de "voltar a ver". */
+  readonly hiddenShares = computed(() => this._snapshot().shares.filter((s) => s.hidden));
   readonly needsAudioUnlock = computed(() => this._snapshot().needsAudioUnlock);
   readonly sharing = computed(() => isSharingScreen(this._snapshot()));
   readonly webcamOn = computed(() => isWebcamOn(this._snapshot()));
@@ -175,6 +178,14 @@ export class RoomStore {
   attachShare(id: string, el: HTMLMediaElement) {
     return this.session.attachShare(id, el);
   }
+  hideShare(id: string) {
+    this.session.hideShare(id);
+  }
+
+  showShare(id: string) {
+    this.session.showShare(id);
+  }
+
   focusShare(id: string) {
     this.session.focusShare(id);
   }
