@@ -381,7 +381,8 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
+// HOST=127.0.0.1 em produção (rede do host): só o Caddy alcança a API.
+server.listen(PORT, process.env.HOST || undefined, () => {
   console.log(`API do Noveau em http://localhost:${PORT} (LiveKit: ${LIVEKIT_HTTP_URL})`);
   if (STATIC_DIR !== '') console.log(`Servindo o site de ${STATIC_DIR}`);
   console.log(`Endereço do LiveKit que o navegador recebe: ${LIVEKIT_PUBLIC_URL !== '' ? LIVEKIT_PUBLIC_URL : 'ws://<endereço da página>:7880 (LIVEKIT_PUBLIC_URL vazio)'}`);

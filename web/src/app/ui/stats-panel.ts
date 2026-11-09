@@ -58,6 +58,7 @@ function lossPct(lost: number, got: number) {
   selector: 'cen-stats-panel',
   host: { '[hidden]': '!prefs.showStats()' },
   template: `
+    <button type="button" class="x" title="Fechar as estatísticas" aria-label="Fechar as estatísticas" (click)="prefs.setShowStats(false)">×</button>
     @for (s of sections(); track s.title) {
       <div class="title">{{ s.title }}</div>
       @for (r of s.rows; track r.label) {
@@ -73,6 +74,9 @@ function lossPct(lost: number, got: number) {
       background: rgb(16 16 17 / 0.88); border: 1px solid #0b0b0c; border-radius: 2px; font: 11.5px/1.55 var(--mono);
       box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.05); pointer-events: none; }
     :host([hidden]) { display: none; }
+    .x { position: absolute; top: 2px; right: 2px; width: 22px; height: 22px; display: grid; place-items: center; padding: 0;
+      border: 0; border-radius: 2px; background: none; color: var(--muted); font: 16px/1 var(--mono); cursor: pointer; pointer-events: auto; }
+    .x:hover { color: var(--text); background: rgb(255 255 255 / 0.08); }
     .title { color: var(--accent-hi); margin-top: 0.35rem; text-transform: uppercase; letter-spacing: 0.14em; font-size: 10px; }
     .row strong { font-weight: 500; color: var(--text); }
     .row { display: flex; justify-content: space-between; gap: 1rem; }

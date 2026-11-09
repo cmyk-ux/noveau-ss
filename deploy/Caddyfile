@@ -7,10 +7,10 @@
 
 	handle /livekit/* {
 		uri strip_prefix /livekit
-		reverse_proxy livekit:7880
+		reverse_proxy 127.0.0.1:7880
 	}
 
 	handle {
-		reverse_proxy app:3000
+		reverse_proxy 127.0.0.1:3000
 	}
 }

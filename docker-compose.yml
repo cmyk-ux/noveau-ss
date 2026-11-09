@@ -2,7 +2,7 @@
 # Para amigos na mesma rede entrarem, troque NODE_IP pelo IP do seu PC na rede (ex.: 192.168.0.10).
 services:
   livekit:
-    image: livekit/livekit-server:v1.13.10
+    image: livekit/livekit-server:v1.13.11
     command: --dev --bind 0.0.0.0 --node-ip ${NODE_IP:-127.0.0.1}
     ports:
       - "7880:7880"

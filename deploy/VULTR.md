@@ -38,6 +38,21 @@ No painel da Vultr: **Products > Firewall**, crie um grupo, associe à VPS e lib
 
 Sem a UDP 7882 e a TCP 7881 a pessoa entra na sala, mas o vídeo e o som não chegam.
 
+**Firewall dentro da VPS (ufw).** Os serviços rodam na rede do host (`network_mode: host`), então o
+ufw do Ubuntu vale para eles (antes o Docker passava por cima). Se o ufw estiver ligado
+(`sudo ufw status`), libere as mesmas portas, senão o site para de abrir:
+
+```bash
+sudo ufw allow 22/tcp
+sudo ufw allow 80/tcp
+sudo ufw allow 443/tcp
+sudo ufw allow 443/udp
+sudo ufw allow 7881/tcp
+sudo ufw allow 7882/udp
+```
+
+As portas 7880 (LiveKit) e 3000 (API) ficam fechadas: só o Caddy fala com elas, por dentro.
+
 ## 4. Instalar o Docker
 
 Entre na VPS (`ssh root@IP-DA-VPS`) e rode:
@@ -113,3 +128,31 @@ docker compose --env-file .env.prod -f docker-compose.prod.yml up -d --build
 | Entra na sala mas não vê nem ouve ninguém | UDP 7882 e TCP 7881 fechadas no firewall da Vultr |
 | Login do Discord falha com "redirect_uri inválido" | falta o endereço do passo 8 no Developer Portal |
 | Quer ver o que o LiveKit está fazendo | `docker compose --env-file .env.prod -f docker-compose.prod.yml logs -f livekit` |
+
+
+## Perda de pacotes / travadas: checar o servidor
+
+O diário de travadas do site diz se a perda é na internet de quem transmite ou de quem assiste.
+Se todo mundo trava junto, vale olhar se é a própria VPS descartando pacotes:
+
+```bash
+# 1) O LiveKit reclama do buffer de UDP? (com o serviço "tuning" não deve aparecer mais)
+docker compose -f docker-compose.prod.yml logs livekit | grep -i "receive buffer"
+
+# 2) O kernel está jogando pacote UDP fora por buffer cheio? Rode duas vezes com 1 min de intervalo
+#    durante uma transmissão: se UdpRcvbufErrors subir, o servidor está perdendo pacotes.
+nstat -az UdpRcvbufErrors UdpSndbufErrors UdpInErrors
+
+# 3) Valores atuais (o "tuning" põe 16 MB no máximo)
+sysctl net.core.rmem_max net.core.wmem_max
+
+# 4) Processador e memória dos serviços
+docker stats --no-stream
+```
+
+Para deixar os buffers grandes mesmo sem o compose (opcional, sobrevive a reinício da VPS):
+
+```bash
+printf 'net.core.rmem_max=16777216\nnet.core.wmem_max=16777216\nnet.core.rmem_default=4194304\nnet.core.wmem_default=1048576\nnet.core.netdev_max_backlog=10000\n' | sudo tee /etc/sysctl.d/99-noveau.conf
+sudo sysctl --system
+```

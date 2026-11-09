@@ -110,6 +110,28 @@ function displayMediaOptions(req: ShareRequest): DisplayMediaStreamOptions {
   } as unknown as DisplayMediaStreamOptions;
 }
 
+/**
+ * Camadas de tempo (L1T3) no VP8: os quadros se dividem em 3 níveis e só 1 a cada 4 serve de base
+ * para os próximos. Se um pacote se perde num quadro que não é base, o navegador de quem assiste só
+ * pula aquele quadro (1/60 s) e segue; sem camadas, todo quadro depende do anterior e qualquer
+ * perda não recuperada congela a imagem até chegar um quadro-chave (~0,5-1 s). O livekit-client só
+ * liga isso para VP9/AV1, então ligamos direto no RTCRtpSender. Custa ~10% de eficiência.
+ */
+async function addTemporalLayers(track: LocalVideoTrack) {
+  const sender = (track as unknown as { sender?: RTCRtpSender }).sender;
+  if (sender === undefined) return;
+  const params = sender.getParameters();
+  let changed = false;
+  for (const e of params.encodings ?? []) {
+    const mode = (e as RTCRtpEncodingParameters & { scalabilityMode?: string }).scalabilityMode;
+    if (mode === undefined || mode === 'L1T1') {
+      (e as RTCRtpEncodingParameters & { scalabilityMode?: string }).scalabilityMode = 'L1T3';
+      changed = true;
+    }
+  }
+  if (changed) await sender.setParameters(params).catch((e) => console.warn('[tela] camadas de tempo recusadas:', e));
+}
+
 const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
 
 function videoPublishOptions(req: ShareRequest, codec: Codec, maxBitrate: number, size: Size): TrackPublishOptions {
@@ -223,6 +245,7 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
     { once: true },
   );
   await room.localParticipant.publishTrack(video, videoPublishOptions(req, codec, bitrate, resolution));
+  if (codec === 'vp8') await addTemporalLayers(video);
   let audioState: ShareResult['audio'] = req.includeAudio ? 'refused' : 'not-requested';
   stopStudio();
   if (audio !== undefined && req.studio !== null) {

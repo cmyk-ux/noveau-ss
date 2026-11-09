@@ -4,5 +4,19 @@ rtc:
   tcp_port: 7881     # mídia por TCP (redes que bloqueiam UDP)
   udp_port: 7882     # mídia por UDP (o caminho rápido; uma porta só para todo mundo)
   use_external_ip: true   # descobre o IP público da VPS e anuncia para os navegadores
+
+  # Histórico de pacotes que o servidor guarda para reenviar quando alguém pede (NACK).
+  # O padrão (500) é ~0,15 s a 30 Mbps: o segundo pedido de reenvio já chegava tarde e o pacote
+  # era dado como perdido, o que vira travada até o próximo quadro-chave. 6000 é ~1,5 s a 35 Mbps
+  # (custa poucos MB de memória por tela).
+  packet_buffer_size_video: 6000
+
+  # Quando alguém trava e pede um quadro-chave, o servidor repassa o pedido para quem transmite no
+  # máximo uma vez por este intervalo. O padrão (1 s na camada principal) deixava a travada mais longa.
+  pli_throttle:
+    low_quality: 300ms
+    mid_quality: 400ms
+    high_quality: 400ms
+
 logging:
   level: info
