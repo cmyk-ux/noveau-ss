@@ -1,6 +1,6 @@
 ﻿; Instalador do plugin para Windows (Inno Setup 6). O CI compila com:
 ;   ISCC /DVersion=0.2.0 /DSource=<pasta com "noveau DAW.vst3"> /O<saída> windows.iss
-; Coloca o VST3 na pasta padrão, onde toda DAW procura (e o Plugin Buddy também).
+; Coloca o VST3 na pasta padrão, onde toda DAW procura.
 ; O AAX não vai junto: sem a assinatura da Avid, o Pro Tools comum recusa e mostra erro ao abrir.
 
 #ifndef Version
@@ -40,8 +40,8 @@ pt.AbrirPagina=Abrir o passo a passo
 en.AbrirPagina=Open the step-by-step guide
 
 [Messages]
-pt.FinishedLabel=O plugin noveau DAW foi instalado.%n%nAbra (ou reabra) a sua DAW e coloque o noveau DAW como último efeito do master. No plugin, clique em "Conectar com o Discord".%n%nPro Tools: use o Plugin Buddy (passo a passo na página que vai abrir).
-en.FinishedLabel=noveau DAW was installed.%n%nOpen (or reopen) your DAW and put noveau DAW as the last effect on the master. In the plugin, click "Conectar com o Discord".%n%nPro Tools: use Plugin Buddy (steps on the page that will open).
+pt.FinishedLabel=O plugin noveau DAW foi instalado.%n%nAbra (ou reabra) a sua DAW e coloque o noveau DAW como último efeito do master. No plugin, clique em "Conectar com o Discord".%n%nPro Tools: ainda não (falta a assinatura da Avid).
+en.FinishedLabel=noveau DAW was installed.%n%nOpen (or reopen) your DAW and put noveau DAW as the last effect on the master. In the plugin, click "Conectar com o Discord".%n%nPro Tools: not yet (needs Avid signing).
 
 [InstallDelete]
 Type: filesandordirs; Name: "{commoncf64}\VST3\noveau DAW.vst3"

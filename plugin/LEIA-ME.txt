@@ -36,12 +36,9 @@ código e digite em "código da sala" no plugin. Ele volta sozinho para essa sal
 O plugin não mexe no som: o que entra sai igual. Formato: 24-bit (padrão), 32-bit float (idêntico à
 DAW) ou 16-bit. A taxa é a do projeto (44,1 a 192 kHz). 24-bit a 48 kHz gasta ~2,3 Mbps de upload.
 
-PRO TOOLS (jeito que funciona hoje)
-  1. Instale o noveau DAW (o instalador põe o VST3 na pasta padrão).
-  2. Instale o Plugin Buddy (grátis, AAX assinado): https://www.modalics.com/products/plugin-buddy-free
-  3. No Master Fader, último insert: Plugin Buddy.
-  4. No Plugin Buddy, clique em Scan e escolha "noveau DAW" no primeiro slot de Processing.
-  5. Abra a tela do noveau DAW e clique em "Conectar com o Discord". Salve a sessão.
+PRO TOOLS
+  O Pro Tools comum só abre plugins AAX assinados pela Avid/PACE. A assinatura está sendo pedida.
+  (O Plugin Buddy, que carrega VST3 dentro do Pro Tools, foi testado e não funcionou bem.)
 
 PRO TOOLS (AAX próprio, quando for assinado)
   Windows: copie "noveau DAW.aaxplugin" para C:\Program Files\Common Files\Avid\Audio\Plug-Ins\

@@ -1,6 +1,6 @@
 import { Component, computed, signal } from '@angular/core';
 import { Me, whoAmI } from '../core/api';
-import { DAW_INSTALLERS, DAW_PLUGIN_RELEASES, DesktopOs, PLUGIN_BUDDY, confirmDawLink, desktopOs } from '../core/daw';
+import { DAW_INSTALLERS, DAW_PLUGIN_RELEASES, DesktopOs, confirmDawLink, desktopOs } from '../core/daw';
 
 type Daw = 'geral' | 'logic' | 'protools';
 
@@ -96,12 +96,8 @@ type Daw = 'geral' | 'logic' | 'protools';
                 <li>No canal <strong>Stereo Out</strong>, último slot de efeito: <em>Audio Units › noveau › noveau DAW</em>.</li>
               }
               @case ('protools') {
-                <li>O Pro Tools só abre plugins com assinatura da Avid, que o noveau ainda não tem. A ponte é o
-                  <a [href]="buddy" target="_blank" rel="noopener">Plugin Buddy</a>, grátis (pede só nome e e-mail).
-                  Instale ele também.</li>
-                <li>No <strong>Master Fader</strong>, último insert: escolha <strong>Plugin Buddy</strong>.</li>
-                <li>No Plugin Buddy, clique em <strong>Scan</strong>. Depois, no primeiro slot de <em>Processing</em>, escolha <strong>noveau DAW</strong>.</li>
-                <li>Abra a tela do noveau DAW dentro do Plugin Buddy. Salve a sessão: da próxima vez já abre tudo pronto.</li>
+                <li>Ainda não funciona no Pro Tools comum: ele só abre plugins com a assinatura da Avid, que está
+                  sendo pedida. Quando sair, o instalador passa a incluir a versão para Pro Tools e este passo vira "reabra o Pro Tools".</li>
               }
             }
           </ol>
@@ -149,7 +145,6 @@ export class PluginPage {
   protected readonly os: DesktopOs = desktopOs();
   protected readonly installers = DAW_INSTALLERS;
   protected readonly releases = DAW_PLUGIN_RELEASES;
-  protected readonly buddy = PLUGIN_BUDDY;
   protected readonly loginUrl = `/api/discord/login?next=${encodeURIComponent(`/plugin?c=${this.code}`)}`;
   protected readonly daw = signal<Daw>('geral');
   protected readonly me = signal<Me | null>(null);
