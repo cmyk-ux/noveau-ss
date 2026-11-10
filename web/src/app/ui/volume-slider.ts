@@ -41,43 +41,33 @@ function positionOf(level: number): number {
     .mute:hover { color: var(--text); }
     .mute:active { transform: translateY(1px); }
     .mute.silent { color: var(--danger); }
-    /* Fader de mesa: canaleta funda, régua de marcas e um botão de chapa com a linha do meio. */
+    /* Fader: canaleta funda e um botão de chapa dura com a linha do meio. Acima de 100% a canaleta fica âmbar. */
     .rail { position: relative; flex: 1; min-width: 0; height: 22px; display: flex; align-items: center; --fill: 0%; --t: 5.5px; }
-    .rail::before { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 6px; margin-top: -3px; border-radius: 1px;
-      background:
-        linear-gradient(90deg, var(--accent-hi) 0 var(--fill), transparent var(--fill)) 0 0 / 100% 100% no-repeat,
-        var(--well);
-      box-shadow: var(--inset); transition: filter 160ms; }
+    .rail::before { content: ''; position: absolute; left: 0; right: 0; top: 50%; height: 4px; margin-top: -2px; border-radius: 1px;
+      background: linear-gradient(90deg, var(--accent) 0 var(--fill), transparent var(--fill)) 0 0 / 100% 100% no-repeat, var(--well);
+      box-shadow: var(--inset); }
     .rail.boost::before { background:
-        linear-gradient(90deg, var(--accent-hi) 0 calc(var(--t) + (100% - 2 * var(--t)) * 0.4587), #e2a12e calc(var(--t) + (100% - 2 * var(--t)) * 0.4587) var(--fill), transparent var(--fill)) 0 0 / 100% 100% no-repeat,
+        linear-gradient(90deg, var(--accent) 0 calc(var(--t) + (100% - 2 * var(--t)) * 0.4587), var(--warn) calc(var(--t) + (100% - 2 * var(--t)) * 0.4587) var(--fill), transparent var(--fill)) 0 0 / 100% 100% no-repeat,
         var(--well); }
-    .rail.muted::before { filter: grayscale(1) brightness(0.6); }
-    /* Régua: um risco a cada 10%, e o 100% marcado em âmbar (dali para frente é ganho). */
-    .rail::after { content: ''; position: absolute; left: var(--t); right: var(--t); bottom: 0; height: 3px; pointer-events: none;
-      background:
-        linear-gradient(#e2a12e, #e2a12e) 45.9% 0 / 2px 3px no-repeat,
-        repeating-linear-gradient(90deg, var(--faint) 0 1px, transparent 1px 4.587%) 0 1px / 45.9% 2px no-repeat;
-      opacity: 0.8; }
+    .rail.muted::before { background: var(--well); }
+    /* Só um risco no 100%, onde o controle trava. */
+    .rail::after { content: ''; position: absolute; left: calc(var(--t) + (100% - 2 * var(--t)) * 0.4587); top: 4px; bottom: 4px; width: 1px;
+      background: var(--faint); pointer-events: none; }
     input { position: relative; z-index: 1; width: 100%; height: 22px; margin: 0; background: transparent; cursor: pointer;
       -webkit-appearance: none; appearance: none; }
     input::-webkit-slider-runnable-track { height: 22px; background: transparent; }
     input::-moz-range-track { height: 22px; background: transparent; }
-    input::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 11px; height: 18px; margin-top: 2px; border-radius: 2px;
+    input::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 11px; height: 16px; margin-top: 3px; border-radius: 2px;
       border: 1px solid #0b0b0c; box-shadow: var(--key-shadow);
-      background: linear-gradient(90deg, transparent 4px, var(--text) 4px 5px, transparent 5px), var(--plate-hi);
-      transition: transform 90ms var(--ease); }
-    input::-moz-range-thumb { width: 9px; height: 16px; border-radius: 2px; border: 1px solid #0b0b0c; box-shadow: var(--key-shadow);
-      background: linear-gradient(90deg, transparent 3px, var(--text) 3px 4px, transparent 4px), var(--plate-hi); }
-    input:hover::-webkit-slider-thumb { transform: scaleY(1.12); }
-    input:active::-webkit-slider-thumb { transform: translateY(1px); box-shadow: var(--key-pressed); }
+      background: linear-gradient(90deg, transparent 4px, var(--muted) 4px 5px, transparent 5px), var(--plate-hi); }
+    input::-moz-range-thumb { width: 9px; height: 14px; border-radius: 2px; border: 1px solid #0b0b0c; box-shadow: var(--key-shadow);
+      background: linear-gradient(90deg, transparent 3px, var(--muted) 3px 4px, transparent 4px), var(--plate-hi); }
+    input:active::-webkit-slider-thumb { box-shadow: var(--key-pressed); }
     input:focus-visible { outline: none; }
     input:focus-visible::-webkit-slider-thumb { outline: 1px dashed var(--accent-hi); outline-offset: 2px; }
-    /* Mostrador de LCD pequeno. */
-    .readout { flex-shrink: 0; width: 3.1rem; height: 18px; display: grid; place-items: center end; padding: 0 0.3rem;
-      border-radius: 2px; background: var(--lcd); color: var(--lcd-ink); font: 500 0.68rem/1 var(--mono); letter-spacing: 0.04em;
-      box-shadow: inset 0 2px 3px rgb(0 0 0 / 0.45), inset 0 0 0 1px rgb(0 0 0 / 0.35); }
-    .readout.boost { background: #d6a24a; }
-    .readout.silent { background: #5f6556; color: #2a2f25; }
+    .readout { flex-shrink: 0; width: 2.9rem; text-align: right; font: 400 0.74rem/1 var(--mono); color: var(--muted); }
+    .readout.boost { color: var(--warn); }
+    .readout.silent { color: var(--danger); }
   `,
 })
 export class VolumeSlider {

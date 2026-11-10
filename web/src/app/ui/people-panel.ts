@@ -9,17 +9,7 @@ import { Toast } from '../core/toast';
 import { Icon } from './icon';
 import { VolumeSlider } from './volume-slider';
 
-/** Desenhos em pixel (9x9) das teclas de "chamar gente", no traço da logo. */
-const PIXEL_ART: Record<string, string[]> = {
-  bell: ['....#....', '...###...', '..#####..', '..#####..', '..#####..', '.#######.', '#########', '.........', '....#....'],
-  letter: ['.........', '#########', '##.....##', '#.#...#.#', '#..#.#..#', '#...#...#', '#.......#', '#########', '.........'],
-  lock: ['..#####..', '.##...##.', '.#.....#.', '.#.....#.', '#########', '####.####', '###...###', '####.####', '#########'],
-};
-function pixels(rows: string[]): { x: number; y: number }[] {
-  return rows.flatMap((row, y) => [...row].flatMap((c, x) => (c === '#' ? [{ x, y }] : [])));
-}
-
-/** Quem está na sala e o volume de cada um, só para você. Cada pessoa é um canal da mesa. */
+/** Quem está na sala e o volume de cada um, só para você. Cada pessoa é uma linha, como um canal de mesa. */
 @Component({
   selector: 'cen-people-panel',
   imports: [Icon, VolumeSlider],
@@ -28,7 +18,7 @@ function pixels(rows: string[]): { x: number; y: number }[] {
       <p class="label">som da tela</p>
       <div class="strip stage-sound">
         <div class="row">
-          <span class="monitor wide" aria-hidden="true"><cen-icon name="screen" [size]="16" /></span>
+          <span class="avatar icon" aria-hidden="true"><cen-icon name="screen" [size]="15" /></span>
           <span class="who"><span class="name">{{ s.label }}</span></span>
         </div>
         <cen-volume class="fader" [volume]="s.share.volume" [label]="s.label"
@@ -69,15 +59,11 @@ function pixels(rows: string[]): { x: number; y: number }[] {
 
     <p class="label">na sala</p>
     <ul class="strips">
-      @for (p of store.participants(); track p.identity; let i = $index) {
-        <li class="strip" [class.speaking]="p.isSpeaking" [class.me]="p.isLocal" [class.twin]="p.myOtherDevice" [style.--i]="i">
+      @for (p of store.participants(); track p.identity) {
+        <li class="strip" [class.speaking]="p.isSpeaking" [class.me]="p.isLocal">
           <div class="row">
-            <span class="monitor" [class.talk]="p.isSpeaking" aria-hidden="true">
-              @if (p.avatar) {
-                <img [src]="p.avatar" alt="" width="26" height="26" />
-              } @else {
-                <b>{{ initial(p.name) }}</b>
-              }
+            <span class="avatar" aria-hidden="true">
+              @if (p.avatar) { <img [src]="p.avatar" alt="" width="28" height="28" /> } @else { <b>{{ initial(p.name) }}</b> }
             </span>
             <span class="who">
               <span class="name" [title]="p.name">{{ p.name }}</span>
@@ -91,12 +77,11 @@ function pixels(rows: string[]): { x: number; y: number }[] {
                 @else { ouvindo }
               </span>
             </span>
-            <span class="eq" [class.on]="p.isSpeaking" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
             <span class="mic" [class.open]="p.micEnabled" [title]="p.micEnabled ? 'Microfone aberto' : 'Microfone fechado'">
               <cen-icon [name]="p.micEnabled ? 'mic' : 'micOff'" [size]="13" />
             </span>
             @if (p.isLocal ? isMobile : p.mobile) { <cen-icon class="device" name="phone" [size]="13" title="Pelo celular" /> }
-            @if (p.isSharing) { <span class="onair" title="Compartilhando a tela"><i></i>ao vivo</span> }
+            @if (p.isSharing) { <span class="tag live" title="Compartilhando a tela"><span class="led live"></span>ao vivo</span> }
             @if (p.guest && !p.isLocal && iAmDiscord()) {
               <button type="button" class="btn small kick" [class.danger]="kicking() === p.identity"
                 [title]="'Tirar ' + p.name + ' da sala (o convite deixa de valer)'" (click)="kick(p.identity, p.name)">
@@ -121,11 +106,11 @@ function pixels(rows: string[]): { x: number; y: number }[] {
     @if (outside().length > 0) {
       <p class="label">{{ callRoom ? 'na call, fora do site' : 'na sua call do Discord' }}</p>
       <ul class="strips">
-        @for (m of outside(); track m.id; let i = $index) {
-          <li class="strip outside" [style.--i]="i">
+        @for (m of outside(); track m.id) {
+          <li class="strip outside">
             <div class="row">
-              <span class="monitor off" aria-hidden="true">
-                @if (m.avatar) { <img [src]="m.avatar" alt="" width="26" height="26" /> } @else { <b>{{ initial(m.name) }}</b> }
+              <span class="avatar" aria-hidden="true">
+                @if (m.avatar) { <img [src]="m.avatar" alt="" width="28" height="28" /> } @else { <b>{{ initial(m.name) }}</b> }
               </span>
               <span class="who">
                 <span class="name">{{ m.name }}</span>
@@ -145,154 +130,88 @@ function pixels(rows: string[]): { x: number; y: number }[] {
     @if (callRoom && iAmDiscord()) {
       <p class="label">chamar gente</p>
       <div class="keys">
-        <button type="button" class="key" style="--c: #e2a12e" [disabled]="pinging()" (click)="ping()">
-          <svg class="px" [class.ring]="pinging()" viewBox="0 0 9 9" aria-hidden="true">
-            @for (d of art.bell; track $index) { <rect [attr.x]="d.x" [attr.y]="d.y" width="1" height="1" /> }
-          </svg>
+        <button type="button" class="key" [disabled]="pinging()" (click)="ping()">
           <span class="txt"><strong>{{ pinging() ? 'Avisando…' : 'Chamar a call' }}</strong>
             <span>o bot marca todo mundo no chat do canal de voz</span></span>
         </button>
-        <button type="button" class="key" style="--c: #94cf7c" [disabled]="makingGuest()" (click)="guestInvite()"
+        <button type="button" class="key" [disabled]="makingGuest()" (click)="guestInvite()"
           title="Link que só uma pessoa usa. Ela escolhe um apelido e entra nesta sala. Qualquer um daqui com Discord pode expulsar.">
-          <svg class="px" viewBox="0 0 9 9" aria-hidden="true">
-            @for (d of art.letter; track $index) { <rect [attr.x]="d.x" [attr.y]="d.y" width="1" height="1" /> }
-          </svg>
           <span class="txt"><strong>{{ makingGuest() ? 'Criando…' : 'Convite de 1 uso' }}</strong>
             <span>para quem não tem Discord</span></span>
         </button>
-        <button type="button" class="key" style="--c: #9d8fe0" (click)="privateRoom()">
-          <svg class="px" viewBox="0 0 9 9" aria-hidden="true">
-            @for (d of art.lock; track $index) { <rect [attr.x]="d.x" [attr.y]="d.y" width="1" height="1" /> }
-          </svg>
+        <button type="button" class="key" (click)="privateRoom()">
           <span class="txt"><strong>Sala privada</strong>
             <span>só com quem você convidar</span></span>
         </button>
       </div>
     }
-    <p class="foot"><span class="led ok"></span> verde é quem está falando. Os volumes valem só para você.</p>
+    <p class="foot">Os volumes valem só para você. O contorno verde é quem está falando.</p>
   `,
   styles: `
     :host { display: block; }
-    .label { display: flex; align-items: center; gap: 0.5rem; }
-    .label::after { content: ''; flex: 1; height: 1px; background: repeating-linear-gradient(90deg, var(--line-2) 0 2px, transparent 2px 4px); }
-    .strips { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+    .strips { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); box-shadow: 0 1px 0 rgb(255 255 255 / 0.03) inset; }
 
-    /* ---------- canal: chapa rebaixada, entra um depois do outro */
-    .strip, .rack { position: relative; padding: 7px 8px 6px; border-radius: 3px; background: rgb(0 0 0 / 0.18);
-      border: 1px solid #0b0b0c; box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.035), 0 1px 0 rgb(255 255 255 / 0.03);
-      animation: develop 320ms var(--ease) both; animation-delay: calc(var(--i, 0) * 55ms);
-      transition: background 160ms, box-shadow 160ms; }
-    .strip:hover { background: rgb(255 255 255 / 0.025); }
-    /* Quem fala ganha uma régua verde do lado, como o LED de sinal de um canal. */
-    .strip::before { content: ''; position: absolute; left: -1px; top: 6px; bottom: 6px; width: 2px; border-radius: 1px;
-      background: #94cf7c; opacity: 0; transform: scaleY(0.3); transition: opacity 160ms, transform 220ms var(--ease); }
-    .strip.speaking::before { opacity: 1; transform: none; box-shadow: 0 0 6px rgb(148 207 124 / 0.6); }
-    .strip.me { background: rgb(87 72 154 / 0.1); }
-    .row { display: flex; align-items: center; gap: 0.5rem; min-height: 32px; }
+    /* Uma linha por pessoa, separadas por um sulco no metal (risco escuro + reflexo claro). */
+    .strip { padding: 7px 2px 8px; border-bottom: 1px solid var(--line); box-shadow: 0 1px 0 rgb(255 255 255 / 0.035); }
+    .row { display: flex; align-items: center; gap: 0.55rem; min-height: 30px; }
 
-    /* ---------- monitorzinho: a logo, com a pessoa na tela */
-    .monitor { position: relative; flex-shrink: 0; width: 34px; height: 32px; display: grid; place-items: center; padding: 3px 3px 4px;
-      background: #ebe6da; border: 1px solid #111110;
-      box-shadow: inset -2px -2px 0 #b8b3a6, inset 2px 2px 0 #f3efe6, 2px 2px 0 rgb(0 0 0 / 0.45);
-      animation: crt-on 420ms var(--ease) both; animation-delay: calc(var(--i, 0) * 55ms + 80ms); }
-    .monitor img, .monitor b { width: 26px; height: 24px; display: grid; place-items: center; object-fit: cover;
-      background: #0f1311; outline: 1px solid #6c685e; }
-    .monitor b { font: 500 0.82rem/1 var(--mono); color: #94cf7c; text-transform: uppercase; text-shadow: 0 0 4px rgb(148 207 124 / 0.6); }
-    /* Linhas de tubo por cima da foto. */
-    .monitor::before { content: ''; position: absolute; inset: 3px 3px 4px; pointer-events: none; z-index: 1;
-      background: repeating-linear-gradient(180deg, rgb(0 0 0 / 0.22) 0 1px, transparent 1px 3px); }
-    /* O LEDzinho do monitor (o canto da logo): acende verde quando a pessoa fala. */
-    .monitor::after { content: ''; position: absolute; right: 3px; bottom: 1px; width: 3px; height: 2px; background: #6c685e;
-      transition: background 120ms, box-shadow 120ms; }
-    .monitor.talk::after { background: #94cf7c; box-shadow: 0 0 4px #94cf7c; }
-    .monitor.talk img, .monitor.talk b { outline: 1px solid #94cf7c; box-shadow: 0 0 0 1px rgb(148 207 124 / 0.35); }
-    .monitor.talk { animation: crt-on 420ms var(--ease) both, bob 0.5s steps(2) infinite; }
-    .monitor.wide { width: 34px; color: #94cf7c; }
-    .monitor.wide cen-icon { width: 26px; height: 24px; display: grid; place-items: center; background: #0f1311; outline: 1px solid #6c685e; }
-    .monitor.off { filter: saturate(0.2) brightness(0.75); }
-    .monitor.off img { filter: grayscale(1) contrast(0.9); opacity: 0.7; }
+    /* Foto num rebaixo quadrado; quem fala ganha o contorno verde, sem brilho. */
+    .avatar { flex-shrink: 0; width: 32px; height: 32px; padding: 2px; border-radius: 2px; background: var(--well);
+      box-shadow: var(--inset); display: grid; place-items: center; color: var(--muted); }
+    .avatar img, .avatar b { width: 28px; height: 28px; border-radius: 1px; object-fit: cover; display: grid; place-items: center;
+      outline: 1px solid transparent; outline-offset: 1px; transition: outline-color 120ms; }
+    .avatar b { font: 500 0.8rem/1 var(--mono); text-transform: uppercase; color: var(--muted); background: var(--surface-2); }
+    .speaking .avatar img, .speaking .avatar b { outline-color: var(--ok); }
 
-    .who { flex: 1; min-width: 0; display: grid; line-height: 1.15; }
-    .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.9rem; font-weight: 600; }
-    .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 0.64rem/1.3 var(--mono);
-      letter-spacing: 0.06em; color: var(--faint); text-transform: lowercase; }
-    .speaking .sub { color: #94cf7c; }
-    .me .sub { color: #a497cf; }
-
-    /* ---------- equalizador de pixel: parado é uma linha, falando pula */
-    .eq { display: flex; align-items: flex-end; gap: 1px; height: 12px; flex-shrink: 0; }
-    .eq i { width: 3px; height: 2px; background: var(--led-off); }
-    .eq.on i { background: #94cf7c; box-shadow: 0 0 3px rgb(148 207 124 / 0.5); animation: eq 0.9s steps(4) infinite; }
-    .eq.on i:nth-child(2) { animation-duration: 0.7s; animation-delay: -0.3s; }
-    .eq.on i:nth-child(3) { animation-duration: 1.1s; animation-delay: -0.5s; }
-    .eq.on i:nth-child(4) { animation-duration: 0.8s; animation-delay: -0.2s; }
-    @keyframes eq { 0%, 100% { height: 3px; } 25% { height: 11px; } 50% { height: 6px; } 75% { height: 9px; } }
-    @keyframes bob { 50% { transform: translateY(-1px); } }
+    .who { flex: 1; min-width: 0; display: grid; line-height: 1.2; }
+    .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.88rem; font-weight: 600; }
+    .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 0.66rem/1.3 var(--mono);
+      letter-spacing: 0.04em; color: var(--faint); }
 
     .mic { display: grid; place-items: center; color: var(--faint); flex-shrink: 0; }
     .mic.open { color: var(--muted); }
-    .speaking .mic.open { color: #94cf7c; }
-    .device { color: var(--muted); flex-shrink: 0; }
+    .device { color: var(--faint); flex-shrink: 0; }
+    .live { color: var(--text); }
 
-    /* ---------- lâmpada de NO AR */
-    .onair { display: inline-flex; align-items: center; gap: 4px; height: 18px; padding: 0 5px; flex-shrink: 0; border-radius: 2px;
-      font: 500 0.58rem/1 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: #ffd9d2;
-      background: #5a1c17; border: 1px solid #0b0b0c; box-shadow: inset 0 0 6px rgb(255 90 70 / 0.35);
-      text-shadow: 0 0 4px rgb(255 120 100 / 0.8); animation: onair 2.4s ease-in-out infinite; }
-    .onair i { width: 5px; height: 5px; background: #ff5a46; box-shadow: 0 0 5px #ff5a46; animation: blink 1.2s steps(1) infinite; }
-    @keyframes onair { 50% { box-shadow: inset 0 0 9px rgb(255 90 70 / 0.55), 0 0 6px rgb(255 90 70 / 0.25); } }
-
-    .fader { margin: 4px 0 0 calc(34px + 0.5rem - 4px); width: auto; }
-
+    .fader { margin: 3px 0 0 calc(32px + 0.55rem - 4px); width: auto; }
     .kick { height: 22px; padding: 0 0.5rem; font-size: 0.72rem; }
-    .other { margin: 0.35rem 0 0.1rem calc(34px + 0.5rem); font-size: 0.75rem; }
-    .alone { margin: 0.6rem 0 0; text-align: center; font: 400 0.95rem var(--display); font-style: italic; color: var(--muted); }
+    .other { margin: 0.3rem 0 0 calc(32px + 0.55rem); font-size: 0.75rem; }
+    .alone { margin: 0.7rem 0 0; font-size: 0.82rem; color: var(--muted); }
 
-    /* ---------- fora do site */
-    .outside { background: transparent; border-style: dashed; border-color: var(--line-2); box-shadow: none; }
+    /* Na call, fora do site: a mesma linha, apagada. */
+    .outside .avatar img { filter: grayscale(1); opacity: 0.55; }
     .outside .name { color: var(--muted); font-weight: 500; }
-    .invite { height: 24px; min-width: 70px; font-size: 0.72rem; }
+    .invite { height: 24px; min-width: 68px; font-size: 0.72rem; }
     .dots { display: inline-flex; gap: 3px; }
     .dots i { width: 3px; height: 3px; background: currentColor; animation: blink 0.9s steps(1) infinite; }
     .dots i:nth-child(2) { animation-delay: 0.3s; } .dots i:nth-child(3) { animation-delay: 0.6s; }
-    .tight { margin-top: 0.4rem; font-size: 0.75rem; }
+    .tight { margin-top: 0.45rem; font-size: 0.75rem; }
 
-    /* ---------- teclas de chamar gente, com desenho de pixel */
+    /* Chamar gente: teclas duras, uma embaixo da outra. */
     .keys { display: grid; gap: 6px; }
-    .key { position: relative; display: flex; align-items: center; gap: 0.7rem; width: 100%; padding: 0.5rem 0.6rem; text-align: left;
+    .key { display: grid; gap: 1px; width: 100%; padding: 0.5rem 0.7rem 0.55rem; text-align: left;
       border-radius: var(--radius); border: 1px solid #0b0b0c; background: var(--plate); color: var(--text); box-shadow: var(--key-shadow);
       transition: transform 60ms linear, box-shadow 60ms linear, background 120ms; }
     .key:hover:not(:disabled) { background: var(--plate-hi); }
     .key:active:not(:disabled) { transform: translateY(2px); box-shadow: var(--key-pressed); }
-    .key .px { width: 27px; height: 27px; flex-shrink: 0; padding: 4px; fill: var(--c); shape-rendering: crispEdges;
-      background: #111110; border-radius: 2px; box-shadow: inset 0 0 0 1px #000, 0 1px 0 rgb(255 255 255 / 0.06);
-      filter: drop-shadow(0 0 3px color-mix(in srgb, var(--c) 45%, transparent)); transition: transform 160ms var(--ease); }
-    .key:hover:not(:disabled) .px { transform: rotate(-6deg) scale(1.06); }
-    .px.ring { animation: ring 0.5s steps(2) infinite; }
-    @keyframes ring { 0% { transform: rotate(-12deg); } 50% { transform: rotate(12deg); } }
     .txt { display: grid; gap: 1px; min-width: 0; }
     .txt strong { font-size: 0.84rem; font-weight: 600; }
     .txt span { font-size: 0.72rem; color: var(--muted); line-height: 1.3; }
-    .key::after { content: ''; position: absolute; top: 6px; right: 6px; width: 4px; height: 4px; background: var(--led-off);
-      box-shadow: inset 0 1px 1px #000a; }
-    .key:hover:not(:disabled)::after { background: var(--c); box-shadow: 0 0 4px var(--c); }
 
-    /* ---------- som de estúdio: módulo de rack */
-    .rack { background: #09080c; box-shadow: inset 0 1px 4px #000a; margin-bottom: 0.3rem; animation: none; }
+    /* Som de estúdio: visor rebaixado. */
+    .rack { padding: 6px 8px 8px; border-radius: 2px; background: var(--well); box-shadow: var(--inset); margin-bottom: 0.3rem; }
     .rack .row + .row { margin-top: 2px; }
     .rack input[type=range] { flex: 1; accent-color: var(--accent-hi); }
     .fmt { height: 18px; font-size: 0.62rem; padding: 0 0.35rem; }
-    .buffer { height: 4px; margin: 6px 0 2px; background: var(--well); box-shadow: var(--inset); overflow: hidden; }
-    .buffer i { display: block; height: 100%; background: #94cf7c; transition: width 200ms linear; }
+    .buffer { height: 4px; margin: 6px 0 2px; background: #0a0a0b; overflow: hidden; }
+    .buffer i { display: block; height: 100%; background: var(--ok); transition: width 200ms linear; }
     .small { font-size: 0.75rem; }
     .chips { margin-top: 0.4rem; }
 
-    .foot { display: flex; align-items: center; gap: 0.45rem; margin: 1rem 0 0; font-size: 0.72rem; color: var(--muted); }
+    .foot { margin: 1rem 0 0; font-size: 0.72rem; color: var(--muted); }
 
-    /* Toque não tem "passar o mouse": no celular tudo fica à mostra e maior. */
     @media (hover: none) {
-      .strip { padding: 8px 9px 7px; }
-      .key { padding: 0.65rem 0.7rem; }
+      .key { padding: 0.65rem 0.75rem; }
       .invite { height: 30px; }
     }
   `,
@@ -303,7 +222,6 @@ export class PeoplePanel {
   private readonly router = inject(Router);
   protected readonly callRoom = isCallRoom();
   protected readonly isMobile = IS_MOBILE;
-  protected readonly art = { bell: pixels(PIXEL_ART['bell']), letter: pixels(PIXEL_ART['letter']), lock: pixels(PIXEL_ART['lock']) };
 
   /** Primeira letra do nome, para a telinha de quem não tem foto. */
   initial(name: string): string {
