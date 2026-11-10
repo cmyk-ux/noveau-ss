@@ -127,7 +127,7 @@ function timecode(ms: number): string {
           <cen-icon name="people" [size]="15" /> <span class="mono">{{ store.participants().length }}</span>
         </button>
         @if (!callRoom) {
-          <button type="button" class="btn small" title="Copiar o convite" (click)="copyInvite()"><cen-icon name="link" [size]="15" /> <span class="wide-only">convidar</span></button>
+          <button type="button" class="btn small invite-top" title="Copiar o convite" (click)="copyInvite()"><cen-icon name="link" [size]="15" /> <span class="wide-only">convidar</span></button>
         }
       </header>
 
@@ -248,7 +248,7 @@ function timecode(ms: number): string {
         <cen-stats-panel />
         @if (volumeMenu(); as m) {
           <div class="menu-backdrop" (click)="volumeMenu.set(null)" (contextmenu)="$event.preventDefault(); volumeMenu.set(null)"></div>
-          <div class="volume-menu panel-surface" [style.left.px]="m.x" [style.top.px]="m.y" (click)="$event.stopPropagation()">
+          <div class="volume-menu panel-surface" animate.leave="menu-out" [style.left.px]="m.x" [style.top.px]="m.y" (click)="$event.stopPropagation()">
             <p class="label">volume · {{ m.name }}</p>
             @if (shareById(m.id); as sh) {
               <cen-volume [volume]="sh.volume" [label]="'som da tela de ' + m.name"
@@ -356,7 +356,7 @@ function timecode(ms: number): string {
         </div>
 
         @if (menu(); as m) {
-          <div class="pop panel-surface" [class.wide]="m === 'screen'" role="dialog" [attr.aria-label]="menuTitle(m)">
+          <div class="pop panel-surface" animate.leave="pop-out" [class.wide]="m === 'screen'" role="dialog" [attr.aria-label]="menuTitle(m)">
             <div class="pop-head">
               <span class="label">{{ menuTitle(m) }}</span>
               <button class="close" title="Fechar" (click)="menu.set(null)"><cen-icon name="close" [size]="15" /></button>
@@ -373,7 +373,7 @@ function timecode(ms: number): string {
       </footer>
 
       @if (peopleOpen()) {
-        <aside class="panel panel-surface" aria-label="Pessoas">
+        <aside class="panel panel-surface" aria-label="Pessoas" animate.leave="panel-out">
           <div class="people-head">
             <img class="pixel" src="logo.svg" alt="" width="20" height="20" />
             <h2>Pessoas</h2>
@@ -388,7 +388,7 @@ function timecode(ms: number): string {
   `,
   styles: `
     :host { display: block; height: 100dvh; overflow: hidden; }
-    .room { position: relative; display: flex; flex-direction: column; height: 100%; }
+    .room { position: relative; display: flex; flex-direction: column; height: 100%; animation: crt-on 560ms var(--ease) both; }
     /* Desligar: a sala apaga como uma TV de tubo (vira uma linha, depois um ponto). */
     .room.off { animation: crt-off 420ms steps(7) forwards; pointer-events: none; }
 
@@ -508,14 +508,34 @@ function timecode(ms: number): string {
     .split { display: inline-flex; }
     .split > .btn:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
     .caret { width: 20px; padding: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 0; color: var(--muted); }
-    .caret cen-icon { transform: rotate(180deg); transition: transform 180ms var(--ease); }
+    .caret cen-icon { transform: rotate(180deg); transition: transform 160ms steps(3); }
     .split.open .caret { color: var(--accent-hi); }
     .split.open .caret cen-icon { transform: none; }
     .sep { width: 2px; height: 26px; margin: 0 0.2rem; border-left: 1px solid #0b0b0c; border-right: 1px solid rgb(255 255 255 / 0.06); }
     .hangup { width: 52px; }
     .pop { position: absolute; bottom: calc(100% + 8px); left: 50%; translate: -50% 0; z-index: 20;
       width: min(320px, calc(100vw - 1.5rem)); max-height: calc(100dvh - 9.5rem); overflow-y: auto;
-      padding: 0.7rem 0.9rem 0.9rem; animation: unfold-up 180ms steps(5) both; }
+      padding: 0.7rem 0.9rem 0.9rem; animation: pop-open 260ms steps(6) both; transform-origin: 50% 100%; }
+    /* Menu da dock abrindo: a chapa sobe da tecla em degraus, clareia como tubo esquentando, e o conteúdo assenta depois. */
+    .pop > * { animation: develop 220ms var(--ease) 140ms both; }
+    .pop.pop-out { animation: pop-close 160ms steps(4) both; }
+    .pop.pop-out > * { animation: none; }
+    @keyframes pop-open {
+      0% { clip-path: inset(calc(100% - 4px) 42% 0 42%); filter: brightness(2); }
+      45% { clip-path: inset(calc(100% - 4px) 0 0 0); filter: brightness(1.6); }
+      100% { clip-path: inset(0 0 0 0); filter: none; }
+    }
+    @keyframes pop-close {
+      0% { clip-path: inset(0 0 0 0); }
+      60% { clip-path: inset(calc(100% - 4px) 0 0 0); filter: brightness(1.6); }
+      100% { clip-path: inset(calc(100% - 4px) 45% 0 45%); opacity: 0; }
+    }
+    .panel.panel-out { animation: panel-close 200ms steps(5) both; }
+    @keyframes panel-close { to { transform: translateX(14px); clip-path: inset(0 0 0 100%); } }
+    .volume-menu.menu-out { animation: win-zoom 120ms steps(3) reverse both; }
+    /* Convidar no alto: o elo do link dá uma balançada. */
+    .invite-top:hover cen-icon { animation: link-wiggle 420ms steps(3) both; }
+    @keyframes link-wiggle { 33% { transform: rotate(-25deg); } 66% { transform: rotate(15deg); } }
     .pop.wide { width: min(400px, calc(100vw - 1.5rem)); }
     .pop-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.3rem; }
     .pop-head .label { margin: 0; }

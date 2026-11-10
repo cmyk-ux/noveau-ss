@@ -62,7 +62,7 @@ import { PixelIcon } from './pixel-icon';
     <p class="label">na sala</p>
     <ul class="strips">
       @for (p of store.participants(); track p.identity) {
-        <li class="strip" [class.speaking]="p.isSpeaking" [class.me]="p.isLocal">
+        <li class="strip" [class.speaking]="p.isSpeaking" [class.me]="p.isLocal" animate.enter="row-in" animate.leave="row-out">
           <div class="row">
             <span class="avatar" aria-hidden="true">
               @if (p.avatar) { <img [src]="p.avatar" alt="" width="28" height="28" /> } @else { <b>{{ initial(p.name) }}</b> }
@@ -109,7 +109,7 @@ import { PixelIcon } from './pixel-icon';
       <p class="label">{{ callRoom ? 'na call, fora do site' : 'na sua call do Discord' }}</p>
       <ul class="strips">
         @for (m of outside(); track m.id) {
-          <li class="strip outside">
+          <li class="strip outside" animate.enter="row-in" animate.leave="row-out">
             <div class="row">
               <span class="avatar" aria-hidden="true">
                 @if (m.avatar) { <img [src]="m.avatar" alt="" width="28" height="28" /> } @else { <b>{{ initial(m.name) }}</b> }
@@ -120,6 +120,7 @@ import { PixelIcon } from './pixel-icon';
               </span>
               <button type="button" class="btn small invite" [class.busy]="inviting() === m.id"
                 [disabled]="inviting() === m.id" (click)="invite(m)">
+                <span class="env" aria-hidden="true"><cen-pixel name="letter" [size]="14" /></span>
                 @if (inviting() === m.id) { <span class="dots"><i></i><i></i><i></i></span> } @else { convidar }
               </button>
             </div>
@@ -133,18 +134,18 @@ import { PixelIcon } from './pixel-icon';
       <p class="label">chamar gente</p>
       <div class="keys">
         <button type="button" class="key" [disabled]="pinging()" (click)="ping()">
-          <span class="px" style="color: #e2a12e"><cen-pixel name="bell" [size]="18" /></span>
+          <span class="px bell" style="color: #e2a12e"><cen-pixel name="bell" [size]="18" /></span>
           <span class="txt"><strong>{{ pinging() ? 'Avisando…' : 'Chamar a call' }}</strong>
             <span>o bot marca todo mundo no chat do canal de voz</span></span>
         </button>
         <button type="button" class="key" [disabled]="makingGuest()" (click)="guestInvite()"
           title="Link que só uma pessoa usa. Ela escolhe um apelido e entra nesta sala. Qualquer um daqui com Discord pode expulsar.">
-          <span class="px" style="color: #94cf7c"><cen-pixel name="letter" [size]="18" /></span>
+          <span class="px letter" style="color: #94cf7c"><cen-pixel name="letter" [size]="18" /></span>
           <span class="txt"><strong>{{ makingGuest() ? 'Criando…' : 'Convite de 1 uso' }}</strong>
             <span>para quem não tem Discord</span></span>
         </button>
         <button type="button" class="key" (click)="privateRoom()">
-          <span class="px" style="color: #9d8fe0"><cen-pixel name="lock" [size]="18" /></span>
+          <span class="px lock" style="color: #9d8fe0"><cen-pixel name="lock" [size]="18" /></span>
           <span class="txt"><strong>Sala privada</strong>
             <span>só com quem você convidar</span></span>
         </button>
@@ -186,7 +187,23 @@ import { PixelIcon } from './pixel-icon';
     /* Na call, fora do site: a mesma linha, apagada. */
     .outside .avatar img { filter: grayscale(1); opacity: 0.55; }
     .outside .name { color: var(--muted); font-weight: 500; }
-    .invite { height: 24px; min-width: 68px; font-size: 0.72rem; }
+    .invite { position: relative; height: 24px; min-width: 68px; font-size: 0.72rem; }
+    /* Passar o mouse em convidar: uma cartinha sai de dentro da tecla e fica flutuando, pronta para ir. */
+    .env { position: absolute; left: 50%; top: 2px; margin-left: -7px; color: #ebe6da; pointer-events: none; opacity: 0;
+      clip-path: inset(0 0 100% 0); transition: transform 200ms steps(4), opacity 1ms 0ms, clip-path 200ms steps(4); }
+    .invite:hover:not(:disabled) .env { opacity: 1; clip-path: inset(0 0 0 0); transform: translateY(-17px);
+      animation: env-bob 900ms steps(2) 220ms infinite; }
+    .invite.busy .env { opacity: 1; clip-path: none; animation: env-go 520ms steps(6) forwards; }
+    @keyframes env-bob { 50% { translate: 0 -2px; } }
+    @keyframes env-go { from { transform: translateY(-17px); } 40% { transform: translate(-6px, -24px); }
+      to { transform: translate(70px, -40px); opacity: 0; } }
+
+    /* Entrou alguém: a linha liga como um visor, de cima para baixo. Saiu: espreme e some. */
+    .row-in { animation: row-in 360ms steps(6) both; }
+    .row-out { animation: row-out 300ms steps(5) both; }
+    @keyframes row-in { from { clip-path: inset(0 0 100% 0); filter: brightness(1.8); } 60% { filter: brightness(1.3); }
+      to { clip-path: inset(0 0 0 0); filter: none; } }
+    @keyframes row-out { 40% { transform: scaleY(0.06); filter: brightness(2); } to { transform: scale(0, 0.06); opacity: 0; } }
     .dots { display: inline-flex; gap: 3px; }
     .dots i { width: 3px; height: 3px; background: currentColor; animation: blink 0.9s steps(1) infinite; }
     .dots i:nth-child(2) { animation-delay: 0.3s; } .dots i:nth-child(3) { animation-delay: 0.6s; }
@@ -203,6 +220,13 @@ import { PixelIcon } from './pixel-icon';
     .px { flex-shrink: 0; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 2px;
       background: #111110; box-shadow: var(--inset); }
     .key:active:not(:disabled) .px { translate: 0 1px; }
+    /* Cada ícone faz o seu ao passar o mouse: o sino toca, a carta pula, o cadeado abre e fecha. */
+    .key:hover:not(:disabled) .px.bell cen-pixel { animation: ring 480ms steps(2) 2; transform-origin: 50% 0; }
+    .key:hover:not(:disabled) .px.letter cen-pixel { animation: hop 520ms steps(3) infinite; }
+    .key:hover:not(:disabled) .px.lock cen-pixel { animation: unlock 700ms steps(2) infinite; }
+    @keyframes ring { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-16deg); } 75% { transform: rotate(16deg); } }
+    @keyframes hop { 50% { transform: translateY(-3px); } }
+    @keyframes unlock { 50% { clip-path: inset(0 0 0 0); transform: translateY(-2px); } }
     .txt { display: grid; gap: 1px; min-width: 0; }
     .txt strong { font-size: 0.84rem; font-weight: 600; }
     .txt span { font-size: 0.72rem; color: var(--muted); line-height: 1.3; }

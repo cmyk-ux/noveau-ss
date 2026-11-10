@@ -9,7 +9,7 @@ import { PixelIcon } from './pixel-icon';
   template: `
     @if (fx.view(); as v) {
       @let busy = v.state === 'running';
-      <div class="win" [class.done]="v.state === 'done'" [class.failed]="v.state === 'failed'" role="status" aria-live="polite">
+      <div class="win" animate.leave="win-out" [class.done]="v.state === 'done'" [class.failed]="v.state === 'failed'" role="status" aria-live="polite">
         <div class="bar">
           <img class="pixel" src="logo.svg" alt="" width="14" height="14" />
           <span class="title">{{ v.title }}</span>
@@ -45,6 +45,8 @@ import { PixelIcon } from './pixel-icon';
       background-image: var(--grain), var(--brushed); background-size: 160px 160px, auto;
       box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.06), 0 18px 40px -14px #000, 0 2px 0 #0a0a0b;
       animation: win-open 260ms steps(5) both; transform-origin: 50% 100%; }
+    .win.win-out { animation: win-close 180ms steps(4) both; }
+    @keyframes win-close { 50% { transform: scale(1, 0.08); } to { transform: scale(0.2, 0.08); opacity: 0; } }
     .bar { display: flex; align-items: center; gap: 0.45rem; height: 24px; padding: 0 3px 0 6px;
       background: linear-gradient(90deg, #3d3270, #57489a 60%, #6c5fb0); color: #f1ede4; }
     .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 0.74rem/1 var(--ui);
