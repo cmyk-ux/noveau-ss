@@ -73,9 +73,14 @@ export class CursorNet {
   private pending: Wire | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private visible = false;
+  /** Chegou cursor de alguém: a camada que desenha acorda (ela dorme quando não tem ninguém). */
+  onActivity: (() => void) | null = null;
   private readonly onData = (payload: Uint8Array, p?: RemoteParticipant, _k?: unknown, topic?: string) =>
     this.receive(payload, p, topic);
-  private readonly onLeave = (p: Participant) => this.cursors.delete(p.identity);
+  private readonly onLeave = (p: Participant) => {
+    this.cursors.delete(p.identity);
+    this.onActivity?.();
+  };
 
   constructor(private readonly room: Room) {
     room.on(RoomEvent.DataReceived, this.onData);
@@ -192,6 +197,7 @@ export class CursorNet {
     const now = performance.now();
     if (msg.k === 'h') {
       this.cursors.delete(p.identity);
+      this.onActivity?.();
       return;
     }
     if (typeof msg.x !== 'number' || typeof msg.y !== 'number' || typeof msg.t !== 'number') return;
@@ -216,6 +222,7 @@ export class CursorNet {
     const last = c.samples[c.samples.length - 1];
     if (last !== undefined && msg.t <= last.t) return; // fora de ordem: descarta
     c.samples.push({ t: msg.t, x: msg.x, y: msg.y });
+    this.onActivity?.();
     if (msg.k === 'c') c.clicks.push({ x: msg.x, y: msg.y, at: now + INTERP_DELAY_MS });
   }
 }

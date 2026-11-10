@@ -10,7 +10,7 @@ import {
   type TrackPublishOptions,
   VideoPreset,
 } from 'livekit-client';
-import { Codec, CodecChoice, cappedBitrate, pickCodec, planSize, probeEncoders, StreamPlan, Size } from './stream';
+import { Codec, CodecChoice, cappedBitrate, parseDecoders, pickCodec, planSize, probeEncoders, StreamPlan, Size } from './stream';
 import { LoadGovernor, LoadState } from './load';
 import { UploadGuard, UploadState } from './upload-guard';
 import { ShareHealth, ShareWatch, sourceAudioLevel } from './stats';
@@ -234,7 +234,12 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
   };
   // Com o tamanho real da captura, pergunta ao navegador quais codecs rodam na GPU e escolhe.
   const probes = await probeEncoders(resolution, req.plan.frameRate);
-  const codec = pickCodec(req.preferredCodec);
+  // Quem já está na sala e disse o que decodifica na placa de vídeo (atributo "hwdec").
+  const viewers = [...room.remoteParticipants.values()]
+    .filter((p) => p.attributes?.['phoneOf'] === undefined && p.attributes?.['obs'] !== '1')
+    .map((p) => parseDecoders(p.attributes?.['hwdec']))
+    .filter((d): d is Set<string> => d !== null);
+  const codec = pickCodec(req.preferredCodec, viewers);
   const bitrate = cappedBitrate(resolution, req.plan, codec);
   video.mediaStreamTrack.addEventListener(
     'ended',

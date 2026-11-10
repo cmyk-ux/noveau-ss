@@ -127,6 +127,11 @@ class SourceBuffer {
   }
 }
 
+type PressureCtor = new (cb: (records: { state: string }[]) => void) => {
+  observe(source: 'cpu', opts?: { sampleInterval?: number }): Promise<void>;
+  disconnect(): void;
+};
+
 export class ClipRecorder {
   private readonly sources = new Map<string, SourceBuffer>();
   private readonly _ready = signal<ReadonlySet<string>>(new Set());
@@ -138,6 +143,13 @@ export class ClipRecorder {
   readonly error = this._error.asReadonly();
   private ticker?: number;
   private watcher?: number;
+  private readonly _noHardware = signal(false);
+  /** Este PC não tem (ou recusou) o codificador da placa de vídeo: o vídeo do clipe fica parado. */
+  readonly noHardware = this._noHardware.asReadonly();
+  private readonly _paused = signal(false);
+  /** O PC apertou e o clipe parou de gravar vídeo até aliviar (o que já estava guardado fica). */
+  readonly paused = this._paused.asReadonly();
+  private pressure: { disconnect(): void } | null = null;
 
   constructor(private readonly token: () => string) {}
 
@@ -147,6 +159,7 @@ export class ClipRecorder {
    * trilha ao reconectar; sem conferir de novo, a gravação ficava parada até recarregar a página.
    */
   watch(get: () => ClipSource[]) {
+    this.watchPressure();
     this.sync(get());
     window.clearInterval(this.watcher);
     this.watcher = window.setInterval(() => this.sync(get()), 2000);
@@ -164,6 +177,7 @@ export class ClipRecorder {
       if (buf === undefined) {
         buf = new SourceBuffer((msg) => this.onWorker(src.id, msg));
         this.sources.set(src.id, buf);
+        if (this._paused()) buf.worker.postMessage({ type: 'pause', on: true });
       }
       buf.follow(src, Ctor);
     }
@@ -171,6 +185,9 @@ export class ClipRecorder {
   }
 
   stop() {
+    this.pressure?.disconnect();
+    this.pressure = null;
+    this._paused.set(false);
     window.clearInterval(this.watcher);
     this.watcher = undefined;
     for (const [id, buf] of this.sources) this.drop(id, buf);
@@ -232,6 +249,43 @@ export class ClipRecorder {
     this._items.update((list) => list.filter((i) => i.id !== item.id));
   }
 
+  /**
+   * O gravador é o primeiro a ceder: com o processador "pesado" ou "no limite" (Compute Pressure
+   * API), para de codificar vídeo e solta a placa de vídeo, antes de qualquer coisa que você vê.
+   * Volta depois de 15 s tranquilo.
+   */
+  private watchPressure() {
+    if (this.pressure !== null) return;
+    const Ctor = (globalThis as unknown as { PressureObserver?: PressureCtor }).PressureObserver;
+    if (Ctor === undefined) return;
+    let calm: number | undefined;
+    const set = (on: boolean) => {
+      if (this._paused() === on) return;
+      this._paused.set(on);
+      for (const buf of this.sources.values()) buf.worker.postMessage({ type: 'pause', on });
+    };
+    const observer = new Ctor((records) => {
+      const state = records.at(-1)?.state;
+      if (state === 'serious' || state === 'critical') {
+        window.clearTimeout(calm);
+        calm = undefined;
+        set(true);
+      } else if (this._paused() && calm === undefined) {
+        calm = window.setTimeout(() => {
+          calm = undefined;
+          set(false);
+        }, 15_000);
+      }
+    });
+    observer.observe('cpu', { sampleInterval: 1000 }).catch(() => undefined);
+    this.pressure = {
+      disconnect: () => {
+        window.clearTimeout(calm);
+        observer.disconnect();
+      },
+    };
+  }
+
   private drop(id: string, buf: SourceBuffer) {
     buf.dispose();
     this.sources.delete(id);
@@ -262,6 +316,13 @@ export class ClipRecorder {
 
   private onWorker(sourceId: string, msg: { type: string; [k: string]: unknown }) {
     switch (msg.type) {
+      case 'no-hardware':
+        this._noHardware.set(true);
+        break;
+      case 'size':
+        // Abriu o codificador (na placa): o aviso some.
+        this._noHardware.set(false);
+        break;
       case 'ready':
         this.setReady(sourceId, msg['ready'] === true);
         break;

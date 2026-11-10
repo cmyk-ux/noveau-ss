@@ -212,13 +212,27 @@ export async function probeEncoders(size: Size, fps: number): Promise<Partial<Re
  */
 const GPU_ORDER: Codec[] = ['av1', 'h265', 'vp9', 'h264'];
 
-export function pickCodec(choice: CodecChoice): Codec {
+/**
+ * O que cada pessoa decodifica na placa de vídeo (atributo "hwdec", ver publishDecoders). Sem a
+ * placa, o navegador de quem assiste decodifica no processador: AV1 em 1440p60 assim come 1 a 2
+ * núcleos e trava o PC dela, mesmo com quem transmite tranquilo. No automático, um codec só entra
+ * se todo mundo que já está na sala decodifica ele na placa; senão vai o próximo (H.264 quase todo
+ * PC dos últimos 10 anos decodifica na placa).
+ */
+export function pickCodec(choice: CodecChoice, viewers: ReadonlySet<string>[] = []): Codec {
   const ok = supportedCodecs();
   if (choice !== 'auto' && ok.includes(choice)) return choice;
+  const everyone = (c: Codec) => viewers.every((v) => v.has(c));
   // Automático: o primeiro que a placa de vídeo codifica. Assim quem transmite quase não perde FPS.
   // O H.265 só aparece no navegador quando existe encoder de hardware, então basta ele estar na
   // lista: a sondagem às vezes diz "não" para ele (fps alto, tamanho grande) e o automático caía no
   // VP8 por software, que derruba a resolução e o fps de quem está jogando.
+  for (const c of GPU_ORDER) {
+    if (!ok.includes(c) || !everyone(c)) continue;
+    if (probed[c]?.gpu === true || hardwareOnly(c)) return c;
+  }
+  // Nenhum codec da minha placa serve para todos: ainda assim prefere um da placa (o meu jogo não
+  // trava), o primeiro da ordem.
   for (const c of GPU_ORDER) {
     if (!ok.includes(c)) continue;
     if (probed[c]?.gpu === true || hardwareOnly(c)) return c;
@@ -267,3 +281,32 @@ export function formatBitrate(bps: number): string {
 }
 
 export const DEFAULT_STREAM: StreamSettings = { resolution: 'auto', frameRate: 60, maxBitrate: 0 };
+
+/**
+ * Quais codecs este navegador decodifica na placa de vídeo, numa tela grande a 60 fps
+ * (Media Capabilities, tipo "webrtc", powerEfficient). Vai para os outros no atributo "hwdec".
+ */
+export async function hardwareDecoders(): Promise<Codec[]> {
+  const mc = navigator.mediaCapabilities as MediaCapabilities | undefined;
+  if (mc === undefined) return [];
+  const out: Codec[] = [];
+  await Promise.all(
+    (Object.keys(MIME) as Codec[]).map(async (c) => {
+      try {
+        const info = await mc.decodingInfo({
+          type: 'webrtc',
+          video: { contentType: MIME[c], width: 2560, height: 1440, framerate: 60, bitrate: 2e7 },
+        } as MediaDecodingConfiguration);
+        if (info.supported && info.powerEfficient) out.push(c);
+      } catch {
+        /* sem informação */
+      }
+    }),
+  );
+  return out;
+}
+
+export function parseDecoders(attr: string | undefined): Set<string> | null {
+  if (attr === undefined) return null;
+  return new Set(attr.split(',').filter((x) => x !== ''));
+}

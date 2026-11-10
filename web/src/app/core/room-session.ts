@@ -18,6 +18,7 @@ import { Channel, isSilent, Mixer, Volume } from './volume';
 import { IS_MOBILE } from './device';
 import { installStereoReceive } from './stereo';
 import { ACTIVITY_ATTR, Activity, parseActivity } from './activity';
+import { hardwareDecoders } from './stream';
 
 // O som do OBS (WHIP) chega sem a marca de estéreo; veja stereo.ts.
 installStereoReceive();
@@ -344,11 +345,8 @@ export class RoomSession {
         this.micMovedToPhone(pub, p);
         changed();
       })
-      .on(RoomEvent.LocalTrackPublished, (pub) => {
-        if (isVisual(pub.source))
-          this.focusedShareId = focusIfOnly(this.liveIds(), this.room.localParticipant.identity, this.focusedShareId);
-        changed();
-      })
+      // A minha própria tela não vai para o palco (ver stageIds); a prévia dela fica na barra de baixo.
+      .on(RoomEvent.LocalTrackPublished, changed)
       .on(RoomEvent.LocalTrackUnpublished, changed)
       .on(RoomEvent.TrackPublished, (pub, p) => {
         // A câmera do celular conta como a câmera do dono dele.
@@ -373,6 +371,14 @@ export class RoomSession {
   async connect(url: string, token: string) {
     await this.room.connect(url, token, { autoSubscribe: true });
     this.emit();
+    void this.publishDecoders();
+  }
+
+  /** Conta aos outros o que este PC decodifica na placa de vídeo, para quem transmite escolher o codec. */
+  private async publishDecoders() {
+    const list = await hardwareDecoders();
+    if (this.room.state !== ConnectionState.Connected) return;
+    await this.room.localParticipant.setAttributes({ hwdec: list.join(',') }).catch(() => undefined);
   }
 
   // ---------- proteção contra travadas (por quem assiste)
@@ -480,6 +486,30 @@ export class RoomSession {
     return true;
   }
 
+  /**
+   * Prévia da minha própria tela (ou câmera): uma cópia da captura que o navegador já entrega
+   * reduzida a 360p e 15 fps. Mostrar a original custava ~0,6 núcleo a mais; esta, ~0,05
+   * (medido no Chrome com uma tela de 1440p60). A transmissão e o clipe não mudam.
+   */
+  startLocalPreview(el: HTMLVideoElement, which: 'main' | 'cam'): () => void {
+    const lp = this.room.localParticipant;
+    const screen = lp.getTrackPublication(Track.Source.ScreenShare)?.track?.mediaStreamTrack;
+    const cam = lp.getTrackPublication(Track.Source.Camera)?.track?.mediaStreamTrack;
+    const source = which === 'cam' ? cam : (screen ?? cam);
+    if (source === undefined || source.readyState === 'ended') return () => undefined;
+    const copy = source.clone();
+    void copy.applyConstraints({ width: { max: 640 }, height: { max: 360 }, frameRate: { max: 15 } }).catch(() => undefined);
+    el.srcObject = new MediaStream([copy]);
+    // A captura acabou (parou de compartilhar): a cópia acaba junto.
+    const end = () => copy.stop();
+    source.addEventListener('ended', end, { once: true });
+    return () => {
+      source.removeEventListener('ended', end);
+      copy.stop();
+      if (el.srcObject !== null) el.srcObject = null;
+    };
+  }
+
   stopPreview(id: string, el: HTMLMediaElement) {
     this.live.find((x) => x.view.id === id)?.publication.track?.detach(el);
     if (this.previewId !== id) return;
@@ -556,6 +586,7 @@ export class RoomSession {
   }
 
   focusShare(id: string) {
+    if (this.live.some((s) => s.view.id === id && s.view.isLocal)) return;
     this.focusedShareId = id;
     this.emit();
   }
@@ -874,7 +905,7 @@ export class RoomSession {
     }
     const shares = this.collectShares();
     this.live = shares;
-    this.focusedShareId = keepFocus(shares.filter((s) => !this.hidden.has(s.view.id)).map((s) => s.view.id), this.focusedShareId);
+    this.focusedShareId = keepFocus(this.stageIds(shares), this.focusedShareId);
     this.followFocus(shares);
     this.mix();
     this.publishWatching();
@@ -882,7 +913,16 @@ export class RoomSession {
   }
 
   private liveIds() {
-    return this.collectShares().map((s) => s.view.id).filter((id) => !this.hidden.has(id));
+    return this.stageIds(this.collectShares());
+  }
+
+  /**
+   * Telas que podem ir para o palco: as dos outros, menos as escondidas. A minha fica de fora:
+   * mostrar a própria tela grande, a 60 fps e na resolução cheia, custava ~0,6 núcleo a mais para
+   * quem transmite (que normalmente está jogando). A prévia dela abre na barra de baixo, pequena.
+   */
+  private stageIds(shares: LiveShare[]) {
+    return shares.filter((s) => !s.view.isLocal && !this.hidden.has(s.view.id)).map((s) => s.view.id);
   }
 
   private describe(shares: LiveShare[]): RoomSnapshot {
@@ -923,7 +963,7 @@ export class RoomSession {
 
   /** Conta pros outros qual tela estou assistindo (atributo "watching"). */
   private publishWatching() {
-    const id = this.focusedShareId ?? (this.live.length > 1 ? '*' : null);
+    const id = this.focusedShareId ?? (this.stageIds(this.live).length > 1 ? '*' : null);
     if (this.room.state !== ConnectionState.Connected || this.publishedWatching === id || this.refusedWatching === id) return;
     this.publishedWatching = id;
     this.refusedWatching = undefined;
@@ -944,7 +984,7 @@ export class RoomSession {
    */
   private followFocus(shares: LiveShare[]) {
     const grid = this.focusedShareId === null;
-    const visible = shares.filter((s) => !this.hidden.has(s.view.id)).length;
+    const visible = this.stageIds(shares).length;
     const used = new Set<TrackPublication>();
     for (const s of shares) {
       const shown = !this.away && !this.hidden.has(s.view.id) && (grid || s.view.id === this.focusedShareId);
