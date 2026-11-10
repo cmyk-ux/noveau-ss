@@ -25,6 +25,13 @@ Regras:
 - A tela do celular precisa ficar ligada com a página aberta. Com a tela apagada o sistema corta a
   câmera.
 
+Ao abrir o link, o celular mostra primeiro um botão **Permitir câmera e microfone**. O pedido de
+permissão só sai de dentro desse toque: pedido sem toque o Chrome esconde num ícone ao lado do
+endereço que some em segundos. Se a câmera já estiver bloqueada, a página mostra como liberar no
+Android e no iPhone. Aberto pelo navegador de dentro do Discord, WhatsApp, Instagram etc., ela avisa
+e oferece abrir no Chrome (Android) ou explica como abrir no Safari (iPhone), porque esses
+navegadores costumam negar a câmera sem perguntar.
+
 O celular precisa abrir o site por **https** (o navegador não libera a câmera em http). No
 noveau.riajuu.net isso já acontece. Rodando local, use o endereço do Tailscale (`https://…ts.net`).
 
