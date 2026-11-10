@@ -6,13 +6,15 @@ import { IS_MOBILE } from '../core/device';
 import { Prefs } from '../core/prefs';
 import { RoomStore } from '../core/room-store';
 import { Toast } from '../core/toast';
+import { SendFx } from '../core/send-fx';
 import { Icon } from './icon';
 import { VolumeSlider } from './volume-slider';
+import { PixelIcon } from './pixel-icon';
 
 /** Quem está na sala e o volume de cada um, só para você. Cada pessoa é uma linha, como um canal de mesa. */
 @Component({
   selector: 'cen-people-panel',
-  imports: [Icon, VolumeSlider],
+  imports: [Icon, VolumeSlider, PixelIcon],
   template: `
     @if (stageSound(); as s) {
       <p class="label">som da tela</p>
@@ -131,15 +133,18 @@ import { VolumeSlider } from './volume-slider';
       <p class="label">chamar gente</p>
       <div class="keys">
         <button type="button" class="key" [disabled]="pinging()" (click)="ping()">
+          <span class="px" style="color: #e2a12e"><cen-pixel name="bell" [size]="18" /></span>
           <span class="txt"><strong>{{ pinging() ? 'Avisando…' : 'Chamar a call' }}</strong>
             <span>o bot marca todo mundo no chat do canal de voz</span></span>
         </button>
         <button type="button" class="key" [disabled]="makingGuest()" (click)="guestInvite()"
           title="Link que só uma pessoa usa. Ela escolhe um apelido e entra nesta sala. Qualquer um daqui com Discord pode expulsar.">
+          <span class="px" style="color: #94cf7c"><cen-pixel name="letter" [size]="18" /></span>
           <span class="txt"><strong>{{ makingGuest() ? 'Criando…' : 'Convite de 1 uso' }}</strong>
             <span>para quem não tem Discord</span></span>
         </button>
         <button type="button" class="key" (click)="privateRoom()">
+          <span class="px" style="color: #9d8fe0"><cen-pixel name="lock" [size]="18" /></span>
           <span class="txt"><strong>Sala privada</strong>
             <span>só com quem você convidar</span></span>
         </button>
@@ -189,11 +194,15 @@ import { VolumeSlider } from './volume-slider';
 
     /* Chamar gente: teclas duras, uma embaixo da outra. */
     .keys { display: grid; gap: 6px; }
-    .key { display: grid; gap: 1px; width: 100%; padding: 0.5rem 0.7rem 0.55rem; text-align: left;
+    .key { display: flex; align-items: center; gap: 0.7rem; width: 100%; padding: 0.5rem 0.7rem 0.55rem; text-align: left;
       border-radius: var(--radius); border: 1px solid #0b0b0c; background: var(--plate); color: var(--text); box-shadow: var(--key-shadow);
       transition: transform 60ms linear, box-shadow 60ms linear, background 120ms; }
     .key:hover:not(:disabled) { background: var(--plate-hi); }
     .key:active:not(:disabled) { transform: translateY(2px); box-shadow: var(--key-pressed); }
+    /* Ícone de pixel num visor escuro, sem brilho. */
+    .px { flex-shrink: 0; width: 28px; height: 28px; display: grid; place-items: center; border-radius: 2px;
+      background: #111110; box-shadow: var(--inset); }
+    .key:active:not(:disabled) .px { translate: 0 1px; }
     .txt { display: grid; gap: 1px; min-width: 0; }
     .txt strong { font-size: 0.84rem; font-weight: 600; }
     .txt span { font-size: 0.72rem; color: var(--muted); line-height: 1.3; }
@@ -219,6 +228,7 @@ import { VolumeSlider } from './volume-slider';
 export class PeoplePanel {
   protected readonly store = inject(RoomStore);
   private readonly toast = inject(Toast);
+  private readonly fx = inject(SendFx);
   private readonly router = inject(Router);
   protected readonly callRoom = isCallRoom();
   protected readonly isMobile = IS_MOBILE;
@@ -239,6 +249,13 @@ export class PeoplePanel {
 
   async guestInvite() {
     this.makingGuest.set(true);
+    const run = this.fx.start({
+      title: 'Criando convite de 1 uso',
+      from: 'folder',
+      item: 'ticket',
+      to: 'clipboard',
+      line: 'Imprimindo um convite que só uma pessoa usa',
+    });
     try {
       const { id } = await createGuestInvite();
       const link = `${location.origin}/call#convite=${id}`;
@@ -249,14 +266,15 @@ export class PeoplePanel {
       } catch {
         /* sem permissão de copiar */
       }
-      if (!copied && 'share' in navigator) {
-        await navigator.share({ title: 'Convite para a call', url: link }).catch(() => undefined);
-      } else if (!copied) {
-        window.prompt('Copie o convite:', link);
+      if (copied) {
+        run.done('Convite copiado. Vale por 12 h ou até alguém usar.');
+      } else {
+        run.done('Convite criado. Mande o link para a pessoa.');
+        if ('share' in navigator) await navigator.share({ title: 'Convite para a call', url: link }).catch(() => undefined);
+        else window.prompt('Copie o convite:', link);
       }
-      if (copied) this.toast.show('Convite de 1 uso copiado. Vale por 12 h ou até alguém usar.');
     } catch (e) {
-      this.toast.show(e instanceof Error ? e.message : 'Não foi possível criar o convite.');
+      run.fail(e instanceof Error ? e.message : 'Não foi possível criar o convite.');
     } finally {
       this.makingGuest.set(false);
     }
@@ -323,11 +341,18 @@ export class PeoplePanel {
 
   async ping() {
     this.pinging.set(true);
+    const run = this.fx.start({
+      title: 'Chamando a call',
+      from: 'bell',
+      item: 'letter',
+      to: 'people',
+      line: 'O bot está marcando todo mundo no chat do canal de voz',
+    });
     try {
       const r = await pingCall();
-      this.toast.show(`Avisei ${r.count} ${r.count === 1 ? 'pessoa' : 'pessoas'} no chat da call.`);
+      run.done(`Avisei ${r.count} ${r.count === 1 ? 'pessoa' : 'pessoas'} no chat da call.`);
     } catch (e) {
-      this.toast.show(e instanceof Error ? e.message : 'Não foi possível avisar a call.');
+      run.fail(e instanceof Error ? e.message : 'Não foi possível avisar a call.');
     } finally {
       this.pinging.set(false);
     }
@@ -335,13 +360,20 @@ export class PeoplePanel {
 
   async invite(m: DiscordUser) {
     this.inviting.set(m.id);
+    const run = this.fx.start({
+      title: `Convidando ${m.name}`,
+      from: 'letter',
+      item: 'letter',
+      to: 'mailbox',
+      line: `Mandando o link no privado de ${m.name}`,
+    });
     try {
       // Na sala da call, convida para o site (a pessoa entra com o Discord e cai na call);
       // numa sala privada, manda o link desta sala.
       await inviteToRoom(m.id, this.callRoom ? `${location.origin}/` : location.href);
-      this.toast.show(`Mandei o link no privado de ${m.name}.`);
+      run.done(`Pronto, o link chegou no privado de ${m.name}.`);
     } catch (e) {
-      this.toast.show(e instanceof Error ? e.message : 'Não foi possível convidar.');
+      run.fail(e instanceof Error ? e.message : 'Não foi possível convidar.');
     } finally {
       this.inviting.set(null);
     }
