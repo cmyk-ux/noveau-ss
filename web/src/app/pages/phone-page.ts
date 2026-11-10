@@ -18,13 +18,22 @@ import {
   VideoPresets,
 } from 'livekit-client';
 import { requestPhoneToken } from '../core/api';
+import {
+  AskResult,
+  askCameraAndMic,
+  chromeIntentUrl,
+  inAppBrowser,
+  mediaPermission,
+  platform,
+} from '../core/camera-permission';
 import { Icon } from '../ui/icon';
 
 const HOLDER_KEY = 'noveau:phone-holder';
 /** O PC saiu da sala: espera um pouco (recarregar a página) antes de pausar câmera e microfone. */
 const OWNER_GRACE_MS = 20_000;
 
-type Step = 'connecting' | 'live' | 'kicked' | 'lost' | 'error';
+type Step =
+  'checking' | 'inapp' | 'ask' | 'denied' | 'connecting' | 'live' | 'kicked' | 'lost' | 'error';
 type Facing = 'environment' | 'user';
 
 /**
@@ -80,6 +89,119 @@ function holderId(): string {
       </header>
 
       @switch (step()) {
+        @case ('checking') {
+          <div class="card note">
+            <p class="hint"><span class="led warn"></span> Abrindo…</p>
+          </div>
+        }
+        @case ('inapp') {
+          <div class="card note ask">
+            <p class="flag mono">abra no navegador</p>
+            <p class="lead">Você abriu pelo navegador de dentro do {{ app() }}.</p>
+            <p class="hint">
+              Ele costuma bloquear a câmera sem nem perguntar. Abra este mesmo link no
+              {{ os === 'ios' ? 'Safari' : 'Chrome' }}:
+            </p>
+            @if (os === 'android') {
+              <a class="btn primary wide big" [href]="chromeUrl">Abrir no Chrome</a>
+            } @else if (os === 'ios') {
+              <ol class="steps">
+                <li>
+                  Toque em <strong>•••</strong> (ou no ícone de compartilhar) no canto da tela.
+                </li>
+                <li>Escolha <strong>Abrir no Safari</strong> (ou "Abrir no navegador").</li>
+              </ol>
+            }
+            <button type="button" class="btn wide" (click)="copyLink()">
+              {{ copied() ? 'Link copiado: cole no navegador' : 'Copiar o link' }}
+            </button>
+            <button type="button" class="btn small ghost-plain" (click)="step.set('ask')">
+              tentar aqui mesmo
+            </button>
+          </div>
+        }
+        @case ('ask') {
+          <div class="card note ask">
+            <p class="flag mono">passo 1 de 1</p>
+            <p class="lead">O celular vai pedir para usar a câmera e o microfone.</p>
+            <p class="hint">
+              Toque no botão e, na janela que abrir, escolha <strong>Permitir</strong>
+              @if (os === 'android') {
+                (ou "Ao usar o app")
+              }
+              . O microfone só liga se você ou o PC ligarem depois.
+            </p>
+            @if (askNote(); as n) {
+              <p class="warn-note">{{ n }}</p>
+            }
+            <button
+              type="button"
+              class="btn primary wide big"
+              [disabled]="asking()"
+              (click)="ask()"
+            >
+              <cen-icon name="camera" [size]="20" />
+              {{ asking() ? 'Esperando você permitir…' : 'Permitir câmera e microfone' }}
+            </button>
+          </div>
+        }
+        @case ('denied') {
+          <div class="card note ask">
+            <p class="flag mono danger">câmera bloqueada</p>
+            <p class="lead">O navegador está bloqueando a câmera deste site.</p>
+            <p class="hint">
+              Depois de negar uma vez, ele não pergunta mais sozinho. Libere assim:
+            </p>
+            <ol class="steps">
+              @if (os === 'ios') {
+                <li>
+                  Toque em <strong>aA</strong> (ou no ícone à esquerda do endereço) e em
+                  <strong>Ajustes do Site</strong>.
+                </li>
+                <li>
+                  Em <strong>Câmera</strong> e <strong>Microfone</strong>, escolha
+                  <strong>Permitir</strong>.
+                </li>
+                <li>Recarregue a página.</li>
+                <li class="dim">
+                  Ainda bloqueado? Ajustes do iPhone › Apps › Safari › Câmera e Microfone › Permitir
+                  (no Chrome do iPhone: Ajustes › Apps › Chrome › Câmera).
+                </li>
+              } @else if (os === 'android') {
+                <li>
+                  Toque no ícone à esquerda do endereço (cadeado ou controles) e em
+                  <strong>Permissões</strong>.
+                </li>
+                <li>
+                  Ligue <strong>Câmera</strong> e <strong>Microfone</strong> (ou "Redefinir
+                  permissões").
+                </li>
+                <li>Toque em <strong>Tentar de novo</strong> aqui embaixo.</li>
+                <li class="dim">
+                  Não aparece a opção? Configurações do Android › Apps › Chrome › Permissões ›
+                  Câmera › Permitir.
+                </li>
+              } @else {
+                <li>
+                  Clique no ícone à esquerda do endereço e libere <strong>Câmera</strong> e
+                  <strong>Microfone</strong>.
+                </li>
+                <li>Clique em <strong>Tentar de novo</strong>.</li>
+              }
+            </ol>
+            <button
+              type="button"
+              class="btn primary wide big"
+              [disabled]="asking()"
+              (click)="ask()"
+            >
+              Tentar de novo
+            </button>
+            <button type="button" class="btn small ghost-plain" (click)="reload()">
+              recarregar a página
+            </button>
+          </div>
+        }
         @case ('connecting') {
           <div class="card note">
             <p class="hint"><span class="led warn"></span> Conectando à sala…</p>
@@ -394,6 +516,57 @@ function holderId(): string {
     .hint {
       margin: 0;
     }
+    .ask {
+      display: flex;
+      flex-direction: column;
+      gap: 0.6rem;
+    }
+    .ask .lead {
+      margin: 0;
+    }
+    .flag {
+      align-self: flex-start;
+      margin: 0;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 0.64rem;
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      color: #1a1408;
+      background: var(--warn);
+    }
+    .flag.danger {
+      background: var(--danger);
+      color: #fff;
+    }
+    .big {
+      height: 52px;
+      font-size: 1rem;
+      gap: 0.5rem;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      text-decoration: none;
+    }
+    .steps {
+      margin: 0;
+      padding-left: 1.2rem;
+      display: flex;
+      flex-direction: column;
+      gap: 0.35rem;
+      font-size: 0.9rem;
+    }
+    .steps .dim {
+      color: var(--muted);
+      font-size: 0.82rem;
+    }
+    .warn-note {
+      margin: 0;
+      padding: 0.45rem 0.6rem;
+      font-size: 0.84rem;
+      border-left: 3px solid var(--warn);
+      background: var(--surface);
+    }
     .ghost-plain {
       align-self: center;
       background: transparent;
@@ -405,7 +578,14 @@ function holderId(): string {
 export class PhonePage {
   private readonly code = decodeURIComponent(location.hash.replace(/^#/, ''));
   private readonly preview = viewChild<ElementRef<HTMLVideoElement>>('preview');
-  protected readonly step = signal<Step>('connecting');
+  protected readonly step = signal<Step>('checking');
+  protected readonly os = platform();
+  protected readonly app = signal('');
+  protected readonly chromeUrl = chromeIntentUrl();
+  protected readonly copied = signal(false);
+  protected readonly asking = signal(false);
+  /** Aviso no passo de permitir (ex.: a janela fechou sem escolher). */
+  protected readonly askNote = signal('');
   protected readonly error = signal('');
   protected readonly owner = signal('');
   protected readonly camOn = signal(false);
@@ -446,20 +626,88 @@ export class PhonePage {
       void this.wakeLock?.release().catch(() => undefined);
       void this.room?.disconnect();
     });
-    void this.connect();
+    void this.start();
   }
 
-  private async connect() {
-    this.step.set('connecting');
-    if (this.code === '')
+  /**
+   * Antes de tudo, a permissão: já liberada, entra direto; bloqueada, mostra como liberar; senão,
+   * um botão grande que pede dentro do toque. Navegador de app (Discord, WhatsApp) avisa antes.
+   */
+  private async start() {
+    if (this.code === '') {
       return this.fail(
         'Este link está incompleto. Abra de novo o link (ou o QR) que aparece no PC.',
       );
+    }
+    const app = inAppBrowser();
+    if (app !== null) this.app.set(app);
     if (navigator.mediaDevices?.getUserMedia === undefined) {
+      if (app !== null) return this.step.set('inapp');
       return this.fail(
         'Este navegador não deixa usar a câmera nesta página. Abra o link pelo endereço https do site, no Chrome ou no Safari.',
       );
     }
+    const p = await mediaPermission();
+    if (p.camera === 'granted') return void this.connect();
+    if (p.camera === 'denied') return this.step.set('denied');
+    this.step.set(app !== null ? 'inapp' : 'ask');
+  }
+
+  /** O toque no botão: o pedido sai aqui, sem esperar nada antes (senão o navegador esconde a janela). */
+  async ask() {
+    this.asking.set(true);
+    this.askNote.set('');
+    const r: AskResult = await askCameraAndMic();
+    this.asking.set(false);
+    if (r.ok) {
+      if (!r.video) this.want = { cam: false, mic: true };
+      // Já estava na sala (o bloqueio veio depois): só religa o que estava pedido.
+      if (this.room?.state === 'connected') {
+        this.step.set('live');
+        return void this.apply();
+      }
+      return void this.connect();
+    }
+    switch (r.reason) {
+      case 'dismissed':
+        this.askNote.set('A janela fechou sem escolher. Toque de novo e escolha Permitir.');
+        return this.step.set('ask');
+      case 'denied':
+        return this.step.set(this.app() !== '' && this.os === 'android' ? 'inapp' : 'denied');
+      case 'busy':
+        this.askNote.set(
+          'A câmera está em uso por outro app (outra chamada, Iriun, câmera aberta). Feche o outro app e toque de novo.',
+        );
+        return this.step.set('ask');
+      case 'none':
+        return this.fail(
+          'Este aparelho não tem câmera nem microfone que o navegador consiga usar.',
+        );
+      case 'unsupported':
+        return this.step.set(this.app() !== '' ? 'inapp' : 'denied');
+      default:
+        this.askNote.set(
+          `Não deu certo (${r.detail}). Toque de novo; se repetir, recarregue a página.`,
+        );
+        return this.step.set('ask');
+    }
+  }
+
+  async copyLink() {
+    try {
+      await navigator.clipboard.writeText(location.href);
+      this.copied.set(true);
+    } catch {
+      window.prompt('Copie o link:', location.href);
+    }
+  }
+
+  reload() {
+    location.reload();
+  }
+
+  private async connect() {
+    this.step.set('connecting');
     try {
       const grant = await requestPhoneToken(this.code, holderId());
       this.owner.set(grant.name);
@@ -483,11 +731,7 @@ export class PhonePage {
         .on(RoomEvent.ParticipantConnected, () => this.checkOwner())
         .on(RoomEvent.ParticipantDisconnected, () => this.checkOwner())
         .on(RoomEvent.LocalTrackPublished, () => this.showPreview())
-        .on(RoomEvent.MediaDevicesError, () =>
-          this.fail(
-            'O celular não deixou usar a câmera ou o microfone. Dê a permissão no navegador e recarregue.',
-          ),
-        );
+        .on(RoomEvent.MediaDevicesError, () => this.step.set('denied'));
       await room.connect(grant.url, grant.token, { autoSubscribe: false });
       this.step.set('live');
       void this.keepAwake();
@@ -586,13 +830,13 @@ export class PhonePage {
         this.micOn.set(mic);
       }
     } catch (e) {
-      this.fail(
-        e instanceof Error && /Permission|NotAllowed/i.test(e.name + e.message)
-          ? 'O celular não deixou usar a câmera ou o microfone. Dê a permissão no navegador e recarregue a página.'
-          : e instanceof Error
-            ? e.message
-            : 'Não foi possível ligar a câmera ou o microfone.',
-      );
+      // Bloqueou (ou o pedido sumiu): mostra como liberar, sem sair da sala.
+      if (e instanceof Error && /Permission|NotAllowed|Security/i.test(e.name + e.message))
+        this.step.set('denied');
+      else
+        this.fail(
+          e instanceof Error ? e.message : 'Não foi possível ligar a câmera ou o microfone.',
+        );
     } finally {
       this.busy.set(false);
     }
