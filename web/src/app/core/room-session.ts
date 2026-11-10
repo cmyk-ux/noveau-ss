@@ -18,7 +18,7 @@ import { Channel, isSilent, Mixer, Volume } from './volume';
 import { IS_MOBILE } from './device';
 import { installStereoReceive } from './stereo';
 import { ACTIVITY_ATTR, Activity, parseActivity } from './activity';
-import { hardwareDecoders } from './stream';
+import { gpuEncodes, hardwareDecoders } from './stream';
 
 // O som do OBS (WHIP) chega sem a marca de estéreo; veja stereo.ts.
 installStereoReceive();
@@ -255,16 +255,25 @@ export function displayName(p: Participant): string {
  * Câmera do PC: pede 1080p a 30 fps (a câmera entrega o máximo que tiver até isso). Antes era 720p a
  * 1,7 Mbps, o padrão do LiveKit, que borrava rosto e fundo. Agora vai a até 4 Mbps em 1080p, com
  * uma cópia em 360p para a janelinha do canto e para quem está com a internet ruim.
- * VP8: todo navegador decodifica, e uma câmera a 30 fps custa pouco no processador.
+ * Codec: H.264 quando a placa de vídeo codifica H.264 (todo navegador decodifica, inclusive iPhone).
+ * Antes era sempre VP8, que nenhuma placa codifica: 1080p30 + 360p no processador de quem está
+ * jogando, somando com a tela. Sem placa para H.264, fica VP8 mas em 720p.
  */
-const WEBCAM_CAPTURE = { width: 1920, height: 1080, frameRate: 30 };
-const WEBCAM_PUBLISH = {
-  videoCodec: 'vp8' as const,
-  simulcast: true,
-  videoEncoding: { maxBitrate: 4_000_000, maxFramerate: 30 },
-  videoSimulcastLayers: [VideoPresets.h360],
-  degradationPreference: 'balanced' as const,
-};
+const WEBCAM_FULL = { width: 1920, height: 1080, frameRate: 30 };
+const WEBCAM_LIGHT = { width: 1280, height: 720, frameRate: 30 };
+async function webcamPlan() {
+  const gpu = await gpuEncodes('h264', WEBCAM_FULL, 30);
+  return {
+    capture: gpu ? WEBCAM_FULL : WEBCAM_LIGHT,
+    publish: {
+      videoCodec: gpu ? ('h264' as const) : ('vp8' as const),
+      simulcast: true,
+      videoEncoding: { maxBitrate: gpu ? 4_000_000 : 2_500_000, maxFramerate: 30 },
+      videoSimulcastLayers: [VideoPresets.h360],
+      degradationPreference: 'balanced' as const,
+    },
+  };
+}
 
 export class RoomSession {
   private focusedShareId: string | null = null;
@@ -664,12 +673,13 @@ export class RoomSession {
 
   async startWebcam(deviceId?: string) {
     const lp = this.room.localParticipant;
+    const plan = await webcamPlan();
     try {
-      await lp.setCameraEnabled(true, { deviceId, resolution: WEBCAM_CAPTURE }, WEBCAM_PUBLISH);
+      await lp.setCameraEnabled(true, { deviceId, resolution: plan.capture }, plan.publish);
     } catch (e) {
       // A câmera escolhida da outra vez sumiu (desplugada): usa a padrão.
       if (deviceId === undefined) throw e;
-      await lp.setCameraEnabled(true, { resolution: WEBCAM_CAPTURE }, WEBCAM_PUBLISH);
+      await lp.setCameraEnabled(true, { resolution: plan.capture }, plan.publish);
     }
     this.emit();
   }
@@ -798,7 +808,9 @@ export class RoomSession {
       return s.view.id === focused ? 2 : s.view.isLocal ? 1 : 0;
     }
     for (const s of order) {
-      if (this.hidden.has(s.view.id)) continue;
+      // Só as telas dos outros: gravar a própria custava a quem transmite (que está jogando) um
+      // segundo codificador na placa de vídeo, além da transmissão.
+      if (this.hidden.has(s.view.id) || s.view.isLocal) continue;
       const video = s.publication.track?.mediaStreamTrack;
       if (video === undefined) continue;
       const owner = s.view.isLocal ? this.room.localParticipant : this.room.remoteParticipants.get(s.view.ownerIdentity);

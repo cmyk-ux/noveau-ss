@@ -44,3 +44,27 @@ A correção entrou no Chromium em 06/11/2026
 ([WPT #64860](https://github.com/web-platform-tests/wpt/pull/64860)). Ela ainda não está no Chrome das
 pessoas, e o Chrome também não tem `generateKeyFrame` no transform. Dá para revisitar quando a correção
 chegar ao Chrome estável.
+
+## Segunda rodada (10/11/2026, noite): o FPS que cai "do nada"
+
+Quem transmitia em 1080p com FPS alto passou a perder FPS de repente. A busca nas mudanças desde
+então achou um caminho que bate com o "do nada":
+
+- **A reserva do codec saía no processador, em resolução cheia.** Desde 09/11 o automático escolhia
+  H.265 quando a placa codificava. Quando entra alguém que não decodifica H.265 (Firefox, iPhone,
+  Linux, placa antiga), o LiveKit liga a reserva para a sala. A reserva era VP8, e nenhuma placa
+  codifica VP8: o Chrome passa a codificar a tela inteira no processador de quem joga, no instante
+  em que essa pessoa entra. Com AV1/VP9 e "compatibilidade máxima" (ligada por padrão) acontece o mesmo.
+  - O H.265 foi para o fim da ordem do automático (AV1, H.264, VP9, H.265).
+  - A reserva é H.264 quando a placa codifica H.264.
+- **O que o navegador promete não é o que ele faz.** O Media Capabilities pode dizer "placa" e o
+  Chrome codificar no processador: H.264 Constrained Baseline no Windows vai para o OpenH264, AV1 já
+  saiu no libaom, e a placa pode falhar no meio. Agora um vigia (`codec-guard.ts`) lê a cada 3 s o
+  `powerEfficientEncoder` e o `encoderImplementation` do getStats, no codec principal e na reserva.
+  Duas leituras seguidas no processador e ele republica a mesma captura num codec que a placa
+  codifica (até 2 trocas por transmissão), com um aviso na tela.
+- **Câmera.** Era sempre VP8 1080p30 + 360p, no processador. Agora vai em H.264 quando a placa
+  codifica H.264; sem placa, VP8 em 720p.
+- **Clipe sob demanda.** Uma tecla de tesoura na barra de baixo liga e desliga. Desligado (o padrão),
+  nada grava e nada fica na memória. Ligado, grava só as telas dos outros que você assiste. É de quem
+  assiste: quem transmite não paga nada pelo clipe de ninguém.

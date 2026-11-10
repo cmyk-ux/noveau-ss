@@ -170,6 +170,21 @@ export function encoderProbes(): Partial<Record<Codec, EncoderProbe>> {
   return probed;
 }
 
+/** Uma pergunta só, sem mexer na sondagem da tela: este codec roda na placa neste tamanho e fps? */
+export async function gpuEncodes(codec: Codec, size: Size, fps: number): Promise<boolean> {
+  const mc = navigator.mediaCapabilities as MediaCapabilities | undefined;
+  if (mc === undefined || !supportedCodecs().includes(codec)) return false;
+  try {
+    const info = await mc.encodingInfo({
+      type: 'webrtc',
+      video: { contentType: MIME[codec], width: size.width, height: size.height, framerate: fps, bitrate: bitrateFor(size, fps, codec) },
+    } as MediaEncodingConfiguration);
+    return info.supported && info.powerEfficient;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Pergunta ao navegador (Media Capabilities, tipo "webrtc") quais codecs ele codifica na placa
  * de vídeo neste tamanho e fps. Encoder de GPU (NVENC/AMF/QuickSync) quase não rouba FPS do jogo;
@@ -206,11 +221,14 @@ export async function probeEncoders(size: Size, fps: number): Promise<Partial<Re
 }
 
 /**
- * Preferência entre os codecs de GPU. AV1 primeiro: tem camadas de tempo (o servidor pode mandar
- * menos quadros só para quem não aguenta) e quase todo navegador decodifica, inclusive o Firefox.
- * H.265 só toca em Chrome/Edge com decodificador de hardware; quem não tem recebe a reserva (VP8).
+ * Preferência entre os codecs de GPU. AV1 primeiro: melhor imagem por bit e camadas de tempo.
+ * Depois H.264, que todo aparelho decodifica na placa (inclusive iPhone e Firefox), então nunca
+ * aciona a reserva. H.265 por último: quem não tem decodificador dele (Firefox, iPhone, Linux,
+ * placa antiga) fazia o LiveKit ligar a reserva para a sala inteira, e a reserva VP8 era codificada
+ * no processador de quem transmite, em resolução cheia: o FPS do jogo despencava "do nada", na
+ * hora que essa pessoa entrava.
  */
-const GPU_ORDER: Codec[] = ['av1', 'h265', 'vp9', 'h264'];
+const GPU_ORDER: Codec[] = ['av1', 'h264', 'vp9', 'h265'];
 
 /**
  * O que cada pessoa decodifica na placa de vídeo (atributo "hwdec", ver publishDecoders). Sem a
@@ -219,14 +237,15 @@ const GPU_ORDER: Codec[] = ['av1', 'h265', 'vp9', 'h264'];
  * se todo mundo que já está na sala decodifica ele na placa; senão vai o próximo (H.264 quase todo
  * PC dos últimos 10 anos decodifica na placa).
  */
-export function pickCodec(choice: CodecChoice, viewers: ReadonlySet<string>[] = []): Codec {
-  const ok = supportedCodecs();
+export function pickCodec(choice: CodecChoice, viewers: ReadonlySet<string>[] = [], exclude: ReadonlySet<Codec> = new Set()): Codec {
+  // exclude: codecs que já vimos saindo no processador nesta transmissão (CodecGuard).
+  const ok = supportedCodecs().filter((c) => !exclude.has(c));
   if (choice !== 'auto' && ok.includes(choice)) return choice;
   const everyone = (c: Codec) => viewers.every((v) => v.has(c));
   // Automático: o primeiro que a placa de vídeo codifica. Assim quem transmite quase não perde FPS.
   // O H.265 só aparece no navegador quando existe encoder de hardware, então basta ele estar na
-  // lista: a sondagem às vezes diz "não" para ele (fps alto, tamanho grande) e o automático caía no
-  // VP8 por software, que derruba a resolução e o fps de quem está jogando.
+  // lista: a sondagem às vezes diz "não" para ele (fps alto, tamanho grande). Ele fica por último
+  // porque precisa de reserva (ver GPU_ORDER).
   for (const c of GPU_ORDER) {
     if (!ok.includes(c) || !everyone(c)) continue;
     if (probed[c]?.gpu === true || hardwareOnly(c)) return c;
