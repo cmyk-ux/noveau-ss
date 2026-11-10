@@ -1,11 +1,12 @@
 # Compila o plugin de DAW (plugin/) para Windows e macOS e testa o envio de ponta a ponta.
-# Os arquivos ficam em "Artifacts" de cada execução. Uma tag plugin-v* (ex.: plugin-v0.1.0)
-# também publica um Release com os zips, que é para onde o site aponta.
+# Gera os instaladores (Windows .exe, Mac .pkg) e os zips. Os arquivos ficam em "Artifacts".
+# Todo push no main republica o Release "plugin-latest", que é para onde o site (/plugin) aponta.
+# Uma tag plugin-v* (ex.: plugin-v0.2.0) publica também uma versão fixa.
 name: Plugin de DAW
 
 on:
   push:
-    paths: ['plugin/**', 'server/daw.mjs', '.github/workflows/plugin.yml']
+    paths: ['plugin/**', 'server/daw.mjs', 'server/discord.mjs', '.github/workflows/plugin.yml']
     tags: ['plugin-v*']
   workflow_dispatch:
 
@@ -69,8 +70,23 @@ jobs:
           New-Item -ItemType Directory $out | Out-Null
           Copy-Item -Recurse "build/NoveauDAW_artefacts/Release/VST3/noveau DAW.vst3" $out
           Copy-Item "build/NoveauDAW_artefacts/Release/Standalone/noveau DAW.exe" $out
+          Copy-Item -Recurse "build/NoveauDAW_artefacts/Release/AAX/noveau DAW.aaxplugin" $out
           Copy-Item plugin/LEIA-ME.txt $out
           Compress-Archive -Path "$out/*" -DestinationPath "$out.zip"
+
+      - name: Instalador (Windows)
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $iscc = Get-ChildItem 'C:\Program Files*\Inno Setup*\ISCC.exe' -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $iscc) {
+            choco install innosetup -y --no-progress
+            $iscc = Get-ChildItem 'C:\Program Files*\Inno Setup*\ISCC.exe' | Select-Object -First 1
+          }
+          $version = (Select-String -Path plugin/CMakeLists.txt -Pattern 'VERSION (\d+\.\d+\.\d+)').Matches[0].Groups[1].Value
+          & $iscc.FullName "/DVersion=$version" "/DSource=$PWD\build\NoveauDAW_artefacts\Release\VST3" "/O$PWD" plugin\installer\windows.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Get-Item noveau-DAW-Windows.exe
 
       - name: Empacotar (macOS)
         if: matrix.name == 'macos'
@@ -80,19 +96,27 @@ jobs:
           cp -R "build/NoveauDAW_artefacts/Release/VST3/noveau DAW.vst3" "$out/"
           cp -R "build/NoveauDAW_artefacts/Release/AU/noveau DAW.component" "$out/"
           cp -R "build/NoveauDAW_artefacts/Release/Standalone/noveau DAW.app" "$out/"
+          cp -R "build/NoveauDAW_artefacts/Release/AAX/noveau DAW.aaxplugin" "$out/"
           cp plugin/LEIA-ME.txt "$out/"
           # Sem conta paga da Apple: assinatura "ad hoc" (o Apple Silicon exige alguma assinatura).
-          for f in "$out"/*.vst3 "$out"/*.component "$out"/*.app; do codesign --force --deep -s - "$f"; done
+          for f in "$out"/*.vst3 "$out"/*.component "$out"/*.app "$out"/*.aaxplugin; do codesign --force --deep -s - "$f"; done
           ditto -c -k --keepParent "$out" "$out.zip"
+          version=$(sed -nE 's/^project\(NoveauDAW VERSION ([0-9.]+).*/\1/p' plugin/CMakeLists.txt)
+          plugin/installer/mac-pkg.sh "$out" "$version" noveau-DAW-Mac.pkg
+          pkgutil --payload-files noveau-DAW-Mac.pkg | head -20 || true
+          ls -la noveau-DAW-Mac.pkg
 
       - uses: actions/upload-artifact@v4
         with:
           name: noveau-DAW-${{ matrix.name }}
-          path: noveau-DAW-${{ matrix.name }}.zip
+          path: |
+            noveau-DAW-${{ matrix.name }}.zip
+            noveau-DAW-Windows.exe
+            noveau-DAW-Mac.pkg
 
   publicar:
     name: Publicar Release
-    if: startsWith(github.ref, 'refs/tags/plugin-v')
+    if: startsWith(github.ref, 'refs/tags/plugin-v') || github.ref == 'refs/heads/main'
     needs: [teste, compilar]
     runs-on: ubuntu-latest
     permissions:
@@ -101,7 +125,33 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           merge-multiple: true
-      - uses: softprops/action-gh-release@v2
+      - name: Mover a tag plugin-latest para este commit
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api -X DELETE "repos/${{ github.repository }}/git/refs/tags/plugin-latest" 2>/dev/null || true
+          gh api -X POST "repos/${{ github.repository }}/git/refs" -f ref=refs/tags/plugin-latest -f sha=${{ github.sha }}
+      - name: Release "plugin-latest" (o link fixo do site)
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: plugin-latest
+          name: Plugin de DAW (mais novo)
+          body: |
+            Instaladores do plugin de DAW, refeitos a cada atualização do main.
+            Passo a passo: https://noveau.riajuu.net/plugin
+          make_latest: false
+          files: |
+            noveau-DAW-Windows.exe
+            noveau-DAW-Mac.pkg
+            noveau-DAW-*.zip
+      - name: Release da versão
+        if: startsWith(github.ref, 'refs/tags/plugin-v')
+        uses: softprops/action-gh-release@v2
         with:
           name: Plugin de DAW ${{ github.ref_name }}
-          files: noveau-DAW-*.zip
+          files: |
+            noveau-DAW-Windows.exe
+            noveau-DAW-Mac.pkg
+            noveau-DAW-*.zip

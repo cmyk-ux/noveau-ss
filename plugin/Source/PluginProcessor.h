@@ -1,14 +1,21 @@
 #pragma once
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_data_structures/juce_data_structures.h>
 
 #include "Streamer.h"
 
-/** O plugin não mexe no som: deixa passar igual e manda uma cópia para a sala. */
-class NoveauProcessor : public juce::AudioProcessor
+/**
+ * O plugin não mexe no som: deixa passar igual e manda uma cópia para quem está ouvindo.
+ *
+ * Ligado à conta do Discord, a chave fica guardada no computador (não no projeto): qualquer
+ * projeto em que o plugin for colocado já sai tocando para a call em que a pessoa estiver.
+ * Com código de sala, a chave fica no projeto (vale 24 h).
+ */
+class NoveauProcessor : public juce::AudioProcessor, private juce::Timer
 {
 public:
     NoveauProcessor();
-    ~NoveauProcessor() override = default;
+    ~NoveauProcessor() override;
 
     void prepareToPlay (double sampleRate, int samplesPerBlock) override;
     void releaseResources() override {}
@@ -35,11 +42,35 @@ public:
 
     noveau::Streamer& streamer() { return net; }
 
-    /** Endereço do site digitado na tela do plugin (salvo no projeto). */
-    juce::String serverText { "noveau.riajuu.net" };
+    // ---- o que a tela do plugin pede ----
+    /** Liga à conta do Discord (abre o navegador para confirmar). */
+    void linkDiscord();
+    /** Entra numa sala com o código do site. */
+    void useRoomCode (const juce::String& code);
+    /** Liga ou pausa o envio neste projeto. */
+    void setSending (bool on);
+    bool isSending() const { return sending; }
+    /** Esquece a conta do Discord neste computador. */
+    void forgetAccount();
+    bool hasAccount() const;
+    juce::String accountName() const;
+    juce::String getServerText() const;
+    void setServerText (const juce::String& s);
 
 private:
-    noveau::Streamer net;
+    void timerCallback() override;
+    void saveAccount (const juce::String& key, const juce::String& name);
+    void startFromSaved();
 
+    noveau::Streamer net;
+    juce::ApplicationProperties settings;
+    mutable juce::CriticalSection stateLock;
+    juce::String serverText { "noveau.riajuu.net" };
+    juce::String roomKey;          // chave da sala (modo código), guardada no projeto
+    bool usingRoom = false;        // este projeto usa código de sala em vez da conta
+    bool sending = true;           // pausado neste projeto?
+    std::atomic<bool> started { false };
+
+    JUCE_DECLARE_WEAK_REFERENCEABLE (NoveauProcessor)
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NoveauProcessor)
 };

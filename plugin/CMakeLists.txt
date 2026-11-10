@@ -7,7 +7,7 @@
 # No GitHub, .github/workflows/plugin.yml compila para Windows e macOS sozinho.
 
 cmake_minimum_required(VERSION 3.22)
-project(NoveauDAW VERSION 0.1.0 LANGUAGES C CXX)
+project(NoveauDAW VERSION 0.2.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -68,6 +68,11 @@ set(FORMATS VST3 Standalone)
 if(APPLE)
   list(APPEND FORMATS AU)
 endif()
+# AAX (Pro Tools): o SDK vem dentro da JUCE (licença GPLv3 ou comercial da Avid). Sem a assinatura
+# PACE/iLok ele só abre no "Pro Tools Developer"; veja docs/PLUGIN-DAW.md.
+if(WIN32 OR APPLE)
+  list(APPEND FORMATS AAX)
+endif()
 
 juce_add_plugin(NoveauDAW
   COMPANY_NAME "noveau"
@@ -85,6 +90,7 @@ juce_add_plugin(NoveauDAW
   EDITOR_WANTS_KEYBOARD_FOCUS TRUE
   COPY_PLUGIN_AFTER_BUILD FALSE
   VST3_CATEGORIES Fx Tools Network
+  AAX_CATEGORY AAX_ePlugInCategory_Effect
   AU_MAIN_TYPE kAudioUnitType_Effect)
 
 target_sources(NoveauDAW PRIVATE
@@ -121,4 +127,14 @@ if(NOVEAU_TESTS)
   target_include_directories(stream_test PRIVATE Source)
   target_compile_definitions(stream_test PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JucePlugin_VersionString="teste")
   target_link_libraries(stream_test PRIVATE juce::juce_events juce::juce_audio_basics ixws)
+endif()
+
+# Foto da tela do plugin em cada estado (só para conferir o layout; precisa de X, ex.: xvfb-run).
+if(NOVEAU_TESTS AND UNIX AND NOT APPLE)
+  juce_add_gui_app(editor_shot PRODUCT_NAME "editor_shot")
+  target_sources(editor_shot PRIVATE Tests/editor_shot.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Streamer.cpp Source/Packet.cpp)
+  target_include_directories(editor_shot PRIVATE Source)
+  target_compile_definitions(editor_shot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1
+    JucePlugin_Name="noveau DAW" JucePlugin_VersionString="teste")
+  target_link_libraries(editor_shot PRIVATE juce::juce_audio_utils ixws)
 endif()

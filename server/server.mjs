@@ -252,7 +252,16 @@ const routes = {
   'POST /api/token': (req, body) => token(req, body),
   'POST /api/camera': (_req, body) => camera(body),
   'POST /api/camera/stop': (_req, body) => stopCamera(body),
+  'POST /api/daw/link': (req, body) => dawLink(req, body),
 };
+
+/** Página /plugin: quem está logado com o Discord confirma o pedido que o plugin abriu. */
+function dawLink(req, body) {
+  if (!discord.discordEnabled) throw new HttpError(404, 'O login com Discord não está configurado.');
+  const user = discord.currentUser(req);
+  if (user === null) throw new HttpError(401, 'Entre com o Discord primeiro.');
+  return daw.confirmLink(String(body.code ?? ''), user);
+}
 
 /** Alguém saiu (ou trocou) de call no Discord: tira a pessoa da sala do site daquela call. */
 async function kickFromCallRoom(userId, channelId) {
@@ -395,14 +404,23 @@ const server = createServer(async (req, res) => {
     const body = req.method === 'POST' ? await readJson(req) : {};
     send(res, 200, await route(req, body));
   } catch (e) {
-    const known = e instanceof HttpError || e instanceof discord.DiscordError;
+    const known = e instanceof HttpError || e instanceof discord.DiscordError || e instanceof daw.DawError;
     const status = known ? e.status : 500;
     if (status === 500) console.error(e);
     send(res, status, { error: known ? e.message : 'Erro no servidor.' });
   }
 });
 
-daw.attachDaw(server, (token) => verifier.verify(token));
+daw.attachDaw(server, (token) => verifier.verify(token), {
+  secret: discord.derivedSecret('daw'),
+  // O plugin ligado à conta do Discord toca na sala da call em que a pessoa estiver.
+  callRoom: discord.discordEnabled
+    ? async (discordId) => {
+        const call = await discord.voiceChannelOf(discordId);
+        return call === null ? null : { room: discord.roomForChannel(call.id), name: call.name };
+      }
+    : null,
+});
 
 // HOST=127.0.0.1 em produção (rede do host): só o Caddy alcança a API.
 server.listen(PORT, process.env.HOST || undefined, () => {

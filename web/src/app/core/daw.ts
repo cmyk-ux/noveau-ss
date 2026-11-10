@@ -4,8 +4,32 @@ import { StudioHub } from './studio';
 // Plugin de DAW: o som chega do servidor por um WebSocket (veja server/daw.mjs) e toca pelo
 // mesmo player do modo estúdio (buffer ajustável, sem reamostrar no caminho).
 
-/** Onde baixar o plugin (builds automáticos do GitHub). */
-export const DAW_PLUGIN_DOWNLOAD = 'https://github.com/cmyk-ux/noveau-ss/releases?q=plugin';
+/** Todas as versões do plugin (builds automáticos do GitHub). */
+export const DAW_PLUGIN_RELEASES = 'https://github.com/cmyk-ux/noveau-ss/releases';
+/** O CI republica a versão mais nova do main sempre com a tag plugin-latest. */
+const LATEST = 'https://github.com/cmyk-ux/noveau-ss/releases/download/plugin-latest';
+export const DAW_INSTALLERS = {
+  windows: `${LATEST}/noveau-DAW-Windows.exe`,
+  mac: `${LATEST}/noveau-DAW-Mac.pkg`,
+};
+export const PLUGIN_BUDDY = 'https://www.modalics.com/products/plugin-buddy-free';
+
+export type DesktopOs = 'windows' | 'mac' | 'other';
+export function desktopOs(): DesktopOs {
+  const p = `${navigator.platform} ${navigator.userAgent}`;
+  return /Win/i.test(p) ? 'windows' : /Mac/i.test(p) && !/iPhone|iPad/i.test(p) ? 'mac' : 'other';
+}
+
+/** Página /plugin: confirma o pedido de conexão que o plugin abriu no navegador. */
+export async function confirmDawLink(code: string): Promise<void> {
+  const res = await fetch('/api/daw/link', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ code }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? `Erro ${res.status}.`);
+}
 
 export interface DawPairCode {
   code: string;

@@ -29,6 +29,8 @@ export interface ClipItem {
   error?: string;
   mb?: number;
   seconds?: number;
+  /** Já clicou em baixar (o botão muda de cor). */
+  downloaded?: boolean;
 }
 
 interface ProcessorCtor {
@@ -137,6 +139,29 @@ export class ClipRecorder {
       method: 'DELETE',
       headers: { 'x-clip-token': item.token },
     }).catch(() => undefined);
+  }
+
+  /**
+   * Apagar com "desfazer": some da lista na hora e só apaga do servidor depois de `ms`.
+   * Devolve a função que desfaz (põe o clipe de volta e cancela a exclusão).
+   */
+  removeLater(item: ClipItem, ms: number): () => void {
+    const at = this._items().findIndex((i) => i.id === item.id);
+    this._items.update((list) => list.filter((i) => i.id !== item.id));
+    const timer = window.setTimeout(() => void this.remove(item), ms);
+    return () => {
+      window.clearTimeout(timer);
+      if (item.expiresAt !== undefined && item.expiresAt <= Date.now()) return;
+      this._items.update((list) => {
+        const copy = list.slice();
+        copy.splice(Math.min(Math.max(0, at), copy.length), 0, item);
+        return copy;
+      });
+    };
+  }
+
+  markDownloaded(item: ClipItem) {
+    this._items.update((list) => list.map((i) => (i.id === item.id ? { ...i, downloaded: true } : i)));
   }
 
   dismiss(item: ClipItem) {

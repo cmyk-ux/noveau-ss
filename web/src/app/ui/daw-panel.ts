@@ -1,35 +1,36 @@
 import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
-import { DAW_PLUGIN_DOWNLOAD, DawPairCode } from '../core/daw';
+import { DawPairCode } from '../core/daw';
 import { Prefs } from '../core/prefs';
 import { RoomStore } from '../core/room-store';
 import { Toast } from '../core/toast';
 
-/** Submenu do plugin de DAW: código de pareamento e o som dos plugins que estão tocando. */
+/** Submenu do plugin de DAW: link para instalar, código (salas fora do Discord) e o som dos plugins tocando. */
 @Component({
   selector: 'cen-daw-panel',
   template: `
     <p class="hint lead">
-      Manda a saída da sua DAW para a sala <strong>sem compressão</strong>, na taxa do projeto
-      (44,1 a 192 kHz). Funciona com ASIO e com o site fechado: o som vai do plugin direto para o servidor.
+      O som da sua DAW na sala, <strong>sem compressão</strong> e na taxa do projeto (até 192 kHz). Sai do plugin
+      direto para o servidor: funciona com ASIO e com o site fechado.
     </p>
+    <a class="btn primary small wide" href="/plugin" target="_blank" rel="noopener">Instalar o plugin (passo a passo)</a>
 
-    <ol class="steps">
-      <li><a [href]="download" target="_blank" rel="noopener">Baixe o plugin</a> (VST3 ou AU) e coloque no fim do master da DAW.</li>
-      <li>Gere um código aqui e digite no plugin.</li>
-      <li>Aperte play. Todo mundo nesta sala ouve.</li>
-    </ol>
-
-    @if (code(); as c) {
-      <div class="code">
-        <span class="mono big">{{ c.code }}</span>
-        <button type="button" class="btn small" (click)="copy(c.code)">copiar</button>
-      </div>
-      <p class="hint mono">vale por {{ left(c.expiresAt) }} · só uma vez</p>
+    @if (callRoom) {
+      <p class="hint">Nesta sala da call é só clicar em <strong>Conectar com o Discord</strong> no plugin, uma vez.
+        Depois ele toca sozinho para a call em que você estiver.</p>
+    } @else {
+      <p class="label">código desta sala</p>
+      @if (code(); as c) {
+        <div class="code">
+          <span class="mono big">{{ c.code }}</span>
+          <button type="button" class="btn small" (click)="copy(c.code)">copiar</button>
+        </div>
+        <p class="hint mono">vale por {{ left(c.expiresAt) }} · só uma vez</p>
+      }
+      <button type="button" class="btn small wide" [disabled]="busy()" (click)="newCode()">
+        {{ code() === null ? 'Gerar código para o plugin' : 'Gerar outro código' }}
+      </button>
+      <p class="hint">Digite no campo "código da sala" do plugin. Ele volta sozinho para esta sala por 24 h.</p>
     }
-    <button type="button" class="btn small wide" [disabled]="busy()" (click)="newCode()">
-      {{ code() === null ? 'Gerar código para o plugin' : 'Gerar outro código' }}
-    </button>
-    <p class="hint">Depois de conectado, o plugin guarda a conexão no projeto e volta sozinho por 24 h.</p>
 
     <p class="label">tocando agora</p>
     @for (st of dawStreams(); track st.key) {
@@ -65,8 +66,6 @@ import { Toast } from '../core/toast';
   styles: `
     :host { display: block; }
     .lead { margin-top: 0; }
-    .steps { margin: 0.5rem 0 0.8rem; padding-left: 1.2rem; font-size: 0.85rem; line-height: 1.5; }
-    .steps a { color: var(--accent-hi); }
     .code { display: flex; align-items: center; gap: 0.6rem; margin: 0.4rem 0 0.2rem; padding: 0.45rem 0.6rem;
       border: 1px solid var(--line-2); border-radius: 6px; background: #09080c; box-shadow: inset 0 1px 4px #000a; }
     .big { flex: 1; font-size: 1.35rem; letter-spacing: 0.14em; color: var(--text); }
@@ -84,7 +83,7 @@ export class DawPanel {
   protected readonly store = inject(RoomStore);
   protected readonly prefs = inject(Prefs);
   private readonly toast = inject(Toast);
-  protected readonly download = DAW_PLUGIN_DOWNLOAD;
+  protected readonly callRoom = this.store.isCallRoom;
   protected readonly latencies = [0.1, 0.25, 0.5, 1];
   protected readonly code = signal<DawPairCode | null>(null);
   protected readonly busy = signal(false);

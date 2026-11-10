@@ -17,6 +17,7 @@ import { VolumeSlider } from './volume-slider';
 import { StatsPanel } from './stats-panel';
 import { StreamPanel } from './stream-panel';
 import { DawPanel } from './daw-panel';
+import { ClipItem } from '../core/clips';
 
 type Menu = 'mic' | 'screen' | 'camera' | 'daw';
 
@@ -288,9 +289,11 @@ function timecode(ms: number): string {
                 }
                 @case ('ready') {
                   <div class="clip-actions">
-                    <a class="btn small primary" [href]="c.url" rel="noopener"><cen-icon name="download" [size]="15" /> baixar</a>
+                    <a class="btn small" [class.primary]="!c.downloaded" [class.got]="c.downloaded" [href]="c.url" rel="noopener"
+                      [title]="c.downloaded ? 'Você já baixou este clipe. Clique para baixar de novo.' : 'Baixar o MP4'"
+                      (click)="store.clips.markDownloaded(c)"><cen-icon [name]="c.downloaded ? 'check' : 'download'" [size]="15" /> {{ c.downloaded ? 'baixado' : 'baixar' }}</a>
                     <span class="mono countdown" title="Depois disso o clipe é apagado">{{ left(c.expiresAt) }}</span>
-                    <button class="btn small" title="Apagar agora do servidor" (click)="store.clips.remove(c)"><cen-icon name="trash" [size]="14" /> apagar</button>
+                    <button class="btn small" title="Apagar agora do servidor" (click)="deleteClip(c)"><cen-icon name="trash" [size]="14" /> apagar</button>
                   </div>
                 }
                 @case ('failed') {
@@ -524,6 +527,7 @@ function timecode(ms: number): string {
     .clip-head { display: flex; justify-content: space-between; align-items: baseline; gap: 0.5rem; }
     .clip-head .label { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .dim { color: var(--faint); font-size: 0.7rem; }
+    .btn.got { background: #2b3a26; color: #cfe3bf; box-shadow: inset 0 0 0 1px #4d6b3f; }
     .clip-actions { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.5rem; }
     .countdown { flex: 1; text-align: center; font-size: 0.8rem; color: var(--warn); }
     .meter { height: 6px; margin-top: 0.55rem; border-radius: 1px; background: var(--well); box-shadow: var(--inset); overflow: hidden; }
@@ -803,6 +807,12 @@ export class RoomScreen {
       return;
     }
     this.store.clips.clip();
+  }
+
+  /** Apagar com 5 s para desfazer. */
+  deleteClip(c: ClipItem) {
+    const undo = this.store.clips.removeLater(c, 5000);
+    this.toast.show('Clipe apagado.', { ms: 5000, action: { label: 'desfazer', run: undo } });
   }
 
   clockAt(t: number) {

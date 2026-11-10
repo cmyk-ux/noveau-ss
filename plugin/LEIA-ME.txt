@@ -1,17 +1,22 @@
-noveau DAW: manda a saída da sua DAW para uma sala do noveau, sem compressão.
+noveau DAW: manda a saída da sua DAW para a call, sem compressão.
 
-INSTALAR
+O jeito fácil é o instalador (noveau-DAW-Windows.exe ou noveau-DAW-Mac.pkg) e o passo a passo
+em https://noveau.riajuu.net/plugin . Este zip é para quem prefere instalar na mão.
+
+INSTALAR NA MÃO
 
 Windows
   Copie a pasta "noveau DAW.vst3" para C:\Program Files\Common Files\VST3\
   e mande a DAW procurar plugins de novo (FL Studio: Options > Manage plugins > Find more plugins;
   Ableton: Preferências > Plug-ins > Rescan; Reaper: Preferences > VST > Re-scan).
-  "noveau DAW.exe" é a versão avulsa, sem DAW: manda o som de uma entrada da placa de som.
+  "noveau DAW.exe" é a versão avulsa, sem DAW: manda o som de uma ENTRADA da placa de som
+  (microfone, por exemplo), não a saída da DAW. Para a DAW, use o plugin no master.
 
 macOS
   VST3:  copie "noveau DAW.vst3" para ~/Library/Audio/Plug-Ins/VST3/
   AU (Logic, GarageBand): copie "noveau DAW.component" para ~/Library/Audio/Plug-Ins/Components/
-  O plugin não é assinado por uma conta paga da Apple, então rode isto no Terminal uma vez:
+  Copiado na mão, o macOS marca o plugin como "baixado da internet". Rode isto no Terminal uma vez
+  (o instalador .pkg não precisa disso):
     xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/VST3/"noveau DAW.vst3"
     xattr -dr com.apple.quarantine ~/Library/Audio/Plug-Ins/Components/"noveau DAW.component"
   No Logic, se não aparecer: feche o Logic, rode "killall -9 AudioComponentRegistrar" e abra de novo.
@@ -19,11 +24,27 @@ macOS
 USAR
 
 1. Coloque o plugin no FIM do master (depois do limiter), para mandar exatamente o que você ouve.
-2. No site, entre na sala, clique na tecla do plugin (barra de baixo, ícone de faders) e gere um código.
-3. Digite o código no plugin e clique em Conectar. Todo mundo da sala passa a ouvir.
+2. Clique em "Conectar com o Discord" e confirme na página que abrir. É uma vez só por computador:
+   depois disso, qualquer projeto com o plugin já sai tocando.
+3. Entre numa call do Discord. Quem abrir a sala da call no site ouve. Trocou de call? O plugin vai junto.
+   Sem ninguém ouvindo, ele não manda nada (não gasta internet).
 
-O plugin não mexe no som: o que entra sai igual. Ele guarda a conexão no projeto e reconecta
-sozinho por 24 h. Formato: 24-bit (padrão), 32-bit float (idêntico à DAW) ou 16-bit.
-A taxa é a do projeto (44,1 a 192 kHz). 24-bit a 48 kHz gasta ~2,3 Mbps de upload.
+Sala fora do Discord: no site, dentro da sala, abra a tecla do plugin (ícone de faders), gere um
+código e digite em "código da sala" no plugin. Ele volta sozinho para essa sala por 24 h.
 
-Pro Tools não está incluso (precisa do formato AAX, que exige assinatura paga).
+"Pausar" para de mandar o som só naquele projeto. "Sair da conta" esquece o Discord neste computador.
+O plugin não mexe no som: o que entra sai igual. Formato: 24-bit (padrão), 32-bit float (idêntico à
+DAW) ou 16-bit. A taxa é a do projeto (44,1 a 192 kHz). 24-bit a 48 kHz gasta ~2,3 Mbps de upload.
+
+PRO TOOLS (jeito que funciona hoje)
+  1. Instale o noveau DAW (o instalador põe o VST3 na pasta padrão).
+  2. Instale o Plugin Buddy (grátis, AAX assinado): https://www.modalics.com/products/plugin-buddy-free
+  3. No Master Fader, último insert: Plugin Buddy.
+  4. No Plugin Buddy, clique em Scan e escolha "noveau DAW" no primeiro slot de Processing.
+  5. Abra a tela do noveau DAW e clique em "Conectar com o Discord". Salve a sessão.
+
+PRO TOOLS (AAX próprio, quando for assinado)
+  Windows: copie "noveau DAW.aaxplugin" para C:\Program Files\Common Files\Avid\Audio\Plug-Ins\
+  macOS:   copie "noveau DAW.aaxplugin" para /Library/Application Support/Avid/Audio/Plug-Ins/
+  Por enquanto ele ainda não é assinado pela PACE/iLok, então só abre no "Pro Tools Developer"
+  (versão gratuita da Avid para desenvolvedores). O Pro Tools comum recusa plugin AAX sem assinatura.

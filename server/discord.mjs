@@ -31,9 +31,19 @@ const SESSION_SECRET =
 const SESSION_COOKIE = 'noveau_session';
 const STATE_COOKIE = 'noveau_oauth_state';
 const SWITCH_COOKIE = 'noveau_switch_account';
+const NEXT_COOKIE = 'noveau_after_login';
 const SESSION_DAYS = 30;
 
 export const discordEnabled = CLIENT_ID !== '' && CLIENT_SECRET !== '' && BOT_TOKEN !== '' && GUILD_ID !== '';
+
+/**
+ * Chave derivada do SESSION_SECRET para outro uso (ex.: o plugin de DAW), ou null se não houver
+ * segredo fixo (aí cada reinício do servidor teria uma chave diferente).
+ */
+export function derivedSecret(label) {
+  if (!process.env.SESSION_SECRET && !discordEnabled) return null;
+  return createHmac('sha256', SESSION_SECRET).update(`noveau:${label}`).digest();
+}
 
 export class DiscordError extends Error {
   constructor(status, message) {
@@ -102,8 +112,14 @@ function redirect(res, location, setCookies = []) {
   res.end();
 }
 
+/** Para onde voltar depois do login: só caminhos deste site ("/plugin?c=..."). */
+function safeNext(raw) {
+  return typeof raw === 'string' && /^\/(?![/\\])[\w\-./?=&%#]{0,200}$/.test(raw) ? raw : '';
+}
+
 export function login(req, res) {
   if (!discordEnabled) return redirect(res, '/?discord=desligado');
+  const next = safeNext(new URL(req.url, 'http://x').searchParams.get('next'));
   const state = randomBytes(16).toString('base64url');
   const url = new URL('https://discord.com/oauth2/authorize');
   url.search = new URLSearchParams({
@@ -116,7 +132,7 @@ export function login(req, res) {
     // de conta. Sem isso o Discord reaproveita na hora a conta logada no navegador.
     prompt: cookies(req)[SWITCH_COOKIE] ? 'consent' : 'none',
   }).toString();
-  redirect(res, url.toString(), [cookie(STATE_COOKIE, state, 600)]);
+  redirect(res, url.toString(), [cookie(STATE_COOKIE, state, 600), cookie(NEXT_COOKIE, next, next === '' ? 0 : 600)]);
 }
 
 export async function callback(req, res) {
@@ -151,7 +167,8 @@ export async function callback(req, res) {
     });
     // O token do Discord só serve para ler o nome agora; revogamos para não guardar nada.
     void revoke(access_token);
-    redirect(res, '/', [clearState, cookie(SWITCH_COOKIE, '', 0), cookie(SESSION_COOKIE, session, SESSION_DAYS * 86400)]);
+    const next = safeNext(cookies(req)[NEXT_COOKIE]) || '/';
+    redirect(res, next, [clearState, cookie(NEXT_COOKIE, '', 0), cookie(SWITCH_COOKIE, '', 0), cookie(SESSION_COOKIE, session, SESSION_DAYS * 86400)]);
   } catch (e) {
     console.error('[discord] login falhou:', e.message);
     redirect(res, '/?discord=falhou', [clearState]);

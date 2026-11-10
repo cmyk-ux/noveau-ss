@@ -219,7 +219,14 @@ export class RoomSession {
 
   constructor(
     private readonly audioContainer: HTMLElement,
-    readonly room: Room = new Room({ adaptiveStream: false, dynacast: true, webAudioMix: true }),
+    readonly room: Room = new Room({
+      adaptiveStream: false,
+      dynacast: true,
+      webAudioMix: true,
+      // O LiveKit sai da sala no 'beforeunload', que o Chrome dispara também ao clicar num link de
+      // download (clipe). Quem sai da sala de verdade é o 'pagehide', no RoomStore.
+      disconnectOnPageLeave: false,
+    }),
   ) {
     this.bindEvents();
   }

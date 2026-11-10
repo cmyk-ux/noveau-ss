@@ -3,7 +3,10 @@
 
 #include "PluginProcessor.h"
 
-/** Tela do plugin: endereço do site, código, formato e o estado da conexão. */
+/**
+ * Tela do plugin. O caminho normal é um botão só: "Conectar com o Discord" abre o navegador,
+ * a pessoa confirma e pronto. O código de sala fica embaixo, para salas fora do Discord.
+ */
 class NoveauEditor : public juce::AudioProcessorEditor, private juce::Timer
 {
 public:
@@ -15,15 +18,21 @@ public:
 
 private:
     void timerCallback() override;
-    void toggleConnection();
+    void mainAction();
+    void openBrowser (const juce::String& code);
+
+    enum class Action { link, cancel, pause, resume };
+    Action action = Action::link;
 
     NoveauProcessor& proc;
     juce::LookAndFeel_V4 look;
-    juce::Label title, serverLabel, codeLabel, formatLabel, status, detail;
-    juce::TextEditor serverBox, codeBox;
+    juce::Label title, status, detail, codeLabel, serverLabel, formatLabel;
+    juce::TextButton mainButton, reopenButton, codeButton, forgetButton;
+    juce::TextEditor codeBox, serverBox;
     juce::ComboBox formatBox;
-    juce::TextButton connectButton;
     juce::Colour led { juce::Colours::grey };
+    bool openOnCode = false;     // a pessoa clicou em conectar: abre o navegador quando o código chegar
+    juce::String lastCode;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (NoveauEditor)
 };
