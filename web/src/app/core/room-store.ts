@@ -42,6 +42,7 @@ import { Toast } from './toast';
 import { Channel } from './volume';
 import { ClipRecorder, ClipServer, clipServer, clipsSupported } from './clips';
 import { ShareWatch } from './stats';
+import { Activity, Surface, cleanName, encodeActivity, nameFromLabel, rememberActivity } from './activity';
 
 function toggled(set: ReadonlySet<string>, id: string, on: boolean): ReadonlySet<string> {
   if (set.has(id) === on) return set;
@@ -80,6 +81,9 @@ export class RoomStore {
   private readonly _cameraOffered = signal(false);
   private readonly _cameraBusy = signal(false);
   private readonly _liveSignature = signal<string | null>(null);
+  private readonly _activity = signal<Activity | null>(null);
+  /** O que eu estou transmitindo (null = nada). */
+  readonly myActivity = this._activity.asReadonly();
 
   private link: RoomLink = { key: '', secret: '' };
   private token = '';
@@ -258,6 +262,12 @@ export class RoomStore {
         }),
       );
     });
+    // O que estou transmitindo vai num atributo, para o selo "ao vivo" dos outros.
+    effect(() => {
+      const a = this._activity();
+      if (this._join() !== 'joined') return;
+      this.session.publishActivity(encodeActivity(a));
+    });
     void clipServer().then((c) => this._clipServer.set(c));
     // Gravação contínua para clipes: segue a tela em foco (e o som dela) enquanto estiver ligada.
     effect(() => {
@@ -349,6 +359,22 @@ export class RoomStore {
 
   focusShare(id: string) {
     this.session.focusShare(id);
+  }
+
+  startPreview(id: string, el: HTMLMediaElement) {
+    return this.session.startPreview(id, el);
+  }
+  stopPreview(id: string, el: HTMLMediaElement) {
+    this.session.stopPreview(id, el);
+  }
+
+  /** Nome do que estou transmitindo (jogo, programa). Vazio tira o nome. */
+  setActivityName(name: string) {
+    const a = this._activity();
+    if (a === null) return;
+    const n = cleanName(name);
+    rememberActivity(n);
+    this._activity.set({ ...a, name: n });
   }
   async unlockAudio() {
     await this.session.unlockAudio();
@@ -532,6 +558,7 @@ export class RoomStore {
     this.uploadGuard = r.upload;
     this._encoder.set({ codec: r.codec, gpu: r.gpu });
     this._liveSignature.set(this.prefs.signature());
+    this._activity.set({ surface: (r.surface ?? '') as Surface, name: nameFromLabel(r.label) });
     this._soundProblem.set(
       r.audio === 'refused' ? 'refused' : r.audio === 'published' && r.surface === 'monitor' ? 'whole-pc' : null,
     );
@@ -573,6 +600,7 @@ export class RoomStore {
     this._upload.set(null);
     this._load.set(null);
     this._encoder.set(null);
+    this._activity.set(null);
     if (this._liveSignature() === null && this.watch === null) return;
     this.watch?.stop();
     this.watch = null;

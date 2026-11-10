@@ -20,6 +20,9 @@ import { ObsPanel } from './obs-panel';
 import { DawPanel } from './daw-panel';
 import { CamPip } from './cam-pip';
 import { ClipItem } from '../core/clips';
+import { LiveStrip } from './live-strip';
+import { PixelIcon } from './pixel-icon';
+import { activityLine } from '../core/activity';
 
 type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
 
@@ -32,7 +35,7 @@ function timecode(ms: number): string {
 
 @Component({
   selector: 'cen-room-screen',
-  imports: [Icon, Stage, ShareTile, VolumeSlider, StatsPanel, PeoplePanel, StreamPanel, DevicesPanel, DawPanel, ObsPanel, CamPip],
+  imports: [Icon, Stage, ShareTile, VolumeSlider, StatsPanel, PeoplePanel, StreamPanel, DevicesPanel, DawPanel, ObsPanel, CamPip, LiveStrip, PixelIcon],
   host: {
     '(document:fullscreenchange)': 'isFullscreen.set(fullscreenActive())',
     '(document:keydown.escape)': 'closeAll()',
@@ -59,6 +62,9 @@ function timecode(ms: number): string {
           <div class="now" [class.mine]="f.isLocal">
             <span class="onair mono">{{ f.isLocal ? 'enviando' : 'no ar' }}</span>
             <strong>{{ shareTitle() }}</strong>
+            @if (focusedActivity(); as a) {
+              <span class="activity" [title]="'Transmitindo: ' + a"><cen-pixel [name]="focusedIcon()" [size]="11" />{{ a }}</span>
+            }
             @if (stage()?.measured(); as m) { <span class="tag mono">{{ m }}</span> }
             @if (senderNote(); as n) { <span class="tag warn sender-note" [title]="n.title">{{ n.text }}</span> }
             @if (f.hasAudio) { <span class="tag">com som</span> }
@@ -101,26 +107,43 @@ function timecode(ms: number): string {
         </div>
         }
         <div class="diag-wrap">
-          <button type="button" class="btn small" [class.on]="diagOpen()" [class.alert]="store.diag.unseen() > 0"
-            title="Diário: por que a tela travou" (click)="toggleDiag()">
+          <!-- Tecla do diagnóstico: afunda com o LED aceso quando a chave está ligada; o clique só abre o menu. -->
+          <button type="button" class="btn small" [class.on]="prefs.diagOn()" [class.alert]="prefs.diagOn() && store.diag.unseen() > 0"
+            [title]="prefs.diagOn() ? 'Diagnóstico ligado: por que a tela travou' : 'Diagnóstico (desligado)'"
+            aria-haspopup="dialog" [attr.aria-expanded]="diagOpen()" (click)="toggleDiag()">
             <cen-icon name="pulse" [size]="15" />
-            @if (store.diag.unseen() > 0) { <span class="mono">{{ store.diag.unseen() }}</span> }
+            @if (prefs.diagOn() && store.diag.unseen() > 0) { <span class="mono">{{ store.diag.unseen() }}</span> }
           </button>
           @if (diagOpen()) {
-            <div class="diag panel-surface" role="dialog" aria-label="Diário de travadas">
+            <div class="diag panel-surface" role="dialog" aria-label="Diagnóstico">
               <div class="pop-head">
-                <span class="label">diário de travadas</span>
+                <span class="label">diagnóstico</span>
                 <button class="close" title="Fechar" (click)="diagOpen.set(false)"><cen-icon name="close" [size]="15" /></button>
               </div>
-              @for (e of store.diag.events(); track e.id) {
-                <div class="ev" [attr.data-cause]="e.cause">
-                  <span class="when mono">{{ clockAt(e.at) }}</span>
-                  <span class="what"><span class="cause">{{ causeLabel(e.cause) }}</span>@if (e.count > 1) { <span class="mono times">×{{ e.count }}</span> }<br />{{ e.text }}</span>
+              <label class="switch">
+                <input type="checkbox" role="switch" [checked]="prefs.diagOn()" (change)="setDiag(!prefs.diagOn())" />
+                <span>Avisar quando a tela travar</span>
+              </label>
+              <p class="hint">Mostra na tela o motivo de cada travada e guarda o diário abaixo.</p>
+              <label class="switch">
+                <input type="checkbox" role="switch" [checked]="prefs.showStats()" (change)="prefs.setShowStats(!prefs.showStats())" />
+                <span>Números ao vivo</span>
+              </label>
+              <p class="hint">Bitrate, fps, perda e quadros descartados no canto da tela.</p>
+              @if (prefs.diagOn()) {
+                <div class="log">
+                  <p class="label">diário de travadas</p>
+                  @for (e of store.diag.events(); track e.id) {
+                    <div class="ev" [attr.data-cause]="e.cause">
+                      <span class="when mono">{{ clockAt(e.at) }}</span>
+                      <span class="what"><span class="cause">{{ causeLabel(e.cause) }}</span>@if (e.count > 1) { <span class="mono times">×{{ e.count }}</span> }<br />{{ e.text }}</span>
+                    </div>
+                  } @empty {
+                    <p class="hint">Nenhuma travada na tela que você está vendo. Quando travar, aparece aqui o motivo provável.</p>
+                  }
+                  <p class="hint">Os registros também vão para o servidor (só apelidos e números), para a gente ver o que mais acontece e corrigir.</p>
                 </div>
-              } @empty {
-                <p class="hint">Nenhuma travada na tela que você está vendo. Quando travar, aparece aqui o motivo provável.</p>
               }
-              <p class="hint">Os registros também vão para o servidor (só apelidos e números), para a gente ver o que mais acontece e corrigir.</p>
             </div>
           }
         </div>
@@ -128,7 +151,7 @@ function timecode(ms: number): string {
           <cen-icon name="people" [size]="15" /> <span class="mono">{{ store.participants().length }}</span>
         </button>
         @if (!callRoom) {
-          <button type="button" class="btn small" title="Copiar o convite" (click)="copyInvite()"><cen-icon name="link" [size]="15" /> <span class="wide-only">convidar</span></button>
+          <button type="button" class="btn small invite-top" title="Copiar o convite" (click)="copyInvite()"><cen-icon name="link" [size]="15" /> <span class="wide-only">convidar</span></button>
         }
       </header>
 
@@ -169,8 +192,10 @@ function timecode(ms: number): string {
           <cen-stage (click)="clickFocused()" (contextmenu)="openVolume($event, f)" />
           <div class="viewfinder" aria-hidden="true"></div>
           @if (f.cam !== null) { <cen-cam-pip [share]="f" [source]="stage()?.source() ?? noSize" /> }
+          <!-- Quem está com a tela aberta: clicar troca o foco, mouse em cima mostra a prévia. -->
+          <cen-live-strip />
           @if (freshIssue(); as e) {
-            <button type="button" class="issue" [attr.data-cause]="e.cause" (click)="openDiag()" title="Abrir o diário de travadas">
+            <button type="button" class="issue" [attr.data-cause]="e.cause" (click)="openDiag()" title="Abrir o diagnóstico">
               <span class="cause">{{ causeLabel(e.cause) }}</span> {{ e.text }}
             </button>
           }
@@ -250,7 +275,7 @@ function timecode(ms: number): string {
         <cen-stats-panel />
         @if (volumeMenu(); as m) {
           <div class="menu-backdrop" (click)="volumeMenu.set(null)" (contextmenu)="$event.preventDefault(); volumeMenu.set(null)"></div>
-          <div class="volume-menu panel-surface" [style.left.px]="m.x" [style.top.px]="m.y" (click)="$event.stopPropagation()">
+          <div class="volume-menu panel-surface" animate.leave="menu-out" [style.left.px]="m.x" [style.top.px]="m.y" (click)="$event.stopPropagation()">
             <p class="label">volume · {{ m.name }}</p>
             @if (shareById(m.id); as sh) {
               <cen-volume [volume]="sh.volume" [label]="'som da tela de ' + m.name"
@@ -358,7 +383,7 @@ function timecode(ms: number): string {
         </div>
 
         @if (menu(); as m) {
-          <div class="pop panel-surface" [class.wide]="m === 'screen'" role="dialog" [attr.aria-label]="menuTitle(m)">
+          <div class="pop panel-surface" animate.leave="pop-out" [class.wide]="m === 'screen'" role="dialog" [attr.aria-label]="menuTitle(m)">
             <div class="pop-head">
               <span class="label">{{ menuTitle(m) }}</span>
               <button class="close" title="Fechar" (click)="menu.set(null)"><cen-icon name="close" [size]="15" /></button>
@@ -375,7 +400,7 @@ function timecode(ms: number): string {
       </footer>
 
       @if (peopleOpen()) {
-        <aside class="panel panel-surface" aria-label="Pessoas">
+        <aside class="panel panel-surface" aria-label="Pessoas" animate.leave="panel-out">
           <div class="people-head">
             <img class="pixel" src="logo.svg" alt="" width="20" height="20" />
             <h2>Pessoas</h2>
@@ -390,7 +415,7 @@ function timecode(ms: number): string {
   `,
   styles: `
     :host { display: block; height: 100dvh; overflow: hidden; }
-    .room { position: relative; display: flex; flex-direction: column; height: 100%; }
+    .room { position: relative; display: flex; flex-direction: column; height: 100%; animation: crt-on 560ms var(--ease) both; }
     /* Desligar: a sala apaga como uma TV de tubo (vira uma linha, depois um ponto). */
     .room.off { animation: crt-off 420ms steps(7) forwards; pointer-events: none; }
 
@@ -420,16 +445,24 @@ function timecode(ms: number): string {
     .onair { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.14em; color: #fff; background: var(--danger);
       padding: 2px 6px; border-radius: 1px; }
     .now.mine .onair { background: var(--accent); }
+    /* O que está passando, como o jogo ao lado do nome no Discord. */
+    .activity { display: inline-flex; align-items: center; gap: 0.35rem; max-width: 16rem; overflow: hidden; text-overflow: ellipsis;
+      white-space: nowrap; font: 500 0.74rem/1.2 var(--mono); color: var(--accent-hi); }
     .diag-wrap { position: relative; }
     .btn.alert { color: var(--warn); }
     .diag { position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; width: min(380px, calc(100vw - 1.5rem));
-      max-height: 60dvh; overflow-y: auto; padding: 0.7rem 0.9rem 0.8rem; animation: unfold-down 140ms linear both; }
+      max-height: 60dvh; overflow-y: auto; padding: 0.7rem 0.9rem 0.8rem; animation: unfold-down 160ms steps(5) both; }
+    .diag .switch:first-of-type { margin-top: 0.4rem; }
+    .diag .switch + .hint { margin: 0.2rem 0 0 calc(30px + 0.6rem); font-size: 0.76rem; }
+    /* O diário desce como papel saindo de uma impressora quando a chave liga. */
+    .log { margin-top: 0.8rem; padding-top: 0.6rem; border-top: 1px dashed var(--line-2); animation: print 260ms steps(6) both; }
+    .log > .label { margin: 0 0 0.3rem; }
     .ev { display: grid; grid-template-columns: auto 1fr; gap: 0.6rem; padding: 0.5rem 0; border-top: 1px solid var(--line); font-size: 0.82rem; }
     .ev .when { color: var(--faint); font-size: 0.72rem; padding-top: 2px; }
     .cause { font: 500 0.62rem/1.4 var(--mono); text-transform: uppercase; letter-spacing: 0.1em; color: var(--warn); }
     [data-cause='my-net'] .cause, [data-cause='my-pc'] .cause { color: var(--accent-hi); }
     .times { color: var(--muted); font-size: 0.72rem; margin-left: 0.35rem; }
-    .issue { position: absolute; left: 1rem; bottom: 1rem; z-index: 5; max-width: min(560px, calc(100% - 2rem)); text-align: left;
+    .issue { position: absolute; left: 1rem; bottom: 5.2rem; z-index: 5; max-width: min(560px, calc(100% - 2rem)); text-align: left;
       padding: 0.45rem 0.7rem; border: 1px solid #0b0b0c; border-left: 3px solid var(--warn); border-radius: 2px;
       background: rgb(16 16 17 / 0.9); color: var(--text); font-size: 0.8rem; cursor: pointer; animation: slide-in 160ms linear both; }
     .issue[data-cause='my-net'], .issue[data-cause='my-pc'] { border-left-color: var(--accent); }
@@ -510,14 +543,34 @@ function timecode(ms: number): string {
     .split { display: inline-flex; }
     .split > .btn:first-child { border-top-right-radius: 0; border-bottom-right-radius: 0; }
     .caret { width: 20px; padding: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; border-left: 0; color: var(--muted); }
-    .caret cen-icon { transform: rotate(180deg); transition: transform 180ms var(--ease); }
+    .caret cen-icon { transform: rotate(180deg); transition: transform 160ms steps(3); }
     .split.open .caret { color: var(--accent-hi); }
     .split.open .caret cen-icon { transform: none; }
     .sep { width: 2px; height: 26px; margin: 0 0.2rem; border-left: 1px solid #0b0b0c; border-right: 1px solid rgb(255 255 255 / 0.06); }
     .hangup { width: 52px; }
     .pop { position: absolute; bottom: calc(100% + 8px); left: 50%; translate: -50% 0; z-index: 20;
       width: min(320px, calc(100vw - 1.5rem)); max-height: calc(100dvh - 9.5rem); overflow-y: auto;
-      padding: 0.7rem 0.9rem 0.9rem; animation: unfold-up 180ms steps(5) both; }
+      padding: 0.7rem 0.9rem 0.9rem; animation: pop-open 260ms steps(6) both; transform-origin: 50% 100%; }
+    /* Menu da dock abrindo: a chapa sobe da tecla em degraus, clareia como tubo esquentando, e o conteúdo assenta depois. */
+    .pop > * { animation: develop 220ms var(--ease) 140ms both; }
+    .pop.pop-out { animation: pop-close 160ms steps(4) both; }
+    .pop.pop-out > * { animation: none; }
+    @keyframes pop-open {
+      0% { clip-path: inset(calc(100% - 4px) 42% 0 42%); filter: brightness(2); }
+      45% { clip-path: inset(calc(100% - 4px) 0 0 0); filter: brightness(1.6); }
+      100% { clip-path: inset(0 0 0 0); filter: none; }
+    }
+    @keyframes pop-close {
+      0% { clip-path: inset(0 0 0 0); }
+      60% { clip-path: inset(calc(100% - 4px) 0 0 0); filter: brightness(1.6); }
+      100% { clip-path: inset(calc(100% - 4px) 45% 0 45%); opacity: 0; }
+    }
+    .panel.panel-out { animation: panel-close 200ms steps(5) both; }
+    @keyframes panel-close { to { transform: translateX(14px); clip-path: inset(0 0 0 100%); } }
+    .volume-menu.menu-out { animation: win-zoom 120ms steps(3) reverse both; }
+    /* Convidar no alto: o elo do link dá uma balançada. */
+    .invite-top:hover cen-icon { animation: link-wiggle 420ms steps(3) both; }
+    @keyframes link-wiggle { 33% { transform: rotate(-25deg); } 66% { transform: rotate(15deg); } }
     .pop.wide { width: min(400px, calc(100vw - 1.5rem)); }
     .pop-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.3rem; }
     .pop-head .label { margin: 0; }
@@ -562,11 +615,15 @@ function timecode(ms: number): string {
     .ribbon i:nth-child(3) { background: #e2a12e; animation-delay: 120ms; } .ribbon i:nth-child(4) { background: #b8b3a6; animation-delay: 180ms; }
     .ribbon i:nth-child(5) { background: #6c685e; animation-delay: 240ms; }
     .people-head h2 { flex: 1; margin: 0; font-size: 1.3rem; line-height: 1; }
+    @media (max-width: 640px) { .diag { position: fixed; left: 0.5rem; right: 0.5rem; width: auto; top: 3.4rem; } }
     @media (max-width: 640px) { .now { border-left: 0; padding-left: 0; } .roomname { max-width: 8rem; } .kind { display: none; } }
 
     /* ================= celular ================= */
     /* Toque não tem "passar o mouse": os botões do canto aparecem com um toque na tela e somem sozinhos. */
     .mobile .stage-area.controls .corner, .mobile .stage-area.controls .viewfinder { opacity: 1; transform: none; }
+    /* Fotos de quem transmite: no celular só aparecem junto com os botões (um toque na tela). */
+    .mobile cen-live-strip { opacity: 0; visibility: hidden; transition: opacity 200ms, visibility 0s 200ms; }
+    .mobile .stage-area.controls cen-live-strip { opacity: 1; visibility: visible; transition: opacity 200ms; }
     .mobile .stage-area:hover .viewfinder, .mobile .stage-area:hover .corner { opacity: 0; }
     .mobile .stage-area.controls:hover .corner, .mobile .stage-area.controls:hover .viewfinder { opacity: 1; }
     .mobile .corner { top: 0.7rem; right: 0.7rem; gap: 0.45rem; }
@@ -595,6 +652,8 @@ function timecode(ms: number): string {
       bottom: calc(4.6rem + env(safe-area-inset-bottom)); padding: 0.9rem 1rem; }
     .mobile .check-row { padding: 0.75rem 0.5rem; }
     .mobile .close { padding: 10px; }
+    .mobile .diag { position: fixed; left: 0.5rem; right: 0.5rem; width: auto; top: calc(3.2rem + env(safe-area-inset-top)); max-height: 70dvh; }
+    .mobile .diag .switch { padding: 0.35rem 0; }
     .mobile .tray { top: 0.5rem; }
     .mobile .tray .btn { height: 36px; }
     .mobile .empty { place-items: start center; }
@@ -616,8 +675,9 @@ export class RoomScreen {
   protected readonly dawPlaying = computed(() => this.store.studio.streams().some((s) => s.source === 'daw'));
   protected readonly obsLive = computed(() => this.store.shares().some((s) => s.obs));
   protected readonly diagOpen = signal(false);
-  /** A travada mais recente, por 8 s, numa faixa sobre a tela. */
+  /** A travada mais recente, por 8 s, numa faixa sobre a tela. Só com a chave do diagnóstico ligada. */
   protected readonly freshIssue = computed(() => {
+    if (!this.prefs.diagOn()) return null;
     const e = this.store.diag.events()[0];
     return e !== undefined && this.now() - e.at < 8000 ? e : null;
   });
@@ -697,6 +757,16 @@ export class RoomScreen {
     const what = f.kind === 'camera' ? 'câmera' : 'tela';
     return f.isIngress ? f.ownerName : f.isLocal ? `Sua ${what}` : `${what} de ${f.ownerName}`;
   });
+  protected readonly focusedActivity = computed(() => {
+    const f = this.store.focused();
+    // Câmera já está dita no título; o nome do OBS também.
+    if (f === null || f.activity.surface === 'camera' || f.activity.surface === 'obs') return '';
+    return activityLine(f.activity);
+  });
+  protected readonly focusedIcon = computed(() => {
+    const s = this.store.focused()?.activity.surface;
+    return s === 'window' ? 'window' : s === 'browser' ? 'tab' : 'monitor';
+  });
   protected readonly shareTitle2 = computed(() =>
     this.canShare
       ? this.store.sharing()
@@ -751,6 +821,12 @@ export class RoomScreen {
 
   openDiag() {
     this.diagOpen.set(true);
+    this.store.diag.markSeen();
+  }
+
+  /** A chave do diagnóstico. Ligar não acusa as travadas de antes como novas. */
+  setDiag(on: boolean) {
+    this.prefs.setDiagOn(on);
     this.store.diag.markSeen();
   }
 
@@ -816,10 +892,11 @@ export class RoomScreen {
     this.volumeMenu.set(null);
   }
 
-  /** Clique fora do submenu da barra fecha o submenu. */
+  /** Clique fora do submenu da barra (ou do menu do diagnóstico) fecha o menu. */
   outside(e: PointerEvent) {
-    if (this.menu() === null) return;
     const el = e.target instanceof Element ? e.target : null;
+    if (this.diagOpen() && el?.closest('.diag-wrap, .issue') == null) this.diagOpen.set(false);
+    if (this.menu() === null) return;
     if (el?.closest('.pop, .caret, [aria-label="Plugin de DAW"]') == null) this.menu.set(null);
   }
 
