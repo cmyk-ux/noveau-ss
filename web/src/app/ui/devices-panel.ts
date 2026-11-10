@@ -1,12 +1,14 @@
 import { Component, effect, inject, input } from '@angular/core';
 import { Invites } from '../core/invites';
+import { IS_MOBILE } from '../core/device';
 import { RoomStore } from '../core/room-store';
 import { Icon } from './icon';
+import { PhoneLinkPanel } from './phone-link';
 
 /** Microfone, câmera do computador e câmera externa por RTMP. */
 @Component({
   selector: 'cen-devices-panel',
-  imports: [Icon],
+  imports: [Icon, PhoneLinkPanel],
   template: `
     @if (section() !== 'camera') {
     @if (section() === 'all') { <p class="label">microfone</p> }
@@ -21,10 +23,14 @@ import { Icon } from './icon';
         </button>
       }
     }
+    @if (section() === 'mic' && store.canPublish()) {
+      <p class="label">celular como microfone</p>
+      <cen-phone-link />
+    }
     }
 
     @if (section() !== 'mic' && store.canPublish()) {
-      @if (section() === 'all') { <p class="label">câmera</p> }
+      <p class="label">câmera {{ isPhoneDevice ? 'deste aparelho' : 'do pc' }}</p>
       @if (store.webcams.devices().length === 0) {
         <p class="hint">Nenhuma câmera neste aparelho.</p>
       } @else {
@@ -38,9 +44,14 @@ import { Icon } from './icon';
         @if (store.webcams.devices()[0].label === '') {
           <p class="hint">Ligue uma vez e o navegador mostra qual câmera é qual.</p>
         }
-        <button class="btn wide" [disabled]="store.busy()" (click)="store.toggleWebcam()">
-          {{ store.webcamOn() ? 'Desligar a câmera' : 'Ligar a câmera' }}
+        <button class="btn wide" [disabled]="store.busy()" (click)="togglePcCam()">
+          {{ store.pcCamOn() ? 'Desligar a câmera' : 'Ligar a câmera' }}
         </button>
+        <p class="hint">Vai em até 1080p a 30 fps, junto com a sua tela se você estiver compartilhando.</p>
+      }
+      @if (!isPhoneDevice) {
+        <p class="label">celular como câmera</p>
+        <cen-phone-link />
       }
 
       @if (store.cameraOffered()) {
@@ -101,8 +112,15 @@ export class DevicesPanel {
     void this.store.switchMicrophone(id).then(() => this.store.microphones.refresh());
   }
 
+  /** No celular (participante comum) não faz sentido ligar outro celular como câmera. */
+  protected readonly isPhoneDevice = IS_MOBILE;
+
+  togglePcCam() {
+    void this.store.toggleWebcam(undefined, 'pc');
+  }
+
   pickCamera(id: string) {
-    const step = this.store.webcamOn() ? this.store.switchWebcam(id) : this.store.toggleWebcam(id);
+    const step = this.store.pcCamOn() ? this.store.switchWebcam(id) : this.store.toggleWebcam(id);
     void step.then(() => this.store.webcams.refresh());
   }
 }

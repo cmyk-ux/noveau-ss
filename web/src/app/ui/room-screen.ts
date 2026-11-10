@@ -18,6 +18,7 @@ import { StatsPanel } from './stats-panel';
 import { StreamPanel } from './stream-panel';
 import { ObsPanel } from './obs-panel';
 import { DawPanel } from './daw-panel';
+import { CamPip } from './cam-pip';
 import { ClipItem } from '../core/clips';
 import { LiveStrip } from './live-strip';
 import { PixelIcon } from './pixel-icon';
@@ -34,7 +35,7 @@ function timecode(ms: number): string {
 
 @Component({
   selector: 'cen-room-screen',
-  imports: [Icon, Stage, ShareTile, VolumeSlider, StatsPanel, PeoplePanel, StreamPanel, DevicesPanel, DawPanel, ObsPanel, LiveStrip, PixelIcon],
+  imports: [Icon, Stage, ShareTile, VolumeSlider, StatsPanel, PeoplePanel, StreamPanel, DevicesPanel, DawPanel, ObsPanel, CamPip, LiveStrip, PixelIcon],
   host: {
     '(document:fullscreenchange)': 'isFullscreen.set(fullscreenActive())',
     '(document:keydown.escape)': 'closeAll()',
@@ -190,6 +191,7 @@ function timecode(ms: number): string {
         @if (store.focused(); as f) {
           <cen-stage (click)="clickFocused()" (contextmenu)="openVolume($event, f)" />
           <div class="viewfinder" aria-hidden="true"></div>
+          @if (f.cam !== null) { <cen-cam-pip [share]="f" [source]="stage()?.source() ?? noSize" /> }
           <!-- Quem está com a tela aberta: clicar troca o foco, mouse em cima mostra a prévia. -->
           <cen-live-strip />
           @if (freshIssue(); as e) {
@@ -701,6 +703,7 @@ export class RoomScreen {
   });
   protected readonly isFullscreen = signal(false);
   protected readonly stage = viewChild(Stage);
+  protected readonly noSize = { width: 0, height: 0 };
   protected readonly volumeMenu = signal<{ id: string; name: string; x: number; y: number } | null>(null);
   /** Colunas da grade: 2 telas lado a lado, 3-4 em 2x2, 5+ em 3 colunas. */
   protected readonly gridCols = computed(() => {

@@ -29,6 +29,7 @@ const discord = await import('./discord.mjs');
 const clips = await import('./clips.mjs');
 const daw = await import('./daw.mjs');
 const { createObs, ObsError } = await import('./obs.mjs');
+const { createPhone, PhoneError } = await import('./phone.mjs');
 
 const PORT = Number(process.env.PORT ?? 3001);
 const API_KEY = process.env.LIVEKIT_API_KEY ?? 'devkey';
@@ -244,6 +245,7 @@ const routes = {
     clips: clips.clipsEnabled ? { ttlMs: clips.CLIP_TTL_MS } : null,
     daw: true,
     obs: true,
+    phone: true,
   }),
   'GET /api/me': (req) => discord.me(req),
   'POST /api/discord/token': (req, body) => discordToken(req, body),
@@ -273,8 +275,8 @@ async function kickFromCallRoom(userId, channelId) {
   const room = discord.roomForChannel(channelId);
   try {
     for (const p of await rooms.listParticipants(room)) {
-      // A transmissão do OBS dessa pessoa sai junto (se ela entrar em outra call, o OBS reconecta lá).
-      if (p.attributes?.discordId === userId || p.attributes?.obsOf === userId) {
+      // A transmissão do OBS e o celular-câmera dessa pessoa saem junto (o OBS reconecta na call nova).
+      if (p.attributes?.discordId === userId || p.attributes?.obsOf === userId || p.attributes?.phoneOfDiscord === userId) {
         await rooms.removeParticipant(room, p.identity);
         console.log(`[discord] ${p.name} saiu da call, removido da sala dela`);
       }
@@ -411,6 +413,10 @@ const obs = createObs({
   verifyRoomToken: (jwt) => verifier.verify(jwt),
 });
 
+// ---------- Celular como câmera/microfone (veja phone.mjs)
+const phone = createPhone({ AccessToken, TrackSource, apiKey: API_KEY, apiSecret: API_SECRET, rooms, verifyRoomToken: (jwt) => verifier.verify(jwt), publicUrl });
+Object.assign(routes, phone.routes);
+
 const server = createServer(async (req, res) => {
   const path = new URL(req.url, 'http://x').pathname;
   if (await obs.route(req, res, path)) return;
@@ -428,7 +434,7 @@ const server = createServer(async (req, res) => {
     const body = req.method === 'POST' ? await readJson(req) : {};
     send(res, 200, await route(req, body));
   } catch (e) {
-    const known = e instanceof HttpError || e instanceof discord.DiscordError || e instanceof daw.DawError || e instanceof ObsError;
+    const known = e instanceof HttpError || e instanceof discord.DiscordError || e instanceof daw.DawError || e instanceof ObsError || e instanceof PhoneError;
     const status = known ? e.status : 500;
     if (status === 500) console.error(e);
     send(res, status, { error: known ? e.message : 'Erro no servidor.' });

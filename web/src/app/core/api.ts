@@ -123,3 +123,43 @@ export async function requestObsKey(roomToken: string): Promise<ObsKey> {
   if (!res.ok || typeof body.token !== 'string') throw new Error(body.error ?? `Erro ${res.status} ao pegar a chave do OBS.`);
   return body as ObsKey;
 }
+
+// ---------- Celular como câmera/microfone (veja server/phone.mjs)
+export interface PhoneLink {
+  state: 'none' | 'waiting' | 'claimed';
+  code?: string;
+  expiresAt?: number;
+  phoneIdentity?: string | null;
+}
+
+async function withRoomToken<T>(method: 'GET' | 'POST', path: string, roomToken: string, body: unknown, fallback: string): Promise<T> {
+  const res = await fetch(path, {
+    method,
+    cache: 'no-store',
+    headers: { authorization: `Bearer ${roomToken}`, ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error ?? fallback);
+  return data as T;
+}
+
+export function phoneLinkStatus(roomToken: string): Promise<PhoneLink> {
+  return withRoomToken('GET', '/api/phone/link', roomToken, undefined, 'Não foi possível ver o celular.');
+}
+
+export function createPhoneLink(roomToken: string): Promise<PhoneLink> {
+  return withRoomToken('POST', '/api/phone/link', roomToken, {}, 'Não foi possível gerar o link do celular.');
+}
+
+export function disconnectPhone(roomToken: string): Promise<{ ok: boolean }> {
+  return withRoomToken('POST', '/api/phone/disconnect', roomToken, {}, 'Não foi possível desconectar o celular.');
+}
+
+export function controlPhone(roomToken: string, what: { cam?: boolean; mic?: boolean }): Promise<{ ok: boolean }> {
+  return withRoomToken('POST', '/api/phone/control', roomToken, what, 'O celular não respondeu.');
+}
+
+export function requestPhoneToken(code: string, holder: string): Promise<{ token: string; url: string; name: string; identity: string }> {
+  return post('/api/phone/token', { code, holder }, 'Não foi possível conectar o celular.');
+}
