@@ -42,15 +42,33 @@ noveau.riajuu.net isso já acontece. Rodando local, use o endereço do Tailscale
 - Câmera do PC: 1080p a 30 fps em VP8, até 4 Mbps, com cópia em 360p. Antes era 720p a 1,7 Mbps.
 - Microfone do celular: Opus 128 kbps, sem DTX, com RED (resiste a perda de pacote).
 
-## Câmera na grade e retorno
+## Câmeras: onde fica cada botão
 
-- Na grade (várias telas ao mesmo tempo), a câmera de quem transmite tela e câmera aparece num
-  canto de cada monitor, na cópia de 360p. O **×** dela esconde a câmera e o servidor para de
-  mandar o vídeo (nada é baixado nem decodificado); o botão com a câmera traz de volta. Clicar na
-  câmera abre a tela em foco com a câmera grande. Esconder vale também para a janelinha em foco.
-- Com a sua câmera ligada (do PC ou do celular), um monitorzinho **você** no canto de cima mostra a
-  sua imagem: uma cópia de 360p a 15 fps, só para você. **Parar de ver** desliga a cópia de verdade e
-  fica guardado neste navegador; quem assiste continua recebendo normal.
+**A câmera de outra pessoa** tem uma tecla só, a de câmera (com LED). Ela liga e desliga a câmera
+e fica sempre no mesmo lugar:
+
+- Na grade (várias telas ao mesmo tempo), no canto de cima de cada monitor, ao lado do contador de
+  quem assiste. Ligada, a câmera aparece logo abaixo, no formato dela, na cópia de 360p.
+- Com uma tela em foco, na barra de botões do palco (aparece com o mouse em cima; no celular, com um toque).
+
+Desligada, o servidor para de mandar o vídeo, e nada é baixado nem decodificado. Vale para a grade e
+para o foco ao mesmo tempo. Clicar na câmera da grade abre a tela em foco com a câmera grande. Na
+janelinha em foco, clicar troca a câmera com a tela.
+
+**A sua câmera** aparece no monitorzinho **você**, no canto de cima à esquerda:
+
+- No formato real da câmera (4:3, 16:9, celular em pé), sem cortar.
+- Puxe o canto com as listrinhas para aumentar. Clique para ver em tela cheia, e clique de novo (ou
+  Esc) para voltar.
+- A cópia acompanha o tamanho: pequena em 360p a 15 fps, maior em 720p a 30 fps e, em tela cheia,
+  na resolução da câmera. Quem assiste recebe sempre a original.
+- **Parar de ver** desliga a cópia de verdade e fica guardado neste navegador. A tecla **você**
+  traz de volta.
+
+**A sua tela** fica fora do palco por padrão, porque mostrar a própria tela grande pesa no PC de
+quem transmite. Para ver: tecla **prévia** da barra (cópia de 360p) → **ver grande no palco**, ou
+**Ver minha tela aqui** quando ninguém mais está transmitindo. No palco ela é uma cópia de 720p a
+30 fps. O olho riscado tira ela do palco de novo. Ao recarregar a página, volta a ficar desligada.
 
 ## Como funciona por dentro
 

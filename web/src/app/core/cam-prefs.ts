@@ -39,6 +39,7 @@ function parseBox(raw: string): PipBox | null {
 export class CamPrefs {
   private readonly _device = signal(read('noveau:cam-device', (r) => r, ''));
   private readonly _pip = signal(read('noveau:cam-pip', parseBox, DEFAULT_PIP));
+  private readonly _selfWidth = signal(read('noveau:cam-self-w', (r) => (Number.isFinite(+r) && +r >= 80 ? +r : null), 176));
   private readonly _selfView = signal(read('noveau:cam-self', (r) => r !== '0', true));
 
   /** Câmera do PC escolhida da última vez ('' = a padrão). */
@@ -50,6 +51,13 @@ export class CamPrefs {
   setDevice(id: string) {
     write('noveau:cam-device', id);
     this._device.set(id);
+  }
+
+  /** Largura do retorno da câmera, em pixels (você puxa o canto). */
+  readonly selfWidth = this._selfWidth.asReadonly();
+  setSelfWidth(w: number) {
+    write('noveau:cam-self-w', String(Math.round(w)));
+    this._selfWidth.set(w);
   }
 
   setSelfView(on: boolean) {

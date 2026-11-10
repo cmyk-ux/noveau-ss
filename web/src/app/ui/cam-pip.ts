@@ -13,7 +13,6 @@ import {
 import { CamPrefs, PipBox } from '../core/cam-prefs';
 import { ShareView } from '../core/room-session';
 import { RoomStore } from '../core/room-store';
-import { Icon } from './icon';
 
 const MIN_W = 112;
 const DRAG_SLOP = 4;
@@ -27,34 +26,22 @@ interface Rect {
 
 /**
  * Câmera junto da tela, como picture-in-picture dentro do quadro da tela.
+ * - Esconder/mostrar: a tecla de câmera na barra do palco (o mesmo lugar sempre).
  * - Clique: troca quem fica grande (a câmera vai para trás, a tela vira a janelinha).
  * - Arrastar: muda de lugar. Puxar o canto com as listrinhas: muda o tamanho, sem perder a proporção.
  * - Posição e tamanho ficam guardados neste navegador; valem só para você.
  */
 @Component({
   selector: 'cen-cam-pip',
-  imports: [Icon],
+  imports: [],
   host: {
-    '[class.closed]': 'closed()',
     '[class.dragging]': 'dragging()',
-    '[style.left.px]': 'closed() ? null : box().x',
-    '[style.top.px]': 'closed() ? null : box().y',
-    '[style.width.px]': 'closed() ? null : box().w',
-    '[style.height.px]': 'closed() ? null : box().h',
-    '[style.right.px]': 'closed() ? chipAt().right : null',
-    '[style.bottom.px]': 'closed() ? chipAt().bottom : null',
+    '[style.left.px]': 'box().x',
+    '[style.top.px]': 'box().y',
+    '[style.width.px]': 'box().w',
+    '[style.height.px]': 'box().h',
   },
   template: `
-    @if (closed()) {
-      <button
-        type="button"
-        class="btn small chip-open"
-        [title]="'Mostrar de novo a ' + otherLabel()"
-        (click)="reopen()"
-      >
-        <cen-icon name="camera" [size]="14" /> {{ otherLabel() }}
-      </button>
-    } @else {
       <div
         class="win"
         [class.tuning]="tuning()"
@@ -101,15 +88,6 @@ interface Rect {
               <path d="M4 8h13l-3.5-3.5M20 16H7l3.5 3.5" />
             </svg>
           </button>
-          <button
-            type="button"
-            class="key"
-            title="Fechar a janelinha (para de baixar este vídeo)"
-            (pointerdown)="$event.stopPropagation()"
-            (click)="close()"
-          >
-            <cen-icon name="close" [size]="12" />
-          </button>
         </div>
         <span
           class="grip"
@@ -121,7 +99,6 @@ interface Rect {
           (pointercancel)="onCancel($event)"
         ></span>
       </div>
-    }
   `,
   styles: `
     :host {
@@ -129,10 +106,6 @@ interface Rect {
       z-index: 4;
       display: block;
       touch-action: none;
-    }
-    :host(.closed) {
-      width: auto;
-      height: auto;
     }
     /* Monitorzinho com a mesma moldura dos monitores da grade; liga como tubo de TV. */
     .win {
@@ -315,12 +288,6 @@ interface Rect {
     :host(.dragging) .grip {
       opacity: 1;
     }
-    .chip-open {
-      box-shadow:
-        var(--key-shadow),
-        0 6px 14px -8px #000;
-      animation: win-zoom 160ms steps(4) both;
-    }
     /* Toque: barra e canto sempre à vista, com área de dedo. */
     @media (hover: none) {
       .bar {
@@ -361,7 +328,6 @@ export class CamPip {
   private readonly video = viewChild<ElementRef<HTMLVideoElement>>('video');
 
   protected readonly big = this.store.focusedCamBig;
-  protected readonly closed = this.store.focusedCamClosed;
   /** O que aparece na janelinha: a câmera, ou a tela quando a câmera está grande. */
   protected readonly inside = computed(() => {
     const s = this.share();
@@ -370,7 +336,6 @@ export class CamPip {
     const what = s.cam?.fromPhone ? 'câmera do celular' : 'câmera';
     return s.isLocal ? `sua ${what}` : `${what} ${who}`;
   });
-  protected readonly otherLabel = computed(() => (this.big() ? 'tela' : 'câmera'));
   protected readonly mirror = computed(() => !this.big() && this.share().cam?.mirror === true);
 
   private readonly area = signal({ w: 0, h: 0 });
@@ -401,13 +366,6 @@ export class CamPip {
     const right = r.x + r.w / 2 < b.x + b.w / 2;
     const bottom = r.y + r.h / 2 < b.y + b.h / 2;
     return `${bottom ? 'b' : 't'}${right ? 'r' : 'l'}`;
-  });
-
-  /** Janelinha fechada: um botão no canto de baixo à direita do quadro, para abrir de novo. */
-  protected readonly chipAt = computed(() => {
-    const b = this.bounds();
-    const { w: W, h: H } = this.area();
-    return { right: Math.max(8, W - (b.x + b.w) + 10), bottom: Math.max(8, H - (b.y + b.h) + 10) };
   });
 
   private attached: { el: HTMLVideoElement; key: string } | null = null;
@@ -583,11 +541,4 @@ export class CamPip {
     this.store.setCamBig(this.share().id, !this.big());
   }
 
-  close() {
-    this.store.setCamClosed(this.share().id, true);
-  }
-
-  reopen() {
-    this.store.setCamClosed(this.share().id, false);
-  }
 }
