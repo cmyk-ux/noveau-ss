@@ -3,10 +3,11 @@
 // - Lista quem está numa call (a API REST do Discord não tem isso, só o gateway).
 // - Quando alguém sai ou troca de call, tira essa pessoa da sala do site correspondente.
 // - Marca todo mundo da call no chat do canal de voz com o link do site.
+// - Escreve no status do canal de voz quem está ao vivo no Noveau (e devolve o status de antes).
 //
 // Usa só a intent GUILD_VOICE_STATES (não privilegiada): nada para ligar no Developer Portal.
 
-import { Client, GatewayIntentBits, Events } from 'discord.js';
+import { Client, GatewayIntentBits, Events, Routes } from 'discord.js';
 
 const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN ?? '';
 const GUILD_ID = process.env.DISCORD_GUILD_ID ?? '';
@@ -33,6 +34,14 @@ export function startBot({ onLeave }) {
     if (after.guild.id !== GUILD_ID) return;
     if (before.channelId && before.channelId !== after.channelId) {
       onLeave(after.id, before.channelId);
+    }
+  });
+  // Status dos canais de voz: o discord.js não guarda, então lemos direto do gateway.
+  client.on('raw', (packet) => {
+    if (packet?.t === 'VOICE_CHANNEL_STATUS_UPDATE' && packet.d?.guild_id === GUILD_ID) {
+      voiceStatus.set(packet.d.id, packet.d.status ?? '');
+    } else if (packet?.t === 'GUILD_CREATE' && packet.d?.id === GUILD_ID) {
+      for (const ch of packet.d.channels ?? []) if (typeof ch.status === 'string') voiceStatus.set(ch.id, ch.status);
     }
   });
   client.on(Events.Error, (e) => console.error('[discord] erro no bot:', e.message));
@@ -112,6 +121,86 @@ export async function pingCall(channelId, byName, link) {
   }
   lastPing.set(channelId, Date.now());
   return people.length;
+}
+
+/** Canais para olhar: os que têm alguém dentro e os que estão com o status do bot. */
+export function channelsToWatch() {
+  const g = guild();
+  if (g === null) return [];
+  return [...new Set([...[...g.voiceStates.cache.values()].map((s) => s.channelId).filter(Boolean), ...mine.keys()])];
+}
+
+// ---------- status do canal de voz ("🔴 ao vivo no Noveau: Pedro")
+// Só um status por canal. Antes de escrever, guarda o que alguém tinha posto à mão e devolve
+// quando a transmissão acaba. Se alguém trocar o status no meio, o bot não mexe nele até a
+// transmissão acabar.
+const voiceStatus = new Map(); // canal -> status atual (pelo gateway)
+const mine = new Map(); // canal -> { wrote: status que o bot escreveu, before: status de antes, yielded: alguém trocou }
+const lastWrite = new Map();
+let warnedPermission = false;
+const MIN_WRITE_MS = 3000;
+
+async function putStatus(channelId, status) {
+  await client.rest.put(Routes.channelVoiceStatus(channelId), { body: { status } });
+  voiceStatus.set(channelId, status);
+  lastWrite.set(channelId, Date.now());
+}
+
+/**
+ * Deixa o status do canal dizendo quem está ao vivo (lista vazia = devolve o status de antes).
+ * Chamado de tempos em tempos; só fala com o Discord quando algo muda.
+ */
+export async function setLiveStatus(channelId, names) {
+  if (guild() === null) return;
+  const want = names.length === 0 ? null : liveText(names);
+  const held = mine.get(channelId);
+  const current = voiceStatus.get(channelId) ?? '';
+  // Alguém mudou o status depois do bot: respeita até essa transmissão acabar.
+  if (held !== undefined && !held.yielded && current !== held.wrote) {
+    mine.set(channelId, { ...held, yielded: true });
+    return;
+  }
+  if (held?.yielded) {
+    if (want === null) mine.delete(channelId);
+    return;
+  }
+  if (want === null) {
+    if (held === undefined) return;
+    mine.delete(channelId);
+    try {
+      await putStatus(channelId, held.before);
+    } catch (e) {
+      logStatusError(e);
+    }
+    return;
+  }
+  if (held?.wrote === want) return;
+  if (Date.now() - (lastWrite.get(channelId) ?? 0) < MIN_WRITE_MS) return;
+  try {
+    await putStatus(channelId, want);
+    mine.set(channelId, { wrote: want, before: held?.before ?? current });
+  } catch (e) {
+    // Sem permissão: tenta de novo só daqui a 1 min, para não insistir a cada volta.
+    lastWrite.set(channelId, Date.now() + (e?.status === 403 ? 60_000 : 0));
+    logStatusError(e);
+  }
+}
+
+function liveText(names) {
+  const list = names.slice(0, 6).join(', ') + (names.length > 6 ? ` e mais ${names.length - 6}` : '');
+  return `🔴 ao vivo no Noveau: ${list}`.slice(0, 500);
+}
+
+function logStatusError(e) {
+  if (e?.status === 403 || e?.code === 50013) {
+    if (warnedPermission) return;
+    warnedPermission = true;
+    console.error(
+      '[discord] o bot não pode mudar o status da call. Dê a ele "Definir status do canal de voz" e "Gerenciar canais" (veja o README).',
+    );
+    return;
+  }
+  console.error('[discord] status da call:', e?.message ?? e);
 }
 
 /** Manda uma mensagem privada (DM) do bot para alguém. */

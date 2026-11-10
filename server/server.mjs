@@ -288,6 +288,41 @@ async function kickFromCallRoom(userId, channelId) {
 }
 discord.startDiscordBot((userId, channelId) => void kickFromCallRoom(userId, channelId));
 
+/**
+ * Status da call no Discord: a cada 5 s olha as salas das calls com gente e escreve no status do
+ * canal de voz quem está transmitindo a tela (ou pelo OBS). O bot só fala com o Discord quando muda.
+ */
+function liveNames(participants) {
+  const out = [];
+  for (const p of participants) {
+    const obs = p.attributes?.obs === '1';
+    const live = p.tracks.some((t) => (obs ? t.type === 1 /* VIDEO */ : t.source === TrackSource.SCREEN_SHARE));
+    if (!live) continue;
+    const name = obs ? p.attributes?.obsName || p.name : p.name;
+    if (name && !out.includes(name)) out.push(name);
+  }
+  return out;
+}
+let liveTick = false;
+async function updateLiveStatus() {
+  if (liveTick) return;
+  liveTick = true;
+  try {
+    for (const channelId of discord.channelsToWatch()) {
+      let names = [];
+      try {
+        names = liveNames(await rooms.listParticipants(discord.roomForChannel(channelId)));
+      } catch (e) {
+        if (!/not found|does not exist/i.test(e.message ?? '')) continue; // LiveKit fora: não mexe no status
+      }
+      await discord.setLiveStatus(channelId, names);
+    }
+  } finally {
+    liveTick = false;
+  }
+}
+if (discord.discordEnabled) setInterval(() => void updateLiveStatus(), 5000);
+
 // Rotas que respondem com redirecionamento (fluxo de login do Discord).
 const redirects = {
   'GET /api/discord/login': discord.login,
