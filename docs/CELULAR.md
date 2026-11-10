@@ -42,6 +42,16 @@ noveau.riajuu.net isso já acontece. Rodando local, use o endereço do Tailscale
 - Câmera do PC: 1080p a 30 fps em VP8, até 4 Mbps, com cópia em 360p. Antes era 720p a 1,7 Mbps.
 - Microfone do celular: Opus 128 kbps, sem DTX, com RED (resiste a perda de pacote).
 
+## Câmera na grade e retorno
+
+- Na grade (várias telas ao mesmo tempo), a câmera de quem transmite tela e câmera aparece num
+  canto de cada monitor, na cópia de 360p. O **×** dela esconde a câmera e o servidor para de
+  mandar o vídeo (nada é baixado nem decodificado); o botão com a câmera traz de volta. Clicar na
+  câmera abre a tela em foco com a câmera grande. Esconder vale também para a janelinha em foco.
+- Com a sua câmera ligada (do PC ou do celular), um monitorzinho **você** no canto de cima mostra a
+  sua imagem: uma cópia de 360p a 15 fps, só para você. **Parar de ver** desliga a cópia de verdade e
+  fica guardado neste navegador; quem assiste continua recebendo normal.
+
 ## Como funciona por dentro
 
 `server/phone.mjs` guarda os links na memória. O celular entra na sala do LiveKit como outro

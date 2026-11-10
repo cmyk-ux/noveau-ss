@@ -1,5 +1,5 @@
 // Preferências da câmera, guardadas neste navegador: qual câmera do PC usar e onde fica a
-// janelinha da câmera sobre a tela (posição e tamanho que você arrastou).
+// janelinha da câmera sobre a tela (posição e tamanho que você arrastou) e se você quer se ver.
 import { Injectable, signal } from '@angular/core';
 
 /** Posição da janelinha: canto de cima à esquerda e largura, em fração do quadro da tela (0 a 1). */
@@ -39,14 +39,22 @@ function parseBox(raw: string): PipBox | null {
 export class CamPrefs {
   private readonly _device = signal(read('noveau:cam-device', (r) => r, ''));
   private readonly _pip = signal(read('noveau:cam-pip', parseBox, DEFAULT_PIP));
+  private readonly _selfView = signal(read('noveau:cam-self', (r) => r !== '0', true));
 
   /** Câmera do PC escolhida da última vez ('' = a padrão). */
   readonly device = this._device.asReadonly();
   readonly pip = this._pip.asReadonly();
+  /** Ver a própria câmera (o retorno). Desligado, a cópia nem é feita. */
+  readonly selfView = this._selfView.asReadonly();
 
   setDevice(id: string) {
     write('noveau:cam-device', id);
     this._device.set(id);
+  }
+
+  setSelfView(on: boolean) {
+    write('noveau:cam-self', on ? '1' : '0');
+    this._selfView.set(on);
   }
 
   setPip(b: PipBox) {
