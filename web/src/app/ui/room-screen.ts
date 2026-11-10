@@ -582,7 +582,7 @@ function timecode(ms: number): string {
     .ribbon i:nth-child(3) { background: #e2a12e; animation-delay: 120ms; } .ribbon i:nth-child(4) { background: #b8b3a6; animation-delay: 180ms; }
     .ribbon i:nth-child(5) { background: #6c685e; animation-delay: 240ms; }
     .people-head h2 { flex: 1; margin: 0; font-size: 1.3rem; line-height: 1; }
-    @media (max-width: 640px) { .diag { position: fixed; left: 0.5rem; right: 0.5rem; width: auto; top: 3.4rem; }
+    @media (max-width: 640px) { .diag { position: fixed; left: 0.5rem; right: 0.5rem; width: auto; top: 3.4rem; } }
     @media (max-width: 640px) { .now { border-left: 0; padding-left: 0; } .roomname { max-width: 8rem; } .kind { display: none; } }
 
     /* ================= celular ================= */
