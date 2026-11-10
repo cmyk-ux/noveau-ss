@@ -100,26 +100,43 @@ function timecode(ms: number): string {
         </div>
         }
         <div class="diag-wrap">
-          <button type="button" class="btn small" [class.on]="diagOpen()" [class.alert]="store.diag.unseen() > 0"
-            title="Diário: por que a tela travou" (click)="toggleDiag()">
+          <!-- Tecla do diagnóstico: afunda com o LED aceso quando a chave está ligada; o clique só abre o menu. -->
+          <button type="button" class="btn small" [class.on]="prefs.diagOn()" [class.alert]="prefs.diagOn() && store.diag.unseen() > 0"
+            [title]="prefs.diagOn() ? 'Diagnóstico ligado: por que a tela travou' : 'Diagnóstico (desligado)'"
+            aria-haspopup="dialog" [attr.aria-expanded]="diagOpen()" (click)="toggleDiag()">
             <cen-icon name="pulse" [size]="15" />
-            @if (store.diag.unseen() > 0) { <span class="mono">{{ store.diag.unseen() }}</span> }
+            @if (prefs.diagOn() && store.diag.unseen() > 0) { <span class="mono">{{ store.diag.unseen() }}</span> }
           </button>
           @if (diagOpen()) {
-            <div class="diag panel-surface" role="dialog" aria-label="Diário de travadas">
+            <div class="diag panel-surface" role="dialog" aria-label="Diagnóstico">
               <div class="pop-head">
-                <span class="label">diário de travadas</span>
+                <span class="label">diagnóstico</span>
                 <button class="close" title="Fechar" (click)="diagOpen.set(false)"><cen-icon name="close" [size]="15" /></button>
               </div>
-              @for (e of store.diag.events(); track e.id) {
-                <div class="ev" [attr.data-cause]="e.cause">
-                  <span class="when mono">{{ clockAt(e.at) }}</span>
-                  <span class="what"><span class="cause">{{ causeLabel(e.cause) }}</span>@if (e.count > 1) { <span class="mono times">×{{ e.count }}</span> }<br />{{ e.text }}</span>
+              <label class="switch">
+                <input type="checkbox" role="switch" [checked]="prefs.diagOn()" (change)="setDiag(!prefs.diagOn())" />
+                <span>Avisar quando a tela travar</span>
+              </label>
+              <p class="hint">Mostra na tela o motivo de cada travada e guarda o diário abaixo.</p>
+              <label class="switch">
+                <input type="checkbox" role="switch" [checked]="prefs.showStats()" (change)="prefs.setShowStats(!prefs.showStats())" />
+                <span>Números ao vivo</span>
+              </label>
+              <p class="hint">Bitrate, fps, perda e quadros descartados no canto da tela.</p>
+              @if (prefs.diagOn()) {
+                <div class="log">
+                  <p class="label">diário de travadas</p>
+                  @for (e of store.diag.events(); track e.id) {
+                    <div class="ev" [attr.data-cause]="e.cause">
+                      <span class="when mono">{{ clockAt(e.at) }}</span>
+                      <span class="what"><span class="cause">{{ causeLabel(e.cause) }}</span>@if (e.count > 1) { <span class="mono times">×{{ e.count }}</span> }<br />{{ e.text }}</span>
+                    </div>
+                  } @empty {
+                    <p class="hint">Nenhuma travada na tela que você está vendo. Quando travar, aparece aqui o motivo provável.</p>
+                  }
+                  <p class="hint">Os registros também vão para o servidor (só apelidos e números), para a gente ver o que mais acontece e corrigir.</p>
                 </div>
-              } @empty {
-                <p class="hint">Nenhuma travada na tela que você está vendo. Quando travar, aparece aqui o motivo provável.</p>
               }
-              <p class="hint">Os registros também vão para o servidor (só apelidos e números), para a gente ver o que mais acontece e corrigir.</p>
             </div>
           }
         </div>
@@ -168,7 +185,7 @@ function timecode(ms: number): string {
           <cen-stage (click)="clickFocused()" (contextmenu)="openVolume($event, f)" />
           <div class="viewfinder" aria-hidden="true"></div>
           @if (freshIssue(); as e) {
-            <button type="button" class="issue" [attr.data-cause]="e.cause" (click)="openDiag()" title="Abrir o diário de travadas">
+            <button type="button" class="issue" [attr.data-cause]="e.cause" (click)="openDiag()" title="Abrir o diagnóstico">
               <span class="cause">{{ causeLabel(e.cause) }}</span> {{ e.text }}
             </button>
           }
@@ -421,7 +438,12 @@ function timecode(ms: number): string {
     .diag-wrap { position: relative; }
     .btn.alert { color: var(--warn); }
     .diag { position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; width: min(380px, calc(100vw - 1.5rem));
-      max-height: 60dvh; overflow-y: auto; padding: 0.7rem 0.9rem 0.8rem; animation: unfold-down 140ms linear both; }
+      max-height: 60dvh; overflow-y: auto; padding: 0.7rem 0.9rem 0.8rem; animation: unfold-down 160ms steps(5) both; }
+    .diag .switch:first-of-type { margin-top: 0.4rem; }
+    .diag .switch + .hint { margin: 0.2rem 0 0 calc(30px + 0.6rem); font-size: 0.76rem; }
+    /* O diário desce como papel saindo de uma impressora quando a chave liga. */
+    .log { margin-top: 0.8rem; padding-top: 0.6rem; border-top: 1px dashed var(--line-2); animation: print 260ms steps(6) both; }
+    .log > .label { margin: 0 0 0.3rem; }
     .ev { display: grid; grid-template-columns: auto 1fr; gap: 0.6rem; padding: 0.5rem 0; border-top: 1px solid var(--line); font-size: 0.82rem; }
     .ev .when { color: var(--faint); font-size: 0.72rem; padding-top: 2px; }
     .cause { font: 500 0.62rem/1.4 var(--mono); text-transform: uppercase; letter-spacing: 0.1em; color: var(--warn); }
@@ -560,6 +582,7 @@ function timecode(ms: number): string {
     .ribbon i:nth-child(3) { background: #e2a12e; animation-delay: 120ms; } .ribbon i:nth-child(4) { background: #b8b3a6; animation-delay: 180ms; }
     .ribbon i:nth-child(5) { background: #6c685e; animation-delay: 240ms; }
     .people-head h2 { flex: 1; margin: 0; font-size: 1.3rem; line-height: 1; }
+    @media (max-width: 640px) { .diag { position: fixed; left: 0.5rem; right: 0.5rem; width: auto; top: 3.4rem; }
     @media (max-width: 640px) { .now { border-left: 0; padding-left: 0; } .roomname { max-width: 8rem; } .kind { display: none; } }
 
     /* ================= celular ================= */
@@ -593,6 +616,8 @@ function timecode(ms: number): string {
       bottom: calc(4.6rem + env(safe-area-inset-bottom)); padding: 0.9rem 1rem; }
     .mobile .check-row { padding: 0.75rem 0.5rem; }
     .mobile .close { padding: 10px; }
+    .mobile .diag { position: fixed; left: 0.5rem; right: 0.5rem; width: auto; top: calc(3.2rem + env(safe-area-inset-top)); max-height: 70dvh; }
+    .mobile .diag .switch { padding: 0.35rem 0; }
     .mobile .tray { top: 0.5rem; }
     .mobile .tray .btn { height: 36px; }
     .mobile .empty { place-items: start center; }
@@ -614,8 +639,9 @@ export class RoomScreen {
   protected readonly dawPlaying = computed(() => this.store.studio.streams().some((s) => s.source === 'daw'));
   protected readonly obsLive = computed(() => this.store.shares().some((s) => s.obs));
   protected readonly diagOpen = signal(false);
-  /** A travada mais recente, por 8 s, numa faixa sobre a tela. */
+  /** A travada mais recente, por 8 s, numa faixa sobre a tela. Só com a chave do diagnóstico ligada. */
   protected readonly freshIssue = computed(() => {
+    if (!this.prefs.diagOn()) return null;
     const e = this.store.diag.events()[0];
     return e !== undefined && this.now() - e.at < 8000 ? e : null;
   });
@@ -751,6 +777,12 @@ export class RoomScreen {
     this.store.diag.markSeen();
   }
 
+  /** A chave do diagnóstico. Ligar não acusa as travadas de antes como novas. */
+  setDiag(on: boolean) {
+    this.prefs.setDiagOn(on);
+    this.store.diag.markSeen();
+  }
+
   /**
    * Por que a tela de quem transmite está mais leve: o PC ou a internet dele não aguentam o máximo
    * e o navegador dele reduziu sozinho. Sem limitação (inclusive quando ele mesmo escolheu menos),
@@ -813,10 +845,11 @@ export class RoomScreen {
     this.volumeMenu.set(null);
   }
 
-  /** Clique fora do submenu da barra fecha o submenu. */
+  /** Clique fora do submenu da barra (ou do menu do diagnóstico) fecha o menu. */
   outside(e: PointerEvent) {
-    if (this.menu() === null) return;
     const el = e.target instanceof Element ? e.target : null;
+    if (this.diagOpen() && el?.closest('.diag-wrap, .issue') == null) this.diagOpen.set(false);
+    if (this.menu() === null) return;
     if (el?.closest('.pop, .caret, [aria-label="Plugin de DAW"]') == null) this.menu.set(null);
   }
 

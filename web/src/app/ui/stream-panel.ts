@@ -125,10 +125,6 @@ import {
       <span>Máxima compatibilidade</span>
     </label>
     <p class="hint">Usa H.264 de reserva se alguém não decodificar VP9 ou AV1.</p>
-    <label class="switch">
-      <input type="checkbox" [checked]="prefs.showStats()" (change)="prefs.setShowStats(!prefs.showStats())" />
-      <span>Mostrar estatísticas</span>
-    </label>
 
     <p class="summary">
       @if (store.load(); as l) {
