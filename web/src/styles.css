@@ -103,6 +103,7 @@ a { color: var(--accent-hi); }
 .btn.on::after {
   content: ''; position: absolute; top: 4px; right: 4px; width: 4px; height: 4px; border-radius: 50%;
   background: var(--ok); box-shadow: 0 0 4px rgb(127 168 100 / 0.6);
+  animation: led-on 380ms steps(1) both;
 }
 .btn.off { color: var(--danger); }
 .btn.wide { width: 100%; }
@@ -139,7 +140,7 @@ a { color: var(--accent-hi); }
 }
 .chip:hover { color: var(--text); }
 .chip.lit { transform: translateY(2px); box-shadow: var(--key-pressed); background: #2f2f30; color: var(--text); }
-.chip.lit::before { background: var(--accent-hi); box-shadow: 0 0 4px var(--accent-glow); }
+.chip.lit::before { background: var(--accent-hi); box-shadow: 0 0 4px var(--accent-glow); animation: led-on 380ms steps(1) both; }
 .chips { display: flex; flex-wrap: wrap; gap: 0.35rem; padding-bottom: 2px; }
 
 /* Legenda impressa no painel. */
@@ -192,7 +193,8 @@ input[type='checkbox'] { accent-color: var(--accent); }
   content: ''; position: absolute; top: 5px; right: 4px; width: 4px; height: 4px; border-radius: 50%; background: var(--led-off);
 }
 .switch input:checked::after { transform: translateX(14px); }
-.switch input:checked::before { right: auto; left: 4px; background: var(--ok); box-shadow: 0 0 4px rgb(127 168 100 / 0.5); }
+.switch input:checked::before { right: auto; left: 4px; background: var(--ok); box-shadow: 0 0 4px rgb(127 168 100 / 0.5);
+  animation: led-on 380ms steps(1) both; }
 
 /* ---------------------------------------------------------------- painéis */
 /* Chapa de metal com parafusos nos cantos. */
@@ -249,6 +251,20 @@ input[type='checkbox'] { accent-color: var(--accent); }
 @keyframes blink { 0%, 64% { opacity: 1; } 65%, 100% { opacity: 0.3; } }
 /* Recibo sendo impresso. */
 @keyframes print { from { clip-path: inset(0 0 100% 0); transform: translateY(-6px); } to { clip-path: inset(0 0 0 0); transform: none; } }
+
+/* Faixa que se desenrola da esquerda. */
+@keyframes unroll { from { transform: scaleX(0); } to { transform: none; } }
+/* TV de tubo desligando: espreme numa linha clara e some num ponto. */
+@keyframes crt-off {
+  0% { transform: none; filter: none; opacity: 1; }
+  45% { transform: scale(1, 0.006); filter: brightness(3); }
+  80% { transform: scale(0.02, 0.006); filter: brightness(4); opacity: 1; }
+  100% { transform: scale(0, 0); opacity: 0; }
+}
+/* LED acendendo como lâmpada velha: pisca duas vezes antes de firmar. */
+@keyframes led-on { 0% { opacity: 0.2; } 20% { opacity: 1; } 35% { opacity: 0.3; } 55% { opacity: 1; } 70% { opacity: 0.6; } 100% { opacity: 1; } }
+/* Janela do Windows 98 abrindo: um contorno cresce em degraus até o tamanho final. */
+@keyframes win-zoom { from { clip-path: inset(45% 45% 45% 45%); opacity: 0.4; } to { clip-path: inset(0 0 0 0); opacity: 1; } }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }

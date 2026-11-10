@@ -1,12 +1,14 @@
 import { Component, inject } from '@angular/core';
 import { RouterOutlet } from '@angular/router';
 import { Toast } from './core/toast';
+import { SendWindow } from './ui/send-window';
 
 @Component({
   selector: 'cen-root',
-  imports: [RouterOutlet],
+  imports: [RouterOutlet, SendWindow],
   template: `
     <router-outlet />
+    <cen-send-window />
     @if (toast.message(); as message) {
       <div class="toast" role="status">
         {{ message }}

@@ -1,0 +1,34 @@
+import { Component, computed, input } from '@angular/core';
+
+// Desenhos de 9x9 no traço da logo (um "#" é um pixel aceso). Usados nas teclas e nas janelas de envio.
+const ART: Record<string, string[]> = {
+  bell: ['....#....', '...###...', '..#####..', '..#####..', '..#####..', '.#######.', '#########', '.........', '....#....'],
+  letter: ['.........', '#########', '##.....##', '#.#...#.#', '#..#.#..#', '#...#...#', '#.......#', '#########', '.........'],
+  lock: ['..#####..', '.##...##.', '.#.....#.', '.#.....#.', '#########', '####.####', '###...###', '####.####', '#########'],
+  link: ['.........', '.###.....', '#...#....', '#...#.###', '.#.#####.', '###.#.#..', '....#...#', '....#...#', '.....###.'],
+  ticket: ['.........', '#########', '#.#######', '..#######', '#.#######', '..#######', '#.#######', '#########', '.........'],
+  folder: ['.........', '###......', '#..#####.', '#.......#', '#########', '#.......#', '#.......#', '#########', '.........'],
+  clipboard: ['...###...', '##.#.#.##', '#.#####.#', '#.......#', '#.#####.#', '#.......#', '#.####..#', '#.......#', '#########'],
+  people: ['.##......', '####..##.', '####.####', '.##..####', '####..##.', '####.####', '####.####', '.........', '.........'],
+  mailbox: ['..#####..', '.#.....#.', '#..###..#', '#.......#', '#########', '....#....', '....#....', '....#....', '..#####..'],
+};
+
+export type PixelArt = keyof typeof ART | string;
+
+/** Ícone de pixel, nítido (sem suavizar). A cor vem de `color` do elemento. */
+@Component({
+  selector: 'cen-pixel',
+  template: `
+    <svg viewBox="0 0 9 9" [attr.width]="size()" [attr.height]="size()" aria-hidden="true" shape-rendering="crispEdges" fill="currentColor">
+      @for (d of dots(); track $index) { <rect [attr.x]="d.x" [attr.y]="d.y" width="1" height="1" /> }
+    </svg>
+  `,
+  styles: ':host{display:inline-flex}',
+})
+export class PixelIcon {
+  readonly name = input.required<PixelArt>();
+  readonly size = input(18);
+  protected readonly dots = computed(() =>
+    (ART[this.name()] ?? []).flatMap((row, y) => [...row].flatMap((c, x) => (c === '#' ? [{ x, y }] : []))),
+  );
+}

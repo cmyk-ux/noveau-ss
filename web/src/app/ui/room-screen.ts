@@ -39,7 +39,7 @@ function timecode(ms: number): string {
     '(document:keydown.alt.c)': 'clip()',
   },
   template: `
-    <div class="room" [class.mobile]="isMobile">
+    <div class="room" [class.mobile]="isMobile" [class.off]="hangingUp()">
       <header class="topbar">
         <div class="brand">
           <img class="mark pixel" src="logo.svg" alt="Noveau" width="32" height="32" />
@@ -352,7 +352,7 @@ function timecode(ms: number): string {
             <button class="btn icon" [class.on]="peopleOpen()" title="Pessoas e volumes" (click)="togglePeople()"><cen-icon name="people" /></button>
           }
           <span class="sep" aria-hidden="true"></span>
-          <button class="btn danger icon hangup" title="Sair da sala" (click)="leave.emit()"><cen-icon name="hangup" /></button>
+          <button class="btn danger icon hangup" title="Sair da sala" (click)="hangUp()"><cen-icon name="hangup" /></button>
         </div>
 
         @if (menu(); as m) {
@@ -375,10 +375,12 @@ function timecode(ms: number): string {
       @if (peopleOpen()) {
         <aside class="panel panel-surface" aria-label="Pessoas">
           <div class="people-head">
+            <img class="pixel" src="logo.svg" alt="" width="20" height="20" />
             <h2>Pessoas</h2>
             <span class="tag" title="Na sala">{{ store.participants().length }}</span>
             <button class="close" title="Fechar" (click)="peopleOpen.set(false)"><cen-icon name="close" [size]="16" /></button>
           </div>
+          <div class="ribbon" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
           <cen-people-panel />
         </aside>
       }
@@ -387,6 +389,8 @@ function timecode(ms: number): string {
   styles: `
     :host { display: block; height: 100dvh; overflow: hidden; }
     .room { position: relative; display: flex; flex-direction: column; height: 100%; }
+    /* Desligar: a sala apaga como uma TV de tubo (vira uma linha, depois um ponto). */
+    .room.off { animation: crt-off 420ms steps(7) forwards; pointer-events: none; }
 
     /* ---------- barra de cima */
     .topbar { display: flex; align-items: center; gap: 0.9rem; padding: 0.5rem 0.9rem; min-height: 52px; flex-wrap: wrap;
@@ -485,7 +489,7 @@ function timecode(ms: number): string {
 
     /* ---------- menu de volume (botão direito) */
     .menu-backdrop { position: fixed; inset: 0; z-index: 40; }
-    .volume-menu { position: fixed; z-index: 41; width: 270px; padding: 0.7rem 0.8rem; animation: unfold-down 120ms linear both; }
+    .volume-menu { position: fixed; z-index: 41; width: 270px; padding: 0.7rem 0.8rem; animation: win-zoom 160ms steps(4) both; }
     .volume-menu .label { margin: 0 0 0.4rem; }
     /* Igual ao menu do Discord: linha "Mutar" com uma caixinha que ganha um check. */
     .check-row { display: flex; align-items: center; justify-content: space-between; width: 100%; margin-top: 0.5rem;
@@ -511,7 +515,7 @@ function timecode(ms: number): string {
     .hangup { width: 52px; }
     .pop { position: absolute; bottom: calc(100% + 8px); left: 50%; translate: -50% 0; z-index: 20;
       width: min(320px, calc(100vw - 1.5rem)); max-height: calc(100dvh - 9.5rem); overflow-y: auto;
-      padding: 0.7rem 0.9rem 0.9rem; animation: unfold-up 140ms linear both; }
+      padding: 0.7rem 0.9rem 0.9rem; animation: unfold-up 180ms steps(5) both; }
     .pop.wide { width: min(400px, calc(100vw - 1.5rem)); }
     .pop-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.3rem; }
     .pop-head .label { margin: 0; }
@@ -546,9 +550,15 @@ function timecode(ms: number): string {
       overflow-y: auto; padding: 0 0.8rem 1rem; z-index: 10; animation: slide-in 220ms var(--ease) both;
       scrollbar-width: thin; scrollbar-color: var(--plate) transparent; }
     /* Cabeçalho do painel: título impresso e a contagem numa etiqueta. Fica preso no topo. */
-    .people-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 0.55rem; margin: 0 -0.8rem 0.2rem;
+    .people-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 0.55rem; margin: 0 -0.8rem;
       padding: 0.7rem 0.8rem 0.6rem; background-color: var(--surface); background-image: var(--grain), var(--brushed);
-      background-size: 160px 160px, auto; border-bottom: 1px solid var(--line); box-shadow: 0 1px 0 rgb(255 255 255 / 0.04); }
+      background-size: 160px 160px, auto; }
+    /* Faixa nas cores da logo, que se desenrola quando o painel abre. */
+    .ribbon { display: grid; grid-template-columns: 3fr 1fr 1fr 1fr 2fr; height: 3px; margin: 0 -0.8rem 0.3rem; }
+    .ribbon i { animation: unroll 520ms var(--ease) both; transform-origin: left; }
+    .ribbon i:nth-child(1) { background: #57489a; } .ribbon i:nth-child(2) { background: #94cf7c; animation-delay: 60ms; }
+    .ribbon i:nth-child(3) { background: #e2a12e; animation-delay: 120ms; } .ribbon i:nth-child(4) { background: #b8b3a6; animation-delay: 180ms; }
+    .ribbon i:nth-child(5) { background: #6c685e; animation-delay: 240ms; }
     .people-head h2 { flex: 1; margin: 0; font-size: 1.3rem; line-height: 1; }
     @media (max-width: 640px) { .now { border-left: 0; padding-left: 0; } .roomname { max-width: 8rem; } .kind { display: none; } }
 
@@ -852,6 +862,15 @@ export class RoomScreen {
 
   noZoom(e: WheelEvent) {
     if (e.ctrlKey || e.metaKey) e.preventDefault();
+  }
+
+  protected readonly hangingUp = signal(false);
+  /** Sai da sala depois do efeito de TV desligando. */
+  hangUp() {
+    if (this.hangingUp()) return;
+    this.hangingUp.set(true);
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    window.setTimeout(() => this.leave.emit(), reduced ? 0 : 430);
   }
 
   copyInvite() {
