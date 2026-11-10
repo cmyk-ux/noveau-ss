@@ -24,7 +24,7 @@ interface Start {
   fps: number;
   bitrate: number;
 }
-type Incoming = Start | { type: 'clip'; id: string } | { type: 'stop' };
+type Incoming = Start | { type: 'clip'; id: string } | { type: 'stop' } | { type: 'pause'; on: boolean };
 
 interface Stored<C> {
   chunk: C;
@@ -33,6 +33,7 @@ interface Stored<C> {
 }
 
 const KEY_EVERY_US = 2_000_000;
+const HARDWARE_RETRY_US = 30_000_000;
 /** Sem quadro novo por tanto tempo (tela fora de foco, janela escondida): fecha o codificador. */
 const IDLE_US = 10_000_000;
 const ctx = self as unknown as {
@@ -57,8 +58,14 @@ let sounds: Stored<EncodedAudioChunk>[] = [];
 let lastKey = -Infinity;
 let lastFrame = -Infinity;
 let canvas: OffscreenCanvas | null = null;
-/** A placa de vídeo falhou: daqui em diante codifica no processador (até a próxima fonte). */
-let softwareOnly = false;
+/**
+ * Só grava na placa de vídeo. Codificar 1080p60 no processador custava cerca de um núcleo inteiro
+ * por tela e travava o jogo de quem transmite; sem placa (ou com ela recusando), o vídeo do clipe
+ * espera em vez de cair para o processador.
+ */
+let hardwareBackAt = 0;
+/** O PC está apertado (aviso do navegador): não grava vídeo até aliviar. */
+let paused = false;
 let draw: OffscreenCanvasRenderingContext2D | null = null;
 
 function post(msg: unknown, transfer: Transferable[] = []) {
@@ -133,9 +140,13 @@ async function openVideo(width: number, height: number) {
     latencyMode: 'realtime',
     avc: { format: 'avc' },
   };
-  let config: VideoEncoderConfig = { ...base, hardwareAcceleration: softwareOnly ? 'prefer-software' : 'prefer-hardware' };
-  if (!(await VideoEncoder.isConfigSupported(config)).supported) config = { ...base, hardwareAcceleration: 'no-preference' };
-  if (!(await VideoEncoder.isConfigSupported(config)).supported) throw new Error('Este navegador não codifica H.264.');
+  const config: VideoEncoderConfig = { ...base, hardwareAcceleration: 'prefer-hardware' };
+  if (!(await VideoEncoder.isConfigSupported(config)).supported) {
+    // Sem codificador na placa de vídeo: tenta de novo daqui a um tempo (driver, sessões ocupadas).
+    hardwareBackAt = nowUs() + HARDWARE_RETRY_US;
+    post({ type: 'no-hardware' });
+    return;
+  }
   const gen = generation;
   const enc = new VideoEncoder({
     output: (chunk, meta) => {
@@ -157,7 +168,7 @@ async function openVideo(width: number, height: number) {
     error: (e) => {
       if (gen !== generation || video !== enc) return;
       video = null;
-      if (config.hardwareAcceleration === 'prefer-hardware') softwareOnly = true;
+      hardwareBackAt = nowUs() + HARDWARE_RETRY_US;
       post({ type: 'error', message: `Codificador de vídeo reiniciado: ${e.message}` });
     },
   });
@@ -219,7 +230,7 @@ async function pumpVideo(reader: ReadableStreamDefaultReader<VideoFrame>, gen: n
       offset = nowUs() - frame.timestamp;
       at = Math.max(nowUs(), lastFrame + minGap + 1);
     }
-    if (at - lastFrame < minGap || (video !== null && video.encodeQueueSize > 3)) {
+    if (paused || nowUs() < hardwareBackAt || at - lastFrame < minGap || (video !== null && video.encodeQueueSize > 3)) {
       frame.close();
       continue;
     }
@@ -233,7 +244,12 @@ async function pumpVideo(reader: ReadableStreamDefaultReader<VideoFrame>, gen: n
       }
       if (video !== null && video.state === 'closed') video = null;
       if (video === null) await openVideo(size.width, size.height);
-      if (frame.displayWidth !== size.width || frame.displayHeight !== size.height) {
+      if (video === null) continue;
+      // Mesmo formato (só o tamanho muda: 1440p para 1080p, cópia menor da rede): o próprio
+      // codificador reduz ou amplia, na placa de vídeo. Passar por um canvas aqui custava quase um
+      // núcleo a mais a 60 fps (copia o quadro inteiro para a memória e de volta).
+      const sameShape = Math.abs(frame.displayWidth * size.height - frame.displayHeight * size.width) <= size.width * size.height * 0.01;
+      if (!sameShape) {
         if (canvas === null || canvas.width !== size.width || canvas.height !== size.height) {
           canvas = new OffscreenCanvas(size.width, size.height);
           draw = canvas.getContext('2d', { alpha: false, desynchronized: true });
@@ -363,7 +379,7 @@ function detach() {
 
 function stop() {
   detach();
-  softwareOnly = false;
+  hardwareBackAt = 0;
   audioConfig = null;
   videoConfig = null;
   soundFormat = null;
@@ -384,6 +400,11 @@ ctx.onmessage = (e: MessageEvent<Incoming>) => {
     const gen = generation;
     void pumpVideo(msg.video.getReader(), gen);
     if (msg.audio !== null) void pumpAudio(msg.audio.getReader(), gen);
+  } else if (msg.type === 'pause') {
+    paused = msg.on;
+    // Solta o codificador na hora: libera a placa de vídeo para o jogo e para a transmissão.
+    if (paused && video !== null && video.state !== 'closed') video.close();
+    if (paused) video = null;
   } else if (msg.type === 'clip') {
     void clip(msg.id);
   } else {

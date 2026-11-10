@@ -32,113 +32,152 @@ function iconFor(s: ShareView): string {
 }
 
 /**
- * Canto de baixo à esquerda do palco: a foto de cada pessoa com a tela aberta. Clicar põe a tela
- * dela em foco; parar o mouse em cima mostra uma prévia ao vivo (na cópia menor, só enquanto o
- * mouse está ali, para não gastar banda nem processador à toa).
+ * Teclas de "no ar" na barra de baixo, ao lado do microfone e da tela.
+ *
+ * - A minha tela: uma tecla "prévia". Fechada por padrão: mostrar a própria tela grande custava
+ *   ~0,6 núcleo a mais para quem transmite. Aberta, é uma cópia em 360p a 15 fps (quase de graça).
+ * - A tela de cada pessoa: a foto dela. Clicar põe em foco. Parar o mouse mostra o nome e o que
+ *   ela está passando, sem vídeo; o vídeo ao vivo (cópia menor) só liga se você pedir.
  */
 @Component({
   selector: 'cen-live-strip',
   imports: [PixelIcon],
+  host: { '[class.empty]': 'mine() === null && faces().length === 0' },
   template: `
-    @if (faces().length > 0) {
+    @if (mine(); as m) {
+      <button type="button" class="btn mine-key" [class.on]="mineOpen()" [attr.aria-expanded]="mineOpen()"
+        [title]="mineOpen() ? 'Fechar a prévia da sua tela' : 'Ver a prévia da sua tela (leve: 360p a 15 fps)'"
+        (click)="toggleMine()">
+        <span class="led accent" aria-hidden="true"></span>
+        <cen-pixel [name]="m.kind === 'camera' ? 'webcam' : 'monitor'" [size]="16" />
+        <span class="mono word">prévia</span>
+      </button>
+    }
+    @if (faces().length > 0 && showFaces()) {
       <div class="rail" role="toolbar" aria-label="Quem está com a tela aberta">
-        <span class="legend mono" aria-hidden="true"><span class="led live"></span>no ar</span>
         @for (f of faces(); track f.share.id) {
           <button type="button" class="face" [class.focused]="f.share.id === focusedId()" [class.hidden]="f.share.hidden"
-            [class.mine]="f.share.isLocal" [attr.aria-label]="label(f)" [attr.aria-pressed]="f.share.id === focusedId()"
-            [title]="isMobile ? label(f) : ''"
+            [attr.aria-label]="label(f)" [attr.aria-pressed]="f.share.id === focusedId()" [title]="isMobile ? label(f) : ''"
             (click)="pick(f)" (pointerenter)="hover(f, $event)" (pointerleave)="leave()" (focus)="hover(f, $event)" (blur)="leave()">
-            @if (f.avatar) { <img [src]="f.avatar" alt="" width="34" height="34" draggable="false" /> }
-            @else if (f.share.obs || f.share.isIngress) { <span class="glyph"><cen-pixel [name]="f.icon" [size]="18" /></span> }
+            @if (f.avatar) { <img [src]="f.avatar" alt="" width="26" height="26" draggable="false" /> }
+            @else if (f.share.obs || f.share.isIngress) { <span class="glyph"><cen-pixel [name]="f.icon" [size]="16" /></span> }
             @else { <b>{{ initial(f.name) }}</b> }
-            <span class="src" aria-hidden="true"><cen-pixel [name]="f.icon" [size]="9" /></span>
-            <span class="lamp led live" aria-hidden="true"></span>
+            <span class="src" aria-hidden="true"><cen-pixel [name]="f.icon" [size]="8" /></span>
+            <span class="lamp led bad" aria-hidden="true"></span>
           </button>
         }
       </div>
     }
+
+    @if (mineOpen() && mine(); as m) {
+      <div class="card panel-surface" role="dialog" aria-label="Prévia da sua tela" [style.left.px]="0">
+        <div class="head">
+          <span class="onair mono mine">enviando</span>
+          <strong>{{ m.kind === 'camera' ? 'Sua câmera' : 'Sua tela' }}</strong>
+          <button type="button" class="close" title="Fechar" (click)="mineOpen.set(false)">×</button>
+        </div>
+        <div class="screen">
+          <video #mv autoplay playsinline muted [class.mirror]="m.mirror" (playing)="mineTuned.set(true)"></video>
+          @if (!mineTuned()) { <div class="snow" aria-hidden="true"><span class="mono">sintonizando</span></div> }
+        </div>
+        @if (m.cam !== null) {
+          <div class="swap">
+            <button type="button" class="btn small" [class.on]="mineWhich() === 'main'" (click)="mineWhich.set('main')">tela</button>
+            <button type="button" class="btn small" [class.on]="mineWhich() === 'cam'" (click)="mineWhich.set('cam')">câmera</button>
+          </div>
+        }
+        <p class="foot">Prévia leve, só para você conferir. Quem assiste recebe na qualidade cheia.</p>
+      </div>
+    }
+
     @if (preview(); as p) {
       <div class="card panel-surface" role="tooltip" [style.left.px]="p.x" (pointerenter)="overCard = true; keep()"
         (pointerleave)="overCard = false; leave()" (focusin)="keep()" (focusout)="leave()">
         <div class="head">
-          <span class="onair mono" [class.mine]="p.face.share.isLocal">{{ p.face.share.isLocal ? 'enviando' : 'ao vivo' }}</span>
-          <strong>{{ p.face.share.isLocal ? 'Sua tela' : p.face.name }}</strong>
+          <span class="onair mono">ao vivo</span>
+          <strong>{{ p.face.name }}</strong>
         </div>
-        <div class="screen" (click)="pick(p.face)">
-          <video #pv autoplay playsinline muted (playing)="tuned.set(true)" (loadeddata)="tuned.set(true)"></video>
-          @if (!tuned()) { <div class="snow" aria-hidden="true"><span class="mono">sintonizando</span></div> }
-        </div>
+        @if (live()) {
+          <div class="screen" (click)="pick(p.face)">
+            <video #pv autoplay playsinline muted (playing)="tuned.set(true)" (loadeddata)="tuned.set(true)"></video>
+            @if (!tuned()) { <div class="snow" aria-hidden="true"><span class="mono">sintonizando</span></div> }
+          </div>
+        }
         <div class="act">
           <cen-pixel [name]="p.face.icon" [size]="11" />
           <span class="what">{{ p.face.line || (p.face.share.kind === 'camera' ? 'câmera' : 'tela') }}</span>
           @if (p.face.share.hidden) { <span class="tag">escondida</span> }
         </div>
-        @if (p.face.share.id !== focusedId()) {
-          <p class="foot mono">clique para assistir</p>
-        }
+        <div class="row">
+          @if (!live() && p.face.share.id !== focusedId() && !p.face.share.hidden) {
+            <button type="button" class="btn small" (click)="live.set(true)">▶ prévia ao vivo</button>
+          }
+          @if (p.face.share.id !== focusedId()) {
+            <button type="button" class="btn small primary" (click)="pick(p.face)">assistir</button>
+          }
+        </div>
       </div>
     }
   `,
   styles: `
-    :host { position: absolute; left: 1rem; bottom: 1rem; z-index: 7; display: block; pointer-events: none; }
-    .rail, .card { pointer-events: auto; }
+    :host { position: relative; display: inline-flex; align-items: center; gap: 0.5rem; }
+    :host(.empty) { display: none; }
 
-    /* Régua de metal com uma foto por tela aberta, como as teclas de canal de uma mesa de corte. */
-    .rail { display: flex; align-items: center; gap: 6px; padding: 5px 7px 7px; border-radius: 3px;
-      background: rgb(22 22 23 / 0.88); border: 1px solid #0b0b0c;
-      box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.05), 0 6px 18px -8px #000; animation: rail-in 260ms steps(5) both; }
-    .legend { display: inline-flex; align-items: center; gap: 0.35rem; margin-right: 2px; font-size: 0.56rem;
-      letter-spacing: 0.18em; text-transform: uppercase; color: var(--faint); writing-mode: vertical-rl; rotate: 180deg; }
-    .legend .led { width: 5px; height: 5px; }
+    .mine-key { gap: 0.4rem; padding: 0 0.6rem; }
+    .mine-key .led { width: 6px; height: 6px; }
+    .mine-key .word { font-size: 0.66rem; letter-spacing: 0.12em; text-transform: uppercase; }
 
-    /* Foto numa tecla: sobe com aresta, afunda quando é a tela em foco. */
-    .face { position: relative; width: 42px; height: 42px; padding: 3px; border-radius: 2px; border: 1px solid #0b0b0c;
+    /* Fotos como teclas de canal de uma mesa de corte, embutidas na barra. */
+    .rail { display: flex; align-items: center; gap: 4px; }
+    .face { position: relative; width: 34px; height: 34px; padding: 3px; border-radius: 2px; border: 1px solid #0b0b0c;
       background: var(--plate); box-shadow: var(--key-shadow); display: grid; place-items: center; color: var(--muted);
-      transition: transform 60ms linear, box-shadow 60ms linear, background 120ms; animation: face-in 380ms var(--ease) both; }
+      transition: transform 60ms linear, box-shadow 60ms linear, background 120ms; }
     .face:hover { background: var(--plate-hi); }
     .face:active { transform: translateY(2px); box-shadow: var(--key-pressed); }
     .face.focused { transform: translateY(2px); box-shadow: var(--key-pressed); background: #2f2f30; }
-    .face img, .face b, .face .glyph { width: 34px; height: 34px; border-radius: 1px; object-fit: cover; display: grid; place-items: center;
+    .face img, .face b, .face .glyph { width: 26px; height: 26px; border-radius: 1px; object-fit: cover; display: grid; place-items: center;
       background: var(--well); }
-    .face b { font: 500 0.9rem/1 var(--mono); text-transform: uppercase; color: var(--text); }
+    .face b { font: 500 0.8rem/1 var(--mono); text-transform: uppercase; color: var(--text); }
     .face.focused img, .face.focused b, .face.focused .glyph { outline: 1px solid var(--accent-hi); outline-offset: 1px; }
     .face.hidden img, .face.hidden b { filter: grayscale(1); opacity: 0.45; }
-    .face.hidden .lamp { background: var(--led-off); box-shadow: inset 0 1px 1px #000a; animation: none; }
-    /* Lâmpada de "no ar" no canto e o selo da fonte (tela, janela, aba) embaixo. */
-    .lamp { position: absolute; top: 3px; right: 3px; width: 5px; height: 5px; }
-    .mine .lamp { background: var(--accent-hi); box-shadow: 0 0 0 1px #0008, 0 0 4px var(--accent-glow); }
-    .src { position: absolute; right: -3px; bottom: -3px; width: 15px; height: 15px; display: grid; place-items: center;
+    .face.hidden .lamp { background: var(--led-off); box-shadow: inset 0 1px 1px #000a; }
+    /* Lâmpada fixa (sem piscar: animação infinita acorda a página à toa). */
+    .lamp { position: absolute; top: 2px; right: 2px; width: 4px; height: 4px; }
+    .src { position: absolute; right: -3px; bottom: -3px; width: 13px; height: 13px; display: grid; place-items: center;
       border-radius: 1px; background: #111110; border: 1px solid #0b0b0c; color: var(--text); }
 
-    /* Prévia: janela que abre em degraus (Win98) e "sintoniza" antes da imagem chegar. */
-    .card { position: absolute; bottom: calc(100% + 8px); width: 272px; padding: 0.5rem 0.55rem 0.55rem;
+    /* Janelinha que abre da barra em degraus (Win98). */
+    .card { position: absolute; bottom: calc(100% + 14px); width: 272px; padding: 0.5rem 0.55rem 0.55rem; z-index: 25;
       animation: win-zoom 150ms steps(4) both; transform-origin: bottom left; }
     .head { display: flex; align-items: center; gap: 0.45rem; margin-bottom: 0.4rem; min-width: 0; }
-    .head strong { font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .head strong { font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
+    .head .close { background: none; border: 0; color: var(--muted); font-size: 1rem; line-height: 1; padding: 2px 4px; cursor: pointer; }
+    .head .close:hover { color: var(--text); }
     .onair { font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.14em; color: #fff; background: var(--danger);
       padding: 2px 5px; border-radius: 1px; flex-shrink: 0; }
     .onair.mine { background: var(--accent); }
     .screen { position: relative; aspect-ratio: 16 / 9; background: #000; border-radius: 2px; overflow: hidden; cursor: pointer;
       box-shadow: 0 0 0 1px #0b0b0c, inset 0 0 0 1px rgb(255 255 255 / 0.04); }
     .screen video { width: 100%; height: 100%; object-fit: contain; display: block; animation: crt-on 320ms var(--ease) both; }
+    .screen video.mirror { transform: scaleX(-1); }
+    /* Chuvisco parado (uma imagem só) enquanto o vídeo não chega. */
     .snow { position: absolute; inset: 0; display: grid; place-items: center; background-color: #1a1a1b;
-      background-image: var(--grain), var(--grain); background-size: 120px 120px, 77px 77px; animation: snow 240ms steps(4) infinite; }
+      background-image: var(--grain), var(--grain); background-size: 120px 120px, 77px 77px; }
     .snow span { font-size: 0.6rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); background: rgb(0 0 0 / 0.6);
-      padding: 2px 6px; animation: blink 1.2s steps(1) infinite; }
+      padding: 2px 6px; }
     .act { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.45rem; color: var(--accent-hi); min-width: 0; }
     .what { font: 500 0.72rem/1.2 var(--mono); letter-spacing: 0.04em; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .foot { margin: 0.35rem 0 0; font-size: 0.6rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); }
-
-    /* Régua entra como uma gaveta saindo do painel, em degraus. */
-    @keyframes rail-in { from { clip-path: inset(0 100% 0 0); } to { clip-path: inset(0 0 0 0); } }
-    /* Foto nova: acende como um monitor de tubo. */
-    @keyframes face-in { 0% { filter: brightness(2.5); transform: scale(1, 0.1); } 50% { transform: scale(1, 0.1); } 100% { filter: none; transform: none; } }
-    @keyframes snow { 0% { background-position: 0 0, 0 0; } 25% { background-position: 37px 11px, -23px 41px; }
-      50% { background-position: -19px 53px, 61px -7px; } 75% { background-position: 71px -29px, 13px 19px; } 100% { background-position: 0 0, 0 0; } }
+    .row { display: flex; gap: 0.35rem; margin-top: 0.45rem; }
+    .row:empty { display: none; }
+    .swap { display: flex; gap: 0.35rem; margin-top: 0.45rem; }
+    .foot { margin: 0.4rem 0 0; font-size: 0.72rem; color: var(--faint); line-height: 1.3; }
 
     @media (hover: none) {
-      :host { left: 0.6rem; bottom: 0.6rem; }
-      .face { width: 46px; height: 46px; }
+      .face { width: 44px; height: 44px; }
+      .face img, .face b, .face .glyph { width: 36px; height: 36px; }
+      .mine-key { height: 48px; }
+      .mine-key .word { display: none; }
+      .card { position: fixed; left: 0.5rem !important; right: 0.5rem; width: auto; bottom: calc(4.6rem + env(safe-area-inset-bottom)); }
     }
   `,
 })
@@ -148,12 +187,12 @@ export class LiveStrip {
   protected readonly isMobile = IS_MOBILE;
 
   protected readonly focusedId = computed(() => this.store.focused()?.id ?? null);
+  protected readonly mine = this.store.myShare;
 
-  /** Todas as telas abertas (inclusive as escondidas, apagadas), a minha por último. */
+  /** Telas dos outros (inclusive as escondidas, apagadas). A minha tem a tecla "prévia". */
   protected readonly faces = computed<Face[]>(() => {
     const people = new Map(this.store.participants().map((p) => [p.identity, p]));
-    const all = [...this.store.shares(), ...this.store.hiddenShares()];
-    all.sort((a, b) => Number(a.isLocal) - Number(b.isLocal));
+    const all = [...this.store.stageShares(), ...this.store.hiddenShares()];
     return all.map((s) => ({
       share: s,
       name: s.ownerName,
@@ -162,14 +201,27 @@ export class LiveStrip {
       line: activityLine(s.activity),
     }));
   });
+  /** Uma tela só, já em foco: a foto não acrescenta nada. */
+  protected readonly showFaces = computed(() => {
+    const f = this.faces();
+    return !(f.length === 1 && f[0].share.id === this.focusedId() && !f[0].share.hidden);
+  });
 
+  // ---------- prévia da minha tela
+  protected readonly mineOpen = signal(false);
+  protected readonly mineTuned = signal(false);
+  protected readonly mineWhich = signal<'main' | 'cam'>('main');
+  private readonly mv = viewChild<ElementRef<HTMLVideoElement>>('mv');
+
+  // ---------- cartão de quem está no ar
   private readonly hoverId = signal<{ id: string; x: number } | null>(null);
-  /** A prévia segue os dados da tela (atividade, escondida) enquanto está aberta. */
   protected readonly preview = computed(() => {
     const h = this.hoverId();
     const face = h === null ? undefined : this.faces().find((f) => f.share.id === h.id);
     return face === undefined || h === null ? null : { face, x: h.x };
   });
+  /** O vídeo ao vivo no cartão só liga quando a pessoa pede. */
+  protected readonly live = signal(false);
   protected readonly tuned = signal(false);
   private readonly pv = viewChild<ElementRef<HTMLVideoElement>>('pv');
   private attached: { id: string; el: HTMLVideoElement; track: string } | null = null;
@@ -177,11 +229,26 @@ export class LiveStrip {
   private closeTimer?: number;
 
   constructor() {
-    // Liga a prévia quando o vídeo aparece; troca se o mouse passou para outra foto.
+    // Minha prévia: liga a cópia leve quando a janelinha abre, desliga ao fechar.
+    effect((onCleanup) => {
+      const el = this.mv()?.nativeElement;
+      const m = this.mine();
+      if (el === undefined || m === null || !this.mineOpen()) return;
+      const which = m.cam !== null ? this.mineWhich() : 'main';
+      void m.trackSid;
+      this.mineTuned.set(false);
+      const stop = this.store.startLocalPreview(el, which);
+      onCleanup(stop);
+    });
+    // Parou de transmitir: a janelinha fecha.
+    effect(() => {
+      if (this.mine() === null) this.mineOpen.set(false);
+    });
+    // Vídeo ao vivo de outra pessoa, só com o pedido.
     effect(() => {
       const p = this.preview();
       const el = this.pv()?.nativeElement;
-      const want = p === null || el === undefined ? null : { id: p.face.share.id, el, track: p.face.share.trackSid };
+      const want = p === null || el === undefined || !this.live() ? null : { id: p.face.share.id, el, track: p.face.share.trackSid };
       const cur = this.attached;
       if (cur !== null && want !== null && cur.id === want.id && cur.el === want.el && cur.track === want.track) return;
       if (cur !== null) this.store.stopPreview(cur.id, cur.el);
@@ -202,8 +269,13 @@ export class LiveStrip {
   }
 
   label(f: Face): string {
-    const who = f.share.isLocal ? 'Sua tela' : `${f.share.kind === 'camera' ? 'Câmera' : 'Tela'} de ${f.name}`;
+    const who = `${f.share.kind === 'camera' ? 'Câmera' : 'Tela'} de ${f.name}`;
     return `${who}${f.line ? ' · ' + f.line : ''}${f.share.hidden ? ' (escondida)' : ''}`;
+  }
+
+  toggleMine() {
+    this.hoverId.set(null);
+    this.mineOpen.update((v) => !v);
   }
 
   pick(f: Face) {
@@ -212,6 +284,7 @@ export class LiveStrip {
     this.store.focusShare(f.share.id);
     this.overCard = false;
     this.hoverId.set(null);
+    this.live.set(false);
   }
 
   hover(f: Face, e: Event) {
@@ -221,9 +294,10 @@ export class LiveStrip {
     const btn = e.currentTarget as HTMLElement;
     const x = btn.getBoundingClientRect().left - this.host.nativeElement.getBoundingClientRect().left;
     const open = () => {
-      this.hoverId.set({ id: f.share.id, x: Math.max(0, x - 8) });
+      if (this.hoverId()?.id !== f.share.id) this.live.set(false);
+      this.mineOpen.set(false);
+      this.hoverId.set({ id: f.share.id, x: Math.max(-120, x - 8) });
     };
-    // Já tem uma prévia aberta: troca na hora, como passar o dedo pelos canais.
     if (this.hoverId() !== null) open();
     else this.openTimer = window.setTimeout(open, OPEN_MS);
   }
@@ -240,7 +314,7 @@ export class LiveStrip {
     this.closeTimer = window.setTimeout(() => {
       if (this.overCard) return;
       this.hoverId.set(null);
+      this.live.set(false);
     }, CLOSE_MS);
   }
-
 }

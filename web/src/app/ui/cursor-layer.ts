@@ -58,13 +58,13 @@ export class CursorLayer {
     effect(() => {
       if (!this.prefs.cursorOn()) this.net?.hide();
     });
-    const loop = () => {
-      this.draw();
-      this.raf = requestAnimationFrame(loop);
-    };
-    this.raf = requestAnimationFrame(loop);
+    // Só desenha a cada quadro enquanto tem cursor de alguém na tela. Antes o laço rodava sempre,
+    // acordando a página a cada quadro do monitor (144 vezes por segundo num de 144 Hz) mesmo sem
+    // ninguém mexendo o mouse.
+    this.net.onActivity = () => this.wake();
     inject(DestroyRef).onDestroy(() => {
       cancelAnimationFrame(this.raf);
+      this.raf = 0;
       this.net?.dispose();
       this.net = null;
     });
@@ -106,8 +106,18 @@ export class CursorLayer {
     if (p !== null) this.net.click(share, p.x, p.y, this.prefs.cursorColor());
   }
 
-  private draw() {
-    if (this.net === null) return;
+  private wake() {
+    if (this.raf !== 0 || this.net === null) return;
+    const loop = () => {
+      // Desenhou alguém (ou ainda há marcas sumindo): continua; senão dorme até o próximo dado.
+      this.raf = this.draw() ? requestAnimationFrame(loop) : 0;
+    };
+    this.raf = requestAnimationFrame(loop);
+  }
+
+  /** Devolve se ainda tem algo na tela. */
+  private draw(): boolean {
+    if (this.net === null) return false;
     const share = this.store.focused()?.id ?? null;
     const frames = this.net.frame(share);
     const c = this.content();
@@ -129,7 +139,10 @@ export class CursorLayer {
       }
       const px = c.x + f.x * c.w;
       const py = c.y + f.y * c.h;
-      n.root.style.setProperty('--c', f.color);
+      if (n.root.dataset['c'] !== f.color) {
+        n.root.dataset['c'] = f.color;
+        n.root.style.setProperty('--c', f.color);
+      }
       // Opacidade menor para não atrapalhar a tela.
       n.root.style.opacity = String(0.82 * f.alpha);
       n.root.style.transform = `translate3d(${px - 4}px, ${py - 3}px, 0) scale(${1 / this.zoom()})`;
@@ -152,6 +165,7 @@ export class CursorLayer {
         this.nodes.delete(id);
       }
     }
+    return frames.length > 0;
   }
 
   private newRipple() {

@@ -187,8 +187,6 @@ function timecode(ms: number): string {
           <cen-stage (click)="clickFocused()" (contextmenu)="openVolume($event, f)" />
           <div class="viewfinder" aria-hidden="true"></div>
           @if (f.cam !== null) { <cen-cam-pip [share]="f" [source]="stage()?.source() ?? noSize" /> }
-          <!-- Quem está com a tela aberta: clicar troca o foco, mouse em cima mostra a prévia. -->
-          <cen-live-strip />
           @if (freshIssue(); as e) {
             <button type="button" class="issue" [attr.data-cause]="e.cause" (click)="openDiag()" title="Abrir o diagnóstico">
               <span class="cause">{{ causeLabel(e.cause) }}</span> {{ e.text }}
@@ -196,17 +194,17 @@ function timecode(ms: number): string {
           }
           <div class="corner">
             @if (store.canClip() && !isMobile) {
-              <button class="btn small ghost" (click)="clip()" title="Clipa os últimos 2 min desta tela (Alt+C)">
-                <cen-icon name="scissors" [size]="15" /> clipar <span class="mono buf">últimos 2 min</span></button>
+              <button class="btn small ghost" (click)="clip()" [title]="clipTitle('Clipa os últimos 2 min desta tela (Alt+C)')">
+                <cen-icon name="scissors" [size]="15" /> clipar <span class="mono buf">{{ clipNote() }}</span></button>
             }
-            @if (store.shares().length > 1) {
+            @if (store.stageShares().length > 1) {
               <button class="btn icon small ghost" title="Ver todas as telas" (click)="store.unfocus()"><cen-icon name="grid" [size]="16" /></button>
             }
             @if (!f.isLocal && f.hasAudio) {
               <button class="btn icon small ghost" title="Volume desta tela" (click)="openVolumeAt($event, f)">
                 <cen-icon [name]="f.volume.muted || f.volume.level === 0 ? 'speakerOff' : 'speaker'" [size]="16" /></button>
             }
-            @if (!f.isLocal || store.shares().length > 1) {
+            @if (!f.isLocal || store.stageShares().length > 1) {
               <button class="btn icon small ghost" title="Esconder esta tela (para de baixar o vídeo e o som dela)" (click)="store.hideShare(f.id)">
                 <cen-icon name="eyeOff" [size]="16" /></button>
             }
@@ -218,15 +216,15 @@ function timecode(ms: number): string {
               <cen-icon [name]="isFullscreen() ? 'fullscreenExit' : 'fullscreen'" [size]="16" />
             </button>
           </div>
-        } @else if (store.shares().length > 1) {
+        } @else if (store.stageShares().length > 1) {
           @if (store.canClip() && !isMobile) {
             <div class="corner">
               <button class="btn small ghost" (click)="clip()" title="Clipa os últimos 2 min de cada tela, um vídeo por tela (Alt+C)">
-                <cen-icon name="scissors" [size]="15" /> clipar todas <span class="mono buf">últimos 2 min</span></button>
+                <cen-icon name="scissors" [size]="15" /> clipar todas <span class="mono buf">{{ clipNote() }}</span></button>
             </div>
           }
           <div class="grid" [style.--cols]="gridCols()">
-            @for (s of store.shares(); track s.id) {
+            @for (s of store.stageShares(); track s.id) {
               <cen-share-tile [share]="s" (click)="store.focusShare(s.id)" (contextmenu)="openVolume($event, s)"
                 [title]="'Clique para focar · botão direito para o volume'" />
             }
@@ -235,10 +233,28 @@ function timecode(ms: number): string {
           <div class="empty">
             <div class="testcard card screws">
               <div class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+              @if (store.myShare(); as mine) {
+                <p class="nosignal mono sending"><span class="led accent"></span>enviando</p>
+                <h2>{{ mine.kind === 'camera' ? 'Sua câmera está no ar.' : 'Sua tela está no ar.' }}</h2>
+                <p class="hint">A prévia fica fechada na barra de baixo, na tecla <b>prévia</b>, para não pesar no seu PC enquanto você joga.
+                  Quando alguém abrir a tela, ela aparece aqui.</p>
+                @if (store.upload(); as u) {
+                  @if (u.cap < u.target) {
+                    <p class="hint warn-line">Sua internet está perdendo pacotes na subida ({{ (u.loss * 100).toFixed(1) }}%): o teto baixou para
+                      {{ (u.cap / 1e6).toFixed(0) }} de {{ (u.target / 1e6).toFixed(0) }} Mbps e volta sozinho quando a rede limpar.</p>
+                  }
+                }
+                @if (store.canClip() && !isMobile) {
+                  <div class="actions">
+                    <button class="btn" (click)="clip()" title="Clipa os últimos 2 min da sua tela (Alt+C)"><cen-icon name="scissors" [size]="15" /> clipar minha tela</button>
+                  </div>
+                }
+              } @else {
               <p class="nosignal mono"><span class="led warn"></span>{{ store.waitingForCamera() ? 'aguardando câmera' : 'sem sinal' }}</p>
               <h2>{{ store.waitingForCamera() ? 'Esperando a câmera.' : store.hiddenShares().length > 0 ? 'Você escondeu todas as telas.' : 'Ninguém está compartilhando.' }}</h2>
               <p class="hint">{{ emptyHint() }}</p>
-              @if (store.canPublish() && canShare) {
+              }
+              @if (store.canPublish() && canShare && store.myShare() === null) {
                 <div class="actions">
                   <button class="btn primary" (click)="store.toggleShare()"><cen-icon name="screen" [size]="17" /> Compartilhar tela</button>
                   @if (!callRoom) {
@@ -363,6 +379,12 @@ function timecode(ms: number): string {
               <button class="btn caret" [class.on]="store.webcamOn()" title="Câmera" aria-label="Escolher câmera"
                 [attr.aria-expanded]="menu() === 'camera'" (click)="toggleMenu('camera')"><cen-icon name="caret" [size]="14" /></button>
             </div>
+          }
+
+          <!-- No ar: prévia da minha tela (fechada até eu pedir) e a foto de quem está com a tela aberta. -->
+          @if (store.myShare() !== null || store.stageShares().length + store.hiddenShares().length > 0) {
+            <span class="sep" aria-hidden="true"></span>
+            <cen-live-strip />
           }
 
           @if (!isMobile) {
@@ -513,6 +535,8 @@ function timecode(ms: number): string {
     .nosignal { display: inline-flex; align-items: center; gap: 0.45rem; margin: 0 0 0.6rem; font-size: 0.7rem;
       text-transform: uppercase; letter-spacing: 0.22em; color: var(--warn); }
     .testcard h2 { margin: 0; }
+    .nosignal.sending { color: var(--accent-hi); }
+    .warn-line { color: var(--warn); }
     .actions { display: flex; gap: 0.5rem; margin: 1.2rem 0 0.4rem; flex-wrap: wrap; justify-content: center; }
     .slip { margin-top: 1.3rem; padding-top: 1rem; border-top: 1px dashed var(--line-2); }
     .slip .label { margin: 0 0 0.3rem; }
@@ -617,9 +641,6 @@ function timecode(ms: number): string {
     /* ================= celular ================= */
     /* Toque não tem "passar o mouse": os botões do canto aparecem com um toque na tela e somem sozinhos. */
     .mobile .stage-area.controls .corner, .mobile .stage-area.controls .viewfinder { opacity: 1; transform: none; }
-    /* Fotos de quem transmite: no celular só aparecem junto com os botões (um toque na tela). */
-    .mobile cen-live-strip { opacity: 0; visibility: hidden; transition: opacity 200ms, visibility 0s 200ms; }
-    .mobile .stage-area.controls cen-live-strip { opacity: 1; visibility: visible; transition: opacity 200ms; }
     .mobile .stage-area:hover .viewfinder, .mobile .stage-area:hover .corner { opacity: 0; }
     .mobile .stage-area.controls:hover .corner, .mobile .stage-area.controls:hover .viewfinder { opacity: 1; }
     .mobile .corner { top: 0.7rem; right: 0.7rem; gap: 0.45rem; }
@@ -635,7 +656,8 @@ function timecode(ms: number): string {
     .mobile .banner { flex-wrap: wrap; font-size: 0.82rem; }
     /* Dock: teclas grandes para o dedo, longe da barra de gestos do sistema. */
     .mobile .dock { padding: 0.5rem 0.5rem calc(0.6rem + env(safe-area-inset-bottom)); }
-    .mobile .keys { gap: 0.4rem; }
+    /* Com as fotos de quem está no ar, a fileira pode passar da tela: desliza de lado. */
+    .mobile .keys { gap: 0.4rem; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
     .mobile .keys .btn.icon { width: 50px; height: 48px; }
     .mobile .caret { width: 26px; height: 48px; }
     .mobile .hangup { width: 58px; }
@@ -699,7 +721,7 @@ export class RoomScreen {
   protected readonly volumeMenu = signal<{ id: string; name: string; x: number; y: number } | null>(null);
   /** Colunas da grade: 2 telas lado a lado, 3-4 em 2x2, 5+ em 3 colunas. */
   protected readonly gridCols = computed(() => {
-    const n = this.store.shares().length;
+    const n = this.store.stageShares().length;
     // Celular em pé: uma tela embaixo da outra.
     if (this.isMobile && this.portrait()) return 1;
     return n <= 2 ? n : n <= 4 ? 2 : 3;
@@ -738,7 +760,7 @@ export class RoomScreen {
       this.pokeControls(!this.controls());
       return;
     }
-    if (this.store.shares().length > 1 && !this.prefs.cursorOn()) this.store.unfocus();
+    if (this.store.stageShares().length > 1 && !this.prefs.cursorOn()) this.store.unfocus();
   }
   private readonly stageArea = viewChild.required<ElementRef<HTMLElement>>('stageArea');
   protected readonly formatWatchers = formatWatchers;
@@ -890,6 +912,17 @@ export class RoomScreen {
    * Ctrl + roda (e a pinça do touchpad, que o navegador entrega como Ctrl + roda) dava zoom na
    * página inteira em cima do vídeo. Na área da tela isso não faz sentido: bloqueia.
    */
+  /** O gravador de clipes cede primeiro quando o PC aperta, e não grava sem a placa de vídeo. */
+  protected readonly clipNote = computed(() =>
+    this.store.clips.noHardware() ? 'sem placa de vídeo' : this.store.clips.paused() ? 'pausado: PC apertado' : 'últimos 2 min',
+  );
+  clipTitle(base: string) {
+    if (this.store.clips.noHardware())
+      return 'O navegador não liberou o codificador da placa de vídeo, então o clipe não grava vídeo (gravar no processador travaria o PC). Tenta de novo sozinho.';
+    if (this.store.clips.paused()) return 'O PC está apertado: o clipe parou de gravar até aliviar, para não travar o jogo nem a tela. O que já estava guardado continua.';
+    return base;
+  }
+
   /** Em foco, clipa a tela em foco; na grade, cada tela vira um clipe. */
   clip() {
     if (!this.store.canClip()) return;

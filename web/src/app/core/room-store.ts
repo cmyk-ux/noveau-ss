@@ -123,6 +123,10 @@ export class RoomStore {
   readonly participants = computed(() => this._snapshot().participants);
   /** Telas à mostra (sem as que você escondeu). */
   readonly shares = computed(() => this._snapshot().shares.filter((s) => !s.hidden));
+  /** Telas que vão para o palco e a grade: as dos outros. A minha só aparece na prévia da barra de baixo. */
+  readonly stageShares = computed(() => this.shares().filter((s) => !s.isLocal));
+  /** A minha tela ou câmera saindo agora (para a prévia da barra de baixo). */
+  readonly myShare = computed(() => this._snapshot().shares.find((s) => s.isLocal) ?? null);
   /** Telas que você escondeu, para a faixa de "voltar a ver". */
   readonly hiddenShares = computed(() => this._snapshot().shares.filter((s) => s.hidden));
   readonly needsAudioUnlock = computed(() => this._snapshot().needsAudioUnlock);
@@ -361,6 +365,10 @@ export class RoomStore {
     this.session.focusShare(id);
   }
 
+  /** Prévia barata da minha tela ou câmera (cópia em 360p a 15 fps). Devolve como desligar. */
+  startLocalPreview(el: HTMLVideoElement, which: 'main' | 'cam') {
+    return this.session.startLocalPreview(el, which);
+  }
   startPreview(id: string, el: HTMLMediaElement) {
     return this.session.startPreview(id, el);
   }
