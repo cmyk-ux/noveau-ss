@@ -72,7 +72,7 @@ import { Activity, Surface, activityLine } from '../core/activity';
               <span class="name" [title]="p.name">{{ p.name }}</span>
               <span class="sub" [class.doing]="p.activity !== null">
                 @if (p.activity; as a) {
-                  <cen-pixel class="act-icon" [name]="actIcon(a.surface)" [size]="9" />{{ p.isLocal ? 'você · ' + (a.name || actText(a)) : actText(a) }}
+                  <cen-pixel class="act-icon" [name]="actIcon(a.surface)" [size]="9" />{{ p.isLocal ? 'você · ' : '' }}{{ actText(a) }}
                 }
                 @else if (p.isLocal) { você{{ isMobile ? ' · no celular' : '' }} }
                 @else if (p.myOtherDevice) { você · {{ p.mobile ? 'no celular' : 'no PC' }} }
@@ -279,7 +279,6 @@ export class PeoplePanel {
 
   actText(a: Activity): string {
     if (a.surface === 'camera') return 'câmera ligada';
-    if (a.name !== '') return `transmitindo ${a.name}`;
     return a.surface === 'monitor' || a.surface === '' ? 'transmitindo a tela' : `transmitindo ${activityLine(a)}`;
   }
 

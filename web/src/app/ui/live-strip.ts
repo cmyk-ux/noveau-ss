@@ -1,5 +1,5 @@
 import { Component, DestroyRef, ElementRef, computed, effect, inject, signal, viewChild } from '@angular/core';
-import { activityLine, recentActivities } from '../core/activity';
+import { activityLine } from '../core/activity';
 import { IS_MOBILE } from '../core/device';
 import { ShareView } from '../core/room-session';
 import { RoomStore } from '../core/room-store';
@@ -61,7 +61,7 @@ function iconFor(s: ShareView): string {
       <div class="card panel-surface" role="tooltip" [style.left.px]="p.x" (pointerenter)="overCard = true; keep()"
         (pointerleave)="overCard = false; leave()" (focusin)="keep()" (focusout)="leave()">
         <div class="head">
-          <span class="onair mono">{{ p.face.share.isLocal ? 'enviando' : 'ao vivo' }}</span>
+          <span class="onair mono" [class.mine]="p.face.share.isLocal">{{ p.face.share.isLocal ? 'enviando' : 'ao vivo' }}</span>
           <strong>{{ p.face.share.isLocal ? 'Sua tela' : p.face.name }}</strong>
         </div>
         <div class="screen" (click)="pick(p.face)">
@@ -73,20 +73,7 @@ function iconFor(s: ShareView): string {
           <span class="what">{{ p.face.line || (p.face.share.kind === 'camera' ? 'câmera' : 'tela') }}</span>
           @if (p.face.share.hidden) { <span class="tag">escondida</span> }
         </div>
-        @if (p.face.share.isLocal && p.face.share.kind === 'screen') {
-          <label class="label name-label" for="act-name">o que você está passando?</label>
-          <input id="act-name" class="input" maxlength="40" placeholder="ex.: Fortnite, Photoshop, um filme"
-            [value]="store.myActivity()?.name ?? ''" (keydown.enter)="saveName($any($event.target).value); $any($event.target).blur()"
-            (change)="saveName($any($event.target).value)" />
-          @if (recent().length > 0) {
-            <div class="chips">
-              @for (r of recent(); track r) {
-                <button type="button" class="chip" [class.lit]="r === store.myActivity()?.name" (click)="saveName(r)">{{ r }}</button>
-              }
-            </div>
-          }
-          <p class="hint">Aparece ao lado do seu nome para a sala, como o jogo no Discord.</p>
-        } @else if (p.face.share.id !== focusedId()) {
+        @if (p.face.share.id !== focusedId()) {
           <p class="foot mono">clique para assistir</p>
         }
       </div>
@@ -130,7 +117,7 @@ function iconFor(s: ShareView): string {
     .head strong { font-size: 0.85rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .onair { font-size: 0.58rem; text-transform: uppercase; letter-spacing: 0.14em; color: #fff; background: var(--danger);
       padding: 2px 5px; border-radius: 1px; flex-shrink: 0; }
-    .card:has(.input) .onair { background: var(--accent); }
+    .onair.mine { background: var(--accent); }
     .screen { position: relative; aspect-ratio: 16 / 9; background: #000; border-radius: 2px; overflow: hidden; cursor: pointer;
       box-shadow: 0 0 0 1px #0b0b0c, inset 0 0 0 1px rgb(255 255 255 / 0.04); }
     .screen video { width: 100%; height: 100%; object-fit: contain; display: block; animation: crt-on 320ms var(--ease) both; }
@@ -140,11 +127,6 @@ function iconFor(s: ShareView): string {
       padding: 2px 6px; animation: blink 1.2s steps(1) infinite; }
     .act { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.45rem; color: var(--accent-hi); min-width: 0; }
     .what { font: 500 0.72rem/1.2 var(--mono); letter-spacing: 0.04em; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .name-label { display: block; margin: 0.7rem 0 0.3rem; }
-    .input { width: 100%; height: 30px; font-size: 0.8rem; }
-    .chips { margin-top: 0.4rem; }
-    .chip { text-transform: none; letter-spacing: 0.02em; }
-    .card .hint { font-size: 0.72rem; margin: 0.45rem 0 0; }
     .foot { margin: 0.35rem 0 0; font-size: 0.6rem; letter-spacing: 0.14em; text-transform: uppercase; color: var(--faint); }
 
     /* Régua entra como uma gaveta saindo do painel, em degraus. */
@@ -189,7 +171,6 @@ export class LiveStrip {
     return face === undefined || h === null ? null : { face, x: h.x };
   });
   protected readonly tuned = signal(false);
-  protected readonly recent = signal<string[]>([]);
   private readonly pv = viewChild<ElementRef<HTMLVideoElement>>('pv');
   private attached: { id: string; el: HTMLVideoElement; track: string } | null = null;
   private openTimer?: number;
@@ -229,11 +210,8 @@ export class LiveStrip {
     window.clearTimeout(this.openTimer);
     if (f.share.hidden) this.store.showShare(f.share.id);
     this.store.focusShare(f.share.id);
-    // Na própria tela a prévia fica (tem o campo do nome); nas outras, já está assistindo.
-    if (!f.share.isLocal) {
-      this.overCard = false;
-      this.hoverId.set(null);
-    }
+    this.overCard = false;
+    this.hoverId.set(null);
   }
 
   hover(f: Face, e: Event) {
@@ -243,7 +221,6 @@ export class LiveStrip {
     const btn = e.currentTarget as HTMLElement;
     const x = btn.getBoundingClientRect().left - this.host.nativeElement.getBoundingClientRect().left;
     const open = () => {
-      if (f.share.isLocal) this.recent.set(recentActivities());
       this.hoverId.set({ id: f.share.id, x: Math.max(0, x - 8) });
     };
     // Já tem uma prévia aberta: troca na hora, como passar o dedo pelos canais.
@@ -261,14 +238,9 @@ export class LiveStrip {
     window.clearTimeout(this.openTimer);
     window.clearTimeout(this.closeTimer);
     this.closeTimer = window.setTimeout(() => {
-      // Digitando o nome: não fecha embaixo do cursor.
-      if (this.overCard || this.host.nativeElement.querySelector('.card input:focus') !== null) return;
+      if (this.overCard) return;
       this.hoverId.set(null);
     }, CLOSE_MS);
   }
 
-  saveName(v: string) {
-    this.store.setActivityName(v);
-    this.recent.set(recentActivities());
-  }
 }

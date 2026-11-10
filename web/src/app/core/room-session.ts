@@ -49,7 +49,7 @@ export interface ShareView {
   hidden?: boolean;
   /** Travou várias vezes seguidas: recebendo a cópia menor por um tempo (só para você). */
   shielded?: { until: number; width: number; height: number } | null;
-  /** O que está passando (jogo, programa) e de onde vem a imagem. */
+  /** De onde vem a imagem (tela inteira, janela, aba, câmera, OBS). */
   activity: Activity;
   /** A imagem principal é a sua própria câmera: aparece espelhada, como num espelho. */
   mirror: boolean;
@@ -850,10 +850,10 @@ export class RoomSession {
               ? null
               : { trackSid: cam.trackSid, mirror: isLocal && cam === ownCam, fromPhone: cam !== ownCam },
           activity: obs
-            ? { surface: 'obs', name: '' }
+            ? { surface: 'obs' }
             : visual.kind === 'camera' && !isIngress
-              ? { surface: 'camera', name: '' }
-              : (parseActivity(p.attributes?.[ACTIVITY_ATTR]) ?? { surface: '', name: '' }),
+              ? { surface: 'camera' }
+              : (parseActivity(p.attributes?.[ACTIVITY_ATTR]) ?? { surface: '' }),
         },
         publication: visual.publication,
         cam,
