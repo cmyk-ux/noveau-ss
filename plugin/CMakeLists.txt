@@ -128,3 +128,13 @@ if(NOVEAU_TESTS)
   target_compile_definitions(stream_test PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JucePlugin_VersionString="teste")
   target_link_libraries(stream_test PRIVATE juce::juce_events juce::juce_audio_basics ixws)
 endif()
+
+# Foto da tela do plugin em cada estado (só para conferir o layout; precisa de X, ex.: xvfb-run).
+if(NOVEAU_TESTS AND UNIX AND NOT APPLE)
+  juce_add_gui_app(editor_shot PRODUCT_NAME "editor_shot")
+  target_sources(editor_shot PRIVATE Tests/editor_shot.cpp Source/PluginProcessor.cpp Source/PluginEditor.cpp Source/Streamer.cpp Source/Packet.cpp)
+  target_include_directories(editor_shot PRIVATE Source)
+  target_compile_definitions(editor_shot PRIVATE JUCE_WEB_BROWSER=0 JUCE_USE_CURL=0 JUCE_MODAL_LOOPS_PERMITTED=1
+    JucePlugin_Name="noveau DAW" JucePlugin_VersionString="teste")
+  target_link_libraries(editor_shot PRIVATE juce::juce_audio_utils ixws)
+endif()

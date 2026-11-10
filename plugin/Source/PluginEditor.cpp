@@ -104,7 +104,7 @@ NoveauEditor::NoveauEditor (NoveauProcessor& p) : AudioProcessorEditor (p), proc
     };
     addChildComponent (forgetButton);
 
-    setSize (460, 340);
+    setSize (460, 310);
     timerCallback();
     startTimerHz (4);
 }
@@ -283,10 +283,10 @@ void NoveauEditor::resized()
     r.removeFromTop (18);
     codeLabel.setBounds (r.removeFromTop (16));
     row = r.removeFromTop (28);
-    codeButton.setBounds (row.removeFromRight (70));
-    row.removeFromRight (8);
-    codeBox.setBounds (row.removeFromLeft (140));
-    row.removeFromLeft (16);
+    codeBox.setBounds (row.removeFromLeft (130));
+    row.removeFromLeft (6);
+    codeButton.setBounds (row.removeFromLeft (60));
+    row.removeFromLeft (24);
     serverLabel.setBounds (row.removeFromLeft (32));
     serverBox.setBounds (row);
 }
