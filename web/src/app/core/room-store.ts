@@ -155,6 +155,17 @@ export class RoomStore {
     const f = this.focused();
     return f !== null && this._camClosed().has(f.id);
   });
+  /** Câmeras que você escondeu (na grade e na janelinha): não são baixadas. */
+  readonly camClosed = this._camClosed.asReadonly();
+  /**
+   * Minha câmera saindo agora, para o retorno (você se vendo): a do PC ou a do celular.
+   * O retorno é uma cópia leve (360p): a transmissão não muda.
+   */
+  readonly selfCam = computed<{ mirror: boolean; fromPhone: boolean } | null>(() => {
+    const me = this._snapshot().me;
+    if (me.cam) return { mirror: true, fromPhone: false };
+    return me.phone?.cam === 'on' ? { mirror: false, fromPhone: true } : null;
+  });
   setCamBig(id: string, big: boolean) {
     this._camBig.update((s) => toggled(s, id, big));
     this.applyCamLayout(id);

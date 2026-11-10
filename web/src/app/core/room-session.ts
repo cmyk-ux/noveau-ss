@@ -7,6 +7,7 @@ import {
   RemoteTrackPublication,
   Room,
   RoomEvent,
+  TrackEvent,
   Track,
   TrackPublication,
   VideoPresets,
@@ -505,6 +506,8 @@ export class RoomSession {
     const screen = lp.getTrackPublication(Track.Source.ScreenShare)?.track?.mediaStreamTrack;
     const cam = lp.getTrackPublication(Track.Source.Camera)?.track?.mediaStreamTrack;
     const source = which === 'cam' ? cam : (screen ?? cam);
+    // Câmera pelo celular: ela não é local, chega pela sala.
+    if (source === undefined && (which === 'cam' || screen === undefined)) return this.watchMyPhoneCam(el);
     if (source === undefined || source.readyState === 'ended') return () => undefined;
     const copy = source.clone();
     void copy.applyConstraints({ width: { max: 640 }, height: { max: 360 }, frameRate: { max: 15 } }).catch(() => undefined);
@@ -516,6 +519,32 @@ export class RoomSession {
       source.removeEventListener('ended', end);
       copy.stop();
       if (el.srcObject !== null) el.srcObject = null;
+    };
+  }
+
+  /**
+   * A câmera do meu celular, vista por mim (prévia e retorno). Ela chega pela sala como a de outra
+   * pessoa: só é baixada enquanto alguém aqui olha, e na cópia menor (360p).
+   */
+  private readonly selfViews = new Set<HTMLMediaElement>();
+  private watchMyPhoneCam(el: HTMLMediaElement): () => void {
+    const pub = this.phones().get(this.room.localParticipant.identity)?.getTrackPublication(Track.Source.Camera);
+    if (!(pub instanceof RemoteTrackPublication) || !isLive(pub)) return () => undefined;
+    this.selfViews.add(el);
+    this.followFocus(this.live);
+    const attach = () => {
+      if (pub.track === undefined || !this.selfViews.has(el)) return;
+      this.release(el);
+      pub.track.attach(el);
+    };
+    attach();
+    // Ainda não chegou (acabou de ligar a cópia): liga quando chegar.
+    pub.on(TrackEvent.Subscribed, attach);
+    return () => {
+      pub.off(TrackEvent.Subscribed, attach);
+      pub.track?.detach(el);
+      this.selfViews.delete(el);
+      this.followFocus(this.live);
     };
   }
 
@@ -999,22 +1028,33 @@ export class RoomSession {
     const visible = this.stageIds(shares).length;
     const used = new Set<TrackPublication>();
     for (const s of shares) {
-      const shown = !this.away && !this.hidden.has(s.view.id) && (grid || s.view.id === this.focusedShareId);
+      // A minha nunca vai para o palco (só para a prévia e o retorno da câmera).
+      const shown =
+        !s.view.isLocal && !this.away && !this.hidden.has(s.view.id) && (grid || s.view.id === this.focusedShareId);
       used.add(s.publication);
       if (s.cam !== undefined) used.add(s.cam);
-      // A câmera do canto: só com a tela em foco (na grade não cabe) e se você não fechou a janelinha.
-      // Pequena, recebe a cópia média; trocada com a tela (grande), a máxima.
+      // A câmera junto da tela, se você não escondeu. Na grade, num cantinho de cada monitor: a cópia
+      // menor. Em foco, na janelinha: a média; trocada com a tela (grande), a máxima.
+      // Escondida, o servidor para de mandar: não baixa nem decodifica nada.
       if (s.cam instanceof RemoteTrackPublication) {
-        const big = this.camBig.has(s.view.id);
-        const camShown = shown && !grid && !this.camClosed.has(s.view.id);
+        const camShown = s.view.isLocal ? this.selfViews.size > 0 : shown && !this.camClosed.has(s.view.id);
         s.cam.setSubscribed(true);
         s.cam.setEnabled(camShown);
-        if (camShown) s.cam.setVideoQuality(big ? VideoQuality.HIGH : VideoQuality.MEDIUM);
+        if (camShown)
+          s.cam.setVideoQuality(
+            grid || s.view.isLocal ? VideoQuality.LOW : this.camBig.has(s.view.id) ? VideoQuality.HIGH : VideoQuality.MEDIUM,
+          );
       }
       // Minha própria câmera pelo celular também chega pela sala (as do PC são locais).
       if (!(s.publication instanceof RemoteTrackPublication)) continue;
       const pub = s.publication;
       pub.setSubscribed(true);
+      if (s.view.isLocal) {
+        const want = this.selfViews.size > 0 && !this.away;
+        pub.setEnabled(want);
+        if (want) pub.setVideoQuality(VideoQuality.LOW);
+        continue;
+      }
       if (!shown && s.view.id === this.previewId && !this.away) {
         // Só a prévia: a cópia menor basta para a miniatura.
         pub.setEnabled(true);

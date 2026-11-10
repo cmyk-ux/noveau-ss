@@ -19,6 +19,7 @@ import { StreamPanel } from './stream-panel';
 import { ObsPanel } from './obs-panel';
 import { DawPanel } from './daw-panel';
 import { CamPip } from './cam-pip';
+import { SelfCam } from './self-cam';
 import { ClipItem } from '../core/clips';
 import { LiveStrip } from './live-strip';
 
@@ -33,7 +34,7 @@ function timecode(ms: number): string {
 
 @Component({
   selector: 'cen-room-screen',
-  imports: [Icon, Stage, ShareTile, VolumeSlider, StatsPanel, PeoplePanel, StreamPanel, DevicesPanel, DawPanel, ObsPanel, CamPip, LiveStrip],
+  imports: [Icon, Stage, ShareTile, VolumeSlider, StatsPanel, PeoplePanel, StreamPanel, DevicesPanel, DawPanel, ObsPanel, CamPip, SelfCam, LiveStrip],
   host: {
     '(document:fullscreenchange)': 'isFullscreen.set(fullscreenActive())',
     '(document:keydown.escape)': 'closeAll()',
@@ -283,6 +284,8 @@ function timecode(ms: number): string {
           </div>
         }
         <cen-stats-panel />
+        <!-- Você se vendo (só com a sua câmera ligada; dá para parar de ver). -->
+        <cen-self-cam />
         @if (volumeMenu(); as m) {
           <div class="menu-backdrop" (click)="volumeMenu.set(null)" (contextmenu)="$event.preventDefault(); volumeMenu.set(null)"></div>
           <div class="volume-menu panel-surface" animate.leave="menu-out" [style.left.px]="m.x" [style.top.px]="m.y" (click)="$event.stopPropagation()">

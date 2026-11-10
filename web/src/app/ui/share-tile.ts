@@ -1,4 +1,4 @@
-import { Component, DestroyRef, ElementRef, computed, effect, inject, input, viewChild } from '@angular/core';
+import { Component, DestroyRef, ElementRef, computed, effect, inject, input, signal, viewChild } from '@angular/core';
 import { Icon } from './icon';
 import { ShareView } from '../core/room-session';
 import { RoomStore } from '../core/room-store';
@@ -9,6 +9,24 @@ import { RoomStore } from '../core/room-store';
   imports: [Icon],
   template: `
     <video #video autoplay playsinline muted></video>
+    @if (share().cam; as c) {
+      @if (camHidden()) {
+        <button type="button" class="cam-chip" title="Mostrar a câmera de novo"
+          (click)="$event.stopPropagation(); store.setCamClosed(share().id, false)">
+          <cen-icon name="camera" [size]="13" />
+        </button>
+      } @else {
+        <!-- Câmera junto da tela: num canto do monitor, na cópia menor. Clique abre grande. -->
+        <div class="cam" title="Clique para ver a câmera grande" (click)="$event.stopPropagation(); openCam()">
+          <video #cam autoplay playsinline muted [class.mirror]="c.mirror" (playing)="camTuned.set(true)"></video>
+          @if (!camTuned()) { <span class="snow" aria-hidden="true"></span> }
+          <button type="button" class="cam-hide" title="Esconder a câmera (para de baixar o vídeo dela)"
+            (click)="$event.stopPropagation(); store.setCamClosed(share().id, true)">
+            <cen-icon name="close" [size]="11" />
+          </button>
+        </div>
+      }
+    }
     <div class="eye" [title]="viewersTitle()"><cen-icon name="eye" [size]="14" /> {{ viewers().length }}</div>
     @if (!share().isLocal) {
       <button type="button" class="mute" [class.on]="share().volume.muted"
@@ -50,6 +68,23 @@ import { RoomStore } from '../core/room-store';
     /* Toque: botão sempre visível e com área de dedo. */
     @media (hover: none) { .hide { display: grid; width: 32px; height: 28px; margin: -8px -8px -8px 0; } .mute { display: grid; } }
     .snd.off { color: var(--muted); text-decoration: line-through; }
+    /* Câmera no canto de cima (embaixo de quem assiste), como um monitorzinho de retorno preso ao monitor maior. */
+    .cam { position: absolute; right: 8px; top: 34px; z-index: 2; width: clamp(72px, 26%, 220px); aspect-ratio: 16 / 9;
+      background: #000; border-radius: 2px; overflow: hidden; cursor: zoom-in;
+      box-shadow: 0 0 0 1px #0b0b0c, 0 0 0 2px #2a2a2b, 0 0 0 3px #0b0b0c, 0 6px 14px -8px #000; animation: crt-on 320ms var(--ease) both; }
+    .cam video { width: 100%; height: 100%; object-fit: cover; display: block; pointer-events: none; }
+    .cam video.mirror { transform: scaleX(-1); }
+    .cam .snow { position: absolute; inset: 0; background: repeating-linear-gradient(0deg, #1a1a1b 0 2px, #0e0e0f 2px 4px);
+      animation: blink 0.9s steps(1) infinite; }
+    .cam-hide { position: absolute; right: 3px; top: 3px; width: 18px; height: 16px; display: none; place-items: center; padding: 0;
+      border: 1px solid #0b0b0c; border-radius: 2px; background: var(--plate); color: var(--muted); box-shadow: var(--key-shadow); cursor: pointer; }
+    .cam-hide:hover { background: var(--plate-hi); color: var(--text); }
+    .cam-hide:active { transform: translateY(1px); box-shadow: var(--key-pressed); }
+    .cam:hover .cam-hide { display: grid; }
+    .cam-chip { position: absolute; right: 8px; top: 34px; z-index: 2; width: 26px; height: 22px; display: grid; place-items: center; padding: 0;
+      border: 1px solid #0b0b0c; border-radius: 3px; background: var(--plate); color: var(--muted); box-shadow: var(--key-shadow); cursor: pointer; }
+    .cam-chip:hover { background: var(--plate-hi); color: var(--text); }
+    @media (hover: none) { .cam-hide { display: grid; width: 26px; height: 22px; } .cam-chip { width: 32px; height: 28px; } }
   `,
 })
 export class ShareTile {
@@ -57,18 +92,44 @@ export class ShareTile {
   protected readonly store = inject(RoomStore);
   private readonly video = viewChild.required<ElementRef<HTMLVideoElement>>('video');
   private attached: string | null = null;
+  private readonly camEl = viewChild<ElementRef<HTMLVideoElement>>('cam');
+  private camAttached: { el: HTMLVideoElement; sid: string } | null = null;
+  protected readonly camTuned = signal(false);
+  protected readonly camHidden = computed(() => this.store.camClosed().has(this.share().id));
 
   protected readonly viewers = computed(() => this.store.viewersOf(this.share().id));
   protected readonly viewersTitle = computed(() =>
     this.viewers().length === 0 ? 'Ninguém assistindo' : `Assistindo: ${this.viewers().join(', ')}`,
   );
 
+  /** Abre esta tela em foco já com a câmera grande. */
+  protected openCam() {
+    this.store.focusShare(this.share().id);
+    this.store.setCamBig(this.share().id, true);
+  }
+
   protected hasStudio() {
     return this.store.studio.streams().some((s) => s.identity === this.share().id);
   }
 
   constructor() {
-    inject(DestroyRef).onDestroy(() => this.store.detachShare(this.share().id, this.video().nativeElement));
+    inject(DestroyRef).onDestroy(() => {
+      this.store.detachShare(this.share().id, this.video().nativeElement);
+      if (this.camAttached !== null) this.store.detachCam(this.share().id, this.camAttached.el);
+    });
+    // Câmera do canto: liga quando aparece, solta quando você esconde (o vídeo some junto).
+    effect(() => {
+      const el = this.camEl()?.nativeElement;
+      const s = this.share();
+      const sid = s.cam?.trackSid;
+      const cur = this.camAttached;
+      if (cur !== null && cur.el === el && cur.sid === sid) return;
+      if (cur !== null) this.store.detachCam(s.id, cur.el);
+      this.camAttached = null;
+      if (el === undefined || sid === undefined) return;
+      this.camTuned.set(false);
+      if (this.store.attachCam(s.id, el)) this.camAttached = { el, sid };
+    });
     effect(() => {
       const s = this.share();
       // Quando a pessoa reinicia a transmissão, o track muda: liga o novo.
