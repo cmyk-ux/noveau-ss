@@ -42,7 +42,7 @@ import { Toast } from './toast';
 import { Channel } from './volume';
 import { ClipRecorder, ClipServer, clipServer, clipsSupported } from './clips';
 import { ShareWatch } from './stats';
-import { Activity, Surface, cleanName, encodeActivity, nameFromLabel, rememberActivity } from './activity';
+import { Activity, Surface, encodeActivity } from './activity';
 
 function toggled(set: ReadonlySet<string>, id: string, on: boolean): ReadonlySet<string> {
   if (set.has(id) === on) return set;
@@ -368,14 +368,6 @@ export class RoomStore {
     this.session.stopPreview(id, el);
   }
 
-  /** Nome do que estou transmitindo (jogo, programa). Vazio tira o nome. */
-  setActivityName(name: string) {
-    const a = this._activity();
-    if (a === null) return;
-    const n = cleanName(name);
-    rememberActivity(n);
-    this._activity.set({ ...a, name: n });
-  }
   async unlockAudio() {
     await this.session.unlockAudio();
   }
@@ -558,7 +550,7 @@ export class RoomStore {
     this.uploadGuard = r.upload;
     this._encoder.set({ codec: r.codec, gpu: r.gpu });
     this._liveSignature.set(this.prefs.signature());
-    this._activity.set({ surface: (r.surface ?? '') as Surface, name: nameFromLabel(r.label) });
+    this._activity.set({ surface: (r.surface ?? '') as Surface });
     this._soundProblem.set(
       r.audio === 'refused' ? 'refused' : r.audio === 'published' && r.surface === 'monitor' ? 'whole-pc' : null,
     );

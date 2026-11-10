@@ -18,7 +18,8 @@
 //   DISCORD_REDIRECT_URI   opcional; padrão: <endereço do site>/api/discord/callback
 
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { cachedChannelOf, membersOf, pingCall, sendDm, startBot } from './discord-bot.mjs';
+import { cachedChannelOf, channelsToWatch, membersOf, pingCall, sendDm, setLiveStatus, startBot } from './discord-bot.mjs';
+export { channelsToWatch, setLiveStatus };
 
 const API = process.env.DISCORD_API_URL || 'https://discord.com/api/v10'; // trocável só para testes
 const CLIENT_ID = process.env.DISCORD_CLIENT_ID ?? '';

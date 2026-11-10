@@ -21,8 +21,6 @@ import { DawPanel } from './daw-panel';
 import { CamPip } from './cam-pip';
 import { ClipItem } from '../core/clips';
 import { LiveStrip } from './live-strip';
-import { PixelIcon } from './pixel-icon';
-import { activityLine } from '../core/activity';
 
 type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
 
@@ -35,7 +33,7 @@ function timecode(ms: number): string {
 
 @Component({
   selector: 'cen-room-screen',
-  imports: [Icon, Stage, ShareTile, VolumeSlider, StatsPanel, PeoplePanel, StreamPanel, DevicesPanel, DawPanel, ObsPanel, CamPip, LiveStrip, PixelIcon],
+  imports: [Icon, Stage, ShareTile, VolumeSlider, StatsPanel, PeoplePanel, StreamPanel, DevicesPanel, DawPanel, ObsPanel, CamPip, LiveStrip],
   host: {
     '(document:fullscreenchange)': 'isFullscreen.set(fullscreenActive())',
     '(document:keydown.escape)': 'closeAll()',
@@ -62,9 +60,6 @@ function timecode(ms: number): string {
           <div class="now" [class.mine]="f.isLocal">
             <span class="onair mono">{{ f.isLocal ? 'enviando' : 'no ar' }}</span>
             <strong>{{ shareTitle() }}</strong>
-            @if (focusedActivity(); as a) {
-              <span class="activity" [title]="'Transmitindo: ' + a"><cen-pixel [name]="focusedIcon()" [size]="11" />{{ a }}</span>
-            }
             @if (stage()?.measured(); as m) { <span class="tag mono">{{ m }}</span> }
             @if (senderNote(); as n) { <span class="tag warn sender-note" [title]="n.title">{{ n.text }}</span> }
             @if (f.hasAudio) { <span class="tag">com som</span> }
@@ -449,9 +444,6 @@ function timecode(ms: number): string {
     .onair { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.14em; color: #fff; background: var(--danger);
       padding: 2px 6px; border-radius: 1px; }
     .now.mine .onair { background: var(--accent); }
-    /* O que está passando, como o jogo ao lado do nome no Discord. */
-    .activity { display: inline-flex; align-items: center; gap: 0.35rem; max-width: 16rem; overflow: hidden; text-overflow: ellipsis;
-      white-space: nowrap; font: 500 0.74rem/1.2 var(--mono); color: var(--accent-hi); }
     .diag-wrap { position: relative; }
     .btn.alert { color: var(--warn); }
     .diag { position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; width: min(380px, calc(100vw - 1.5rem));
@@ -760,16 +752,6 @@ export class RoomScreen {
     if (f === null) return '';
     const what = f.kind === 'camera' ? 'câmera' : 'tela';
     return f.isIngress ? f.ownerName : f.isLocal ? `Sua ${what}` : `${what} de ${f.ownerName}`;
-  });
-  protected readonly focusedActivity = computed(() => {
-    const f = this.store.focused();
-    // Câmera já está dita no título; o nome do OBS também.
-    if (f === null || f.activity.surface === 'camera' || f.activity.surface === 'obs') return '';
-    return activityLine(f.activity);
-  });
-  protected readonly focusedIcon = computed(() => {
-    const s = this.store.focused()?.activity.surface;
-    return s === 'window' ? 'window' : s === 'browser' ? 'tab' : 'monitor';
   });
   protected readonly shareTitle2 = computed(() =>
     this.canShare
