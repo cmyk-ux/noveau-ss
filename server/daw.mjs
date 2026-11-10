@@ -16,7 +16,8 @@
 //                    pacotes de áudio. Recebe {"t":"link",code}, {"t":"ok",name,resume,mode},
 //                    {"t":"room",call,listeners}, {"t":"listeners",n} e {"t":"error",message}.
 //   /api/daw/listen  o navegador manda {"t":"auth","token":<token do LiveKit>} e recebe:
-//                    texto {"t":"on",id,name,rate,format,channels} / {"t":"off",id}
+//                    texto {"t":"on",id,name,rate?,format?,channels?} / {"t":"off",id}
+//                    ("on" sai ao entrar na sala, sem formato, e de novo com o formato no 1º pacote)
 //                    binário [1 byte tamanho do id][id][pacote do plugin, como chegou]
 //
 // Pacote de áudio (cabeçalho de 16 bytes, little-endian, amostras intercaladas L R):
@@ -207,7 +208,11 @@ function handleSender(ws, callRoom) {
         // A mesma cópia do plugin reconectando: derruba a conexão antiga.
         const old = r.senders.get(session.id);
         if (old !== undefined && old.ws !== ws) old.ws.close(4000, 'substituído');
-        r.senders.set(session.id, { ws, info: null });
+        // Avisa na hora quem ouve, mesmo sem som ainda (DAW parada não chama o plugin): os
+        // controles aparecem e ficam até o plugin sair da master ou a DAW fechar ('off').
+        const info = { t: 'on', id: session.id, name: session.name };
+        r.senders.set(session.id, { ws, info });
+        for (const l of r.listeners) sendJson(l, info);
         session.room = room;
       }
     }

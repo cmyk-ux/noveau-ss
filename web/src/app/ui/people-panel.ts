@@ -33,7 +33,7 @@ import { Activity, Surface, activityLine } from '../core/activity';
       <p class="label">som de estúdio · sem compressão</p>
       <div class="rack">
         <div class="row">
-          <span class="led ok" [class.warn]="!st.playing"></span>
+          <span class="led" [class.ok]="!st.idle" [class.warn]="!st.idle && !st.playing"></span>
           <span class="who"><span class="name">{{ st.name }}</span></span>
           <span class="lcd fmt">{{ st.source === 'daw' ? 'DAW ' : '' }}{{ st.bits === 32 ? '32F' : st.bits + 'B' }} {{ st.rate / 1000 }}K</span>
         </div>
@@ -46,8 +46,12 @@ import { Activity, Surface, activityLine } from '../core/activity';
           <i [style.width.%]="bufferFill(st.level, st.target)"></i>
         </div>
         <p class="hint mono">
+          @if (st.idle) {
+            parada · nada tocando na DAW
+          } @else {
           buffer {{ (st.level * 1000).toFixed(0) }} / {{ (st.target * 1000).toFixed(0) }} ms
           @if (!st.playing) { · carregando }
+          }
           @if (st.underruns > 0) { · {{ st.underruns }} engasgo(s) }
           @if (st.lost > 0) { · {{ st.lost }} pacote(s) perdido(s) }
         </p>

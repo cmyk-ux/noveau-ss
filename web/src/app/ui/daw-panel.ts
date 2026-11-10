@@ -32,7 +32,7 @@ import { Toast } from '../core/toast';
       <p class="hint">Digite no campo "código da sala" do plugin. Ele volta sozinho para esta sala por 24 h.</p>
     }
 
-    <p class="label">tocando agora</p>
+    <p class="label">plugins na sala</p>
     @for (st of dawStreams(); track st.key) {
       <div class="stream">
         <div class="row">
@@ -44,14 +44,18 @@ import { Toast } from '../core/toast';
             (input)="store.studio.setDawVolume(st.key, +$any($event.target).value)" />
         </div>
         <p class="hint mono">
+          @if (st.idle) {
+            parada · nada tocando na DAW
+          } @else {
           buffer {{ (st.level * 1000).toFixed(0) }} / {{ (st.target * 1000).toFixed(0) }} ms
           @if (!st.playing) { · carregando }
+          }
           @if (st.underruns > 0) { · {{ st.underruns }} engasgo(s) }
           @if (st.lost > 0) { · {{ st.lost }} pacote(s) perdido(s) }
         </p>
       </div>
     } @empty {
-      <p class="hint">Nenhum plugin tocando nesta sala.
+      <p class="hint">Nenhum plugin conectado nesta sala.
         @if (!store.daw.connected()) { <span class="warn">Sem conexão com o servidor do plugin, tentando de novo…</span> }</p>
     }
 

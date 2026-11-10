@@ -111,7 +111,15 @@ export interface StudioStreamView {
   playing: boolean;
   underruns: number;
   lost: number;
+  /**
+   * Plugin de DAW conectado, mas sem som chegando (DAW parada: muitas não chamam o plugin quando
+   * nada toca). Os controles ficam até o plugin sair da master ou a DAW fechar.
+   */
+  idle: boolean;
 }
+
+/** Sem pacote há tanto tempo, o plugin de DAW conta como parado (o player é fechado aos 3 s). */
+const DAW_IDLE_MS = 600;
 
 interface Player {
   key: string;
@@ -198,14 +206,26 @@ export class StudioHub {
   };
   private readonly onLeave = (p: Participant) => this.drop(p.identity);
   private readonly dawVolume = new Map<string, number>();
+  /** Plugins de DAW conectados nesta sala (do "on" ao "off"), tocando ou não. */
+  private readonly dawOnline = new Map<string, { name: string; rate: number; bits: number; channels: number }>();
   private readonly unlock = () => {
     for (const pl of this.players.values()) if (pl.ctx.state === 'suspended') void pl.ctx.resume();
   };
   private readonly sweep = setInterval(() => {
-    // Quem parou de mandar há 3 s (parou de transmitir): libera.
+    // Quem parou de mandar há 3 s: libera o player. O plugin de DAW continua na lista (parado)
+    // enquanto estiver conectado; só sai com o "off" do servidor.
     const now = performance.now();
-    for (const pl of this.players.values()) if (now - pl.lastPacket > 3000) this.drop(pl.key);
-  }, 1000);
+    let changed = false;
+    for (const pl of this.players.values()) {
+      const quiet = now - pl.lastPacket;
+      if (quiet > 3000) this.drop(pl.key);
+      else if (pl.source === 'daw' && quiet > DAW_IDLE_MS && !pl.view.idle) {
+        pl.view = { ...pl.view, idle: true };
+        changed = true;
+      }
+    }
+    if (changed) this.publish();
+  }, 250);
 
   constructor(private readonly room: Room) {
     room.on(RoomEvent.DataReceived, this.onData);
@@ -268,9 +288,26 @@ export class StudioHub {
     this.ingest(`daw:${id}`, id, name, 'daw', payload);
   }
 
-  /** O plugin desconectou. */
+  /**
+   * O plugin entrou na sala (ou mandou o formato). Aparece mesmo sem som: a DAW parada não chama o
+   * plugin, e sem isto os controles sumiam até alguém dar play.
+   */
+  announceDaw(id: string, name: string, rate?: number, format?: number, channels?: number) {
+    const old = this.dawOnline.get(id);
+    this.dawOnline.set(id, {
+      name,
+      rate: rate ?? old?.rate ?? 48000,
+      bits: format ?? old?.bits ?? 24,
+      channels: channels ?? old?.channels ?? 2,
+    });
+    this.publish();
+  }
+
+  /** O plugin desconectou (saiu da master, DAW fechada ou pausado no plugin). */
   dropDaw(id: string) {
+    this.dawOnline.delete(id);
     this.drop(`daw:${id}`);
+    this.publish();
   }
 
   /** Volume de um plugin de DAW (0..1), só para você. */
@@ -296,6 +333,10 @@ export class StudioHub {
     }
     pl ??= this.create(key, identity, name, source, h.rate);
     pl.lastPacket = performance.now();
+    if (pl.view.idle) {
+      pl.view = { ...pl.view, idle: false };
+      this.publish();
+    }
     pl.bits = h.bits;
     pl.channels = h.channels;
     if (pl.expected >= 0 && h.seq !== pl.expected) {
@@ -349,6 +390,7 @@ export class StudioHub {
         playing: false,
         underruns: 0,
         lost: 0,
+        idle: false,
       },
     };
     this.players.set(key, pl);
@@ -380,6 +422,27 @@ export class StudioHub {
   }
 
   private publish() {
-    this._streams.set([...this.players.values()].map((pl) => pl.view));
+    const views = [...this.players.values()].map((pl) => pl.view);
+    // Plugin conectado sem player (DAW parada): continua na lista, parado, com o volume dele.
+    for (const [id, d] of this.dawOnline) {
+      const key = `daw:${id}`;
+      if (this.players.has(key)) continue;
+      views.push({
+        key,
+        identity: id,
+        name: d.name,
+        source: 'daw',
+        bits: d.bits,
+        rate: d.rate,
+        channels: d.channels,
+        level: 0,
+        target: this.latency,
+        playing: false,
+        underruns: 0,
+        lost: 0,
+        idle: true,
+      });
+    }
+    this._streams.set(views);
   }
 }
