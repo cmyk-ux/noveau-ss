@@ -29,6 +29,7 @@ import {
   isWaitingForCamera,
   isWebcamOn,
   localPerson,
+  PreviewSize,
   RoomSession,
   RoomSnapshot,
   watchersOf,
@@ -128,7 +129,17 @@ export class RoomStore {
   /** Telas à mostra (sem as que você escondeu). */
   readonly shares = computed(() => this._snapshot().shares.filter((s) => !s.hidden));
   /** Telas que vão para o palco e a grade: as dos outros. A minha só aparece na prévia da barra de baixo. */
-  readonly stageShares = computed(() => this.shares().filter((s) => !s.isLocal));
+  readonly stageShares = computed(() => this.shares().filter((s) => !s.isLocal || this._myOnStage()));
+  /**
+   * Minha tela no palco, como era antes. Desligado por padrão (custa processamento para quem
+   * transmite); volta a desligar ao recarregar a página.
+   */
+  private readonly _myOnStage = signal(false);
+  readonly myOnStage = this._myOnStage.asReadonly();
+  setMyOnStage(on: boolean) {
+    this._myOnStage.set(on);
+    this.session.setMyOnStage(on);
+  }
   /** A minha tela ou câmera saindo agora (para a prévia da barra de baixo). */
   readonly myShare = computed(() => this._snapshot().shares.find((s) => s.isLocal) ?? null);
   /** Telas que você escondeu, para a faixa de "voltar a ver". */
@@ -360,6 +371,8 @@ export class RoomStore {
     return this.session.attachShare(id, el);
   }
   hideShare(id: string) {
+    // A minha não se esconde: sai do palco e volta para a prévia da barra.
+    if (this.myShare()?.id === id) return this.setMyOnStage(false);
     this.session.hideShare(id);
   }
 
@@ -381,8 +394,8 @@ export class RoomStore {
   }
 
   /** Prévia barata da minha tela ou câmera (cópia em 360p a 15 fps). Devolve como desligar. */
-  startLocalPreview(el: HTMLVideoElement, which: 'main' | 'cam') {
-    return this.session.startLocalPreview(el, which);
+  startLocalPreview(el: HTMLVideoElement, which: 'main' | 'cam', size: PreviewSize = 'small') {
+    return this.session.startLocalPreview(el, which, size);
   }
   startPreview(id: string, el: HTMLMediaElement) {
     return this.session.startPreview(id, el);

@@ -218,6 +218,29 @@ export function phoneOf(p: Participant | undefined): string | null {
   return v === undefined || v === '' ? null : v;
 }
 
+/** Tamanho da cópia de uma prévia minha: pequena (360p 15 fps), média (720p 30 fps) ou cheia (até 1080p 30 fps). */
+export type PreviewSize = 'small' | 'medium' | 'full';
+
+/**
+ * Cópia da captura reduzida pelo próprio navegador, sem mudar a proporção (câmera 4:3, celular em
+ * pé). A transmissão e o clipe continuam com a original.
+ */
+function lightCopy(source: MediaStreamTrack, size: PreviewSize): MediaStreamTrack {
+  const copy = source.clone();
+  const { width = 0, height = 0 } = source.getSettings();
+  const maxH = size === 'small' ? 360 : size === 'medium' ? 720 : 1080;
+  const fps = size === 'small' ? 15 : 30;
+  // Pela altura do lado menor: celular em pé (1080x1920) vira 360x640, não 202x360.
+  const short = Math.min(width, height);
+  const k = short > maxH ? maxH / short : 1;
+  const c: MediaTrackConstraints =
+    width > 0 && height > 0
+      ? { width: { ideal: Math.round(width * k) }, height: { ideal: Math.round(height * k) }, frameRate: { max: fps } }
+      : { height: { max: maxH }, frameRate: { max: fps } };
+  void copy.applyConstraints(c).catch(() => undefined);
+  return copy;
+}
+
 function isLive(pub: TrackPublication | undefined): pub is TrackPublication {
   return pub !== undefined && !pub.isMuted;
 }
@@ -501,23 +524,45 @@ export class RoomSession {
    * reduzida a 360p e 15 fps. Mostrar a original custava ~0,6 núcleo a mais; esta, ~0,05
    * (medido no Chrome com uma tela de 1440p60). A transmissão e o clipe não mudam.
    */
-  startLocalPreview(el: HTMLVideoElement, which: 'main' | 'cam'): () => void {
+  startLocalPreview(el: HTMLVideoElement, which: 'main' | 'cam', size: PreviewSize = 'small'): () => void {
     const lp = this.room.localParticipant;
-    const screen = lp.getTrackPublication(Track.Source.ScreenShare)?.track?.mediaStreamTrack;
-    const cam = lp.getTrackPublication(Track.Source.Camera)?.track?.mediaStreamTrack;
-    const source = which === 'cam' ? cam : (screen ?? cam);
+    const screen = lp.getTrackPublication(Track.Source.ScreenShare)?.track;
+    const cam = lp.getTrackPublication(Track.Source.Camera)?.track;
+    const track = which === 'cam' ? cam : (screen ?? cam);
     // Câmera pelo celular: ela não é local, chega pela sala.
-    if (source === undefined && (which === 'cam' || screen === undefined)) return this.watchMyPhoneCam(el);
-    if (source === undefined || source.readyState === 'ended') return () => undefined;
-    const copy = source.clone();
-    void copy.applyConstraints({ width: { max: 640 }, height: { max: 360 }, frameRate: { max: 15 } }).catch(() => undefined);
-    el.srcObject = new MediaStream([copy]);
-    // A captura acabou (parou de compartilhar): a cópia acaba junto.
-    const end = () => copy.stop();
-    source.addEventListener('ended', end, { once: true });
+    if (track === undefined && (which === 'cam' || screen === undefined)) return this.watchMyPhoneCam(el, size);
+    if (track === undefined) return () => undefined;
+    return this.copyInto(el, track, size);
+  }
+
+  /**
+   * Põe no elemento uma cópia leve de uma captura minha. Trocar de câmera troca a captura por
+   * baixo (o LiveKit reinicia o track): a cópia é refeita da nova, sem ficar preta.
+   */
+  private copyInto(el: HTMLMediaElement, track: Track, size: PreviewSize): () => void {
+    let src: MediaStreamTrack | undefined;
+    let copy: MediaStreamTrack | undefined;
+    const end = () => copy?.stop();
+    const stop = () => {
+      src?.removeEventListener('ended', end);
+      copy?.stop();
+      src = copy = undefined;
+    };
+    const start = () => {
+      stop();
+      const next = track.mediaStreamTrack;
+      if (next === undefined || next.readyState === 'ended') return;
+      src = next;
+      copy = lightCopy(next, size);
+      el.srcObject = new MediaStream([copy]);
+      // A captura acabou (parou de compartilhar): a cópia acaba junto.
+      src.addEventListener('ended', end, { once: true });
+    };
+    start();
+    track.on(TrackEvent.Restarted, start);
     return () => {
-      source.removeEventListener('ended', end);
-      copy.stop();
+      track.off(TrackEvent.Restarted, start);
+      stop();
       if (el.srcObject !== null) el.srcObject = null;
     };
   }
@@ -526,11 +571,17 @@ export class RoomSession {
    * A câmera do meu celular, vista por mim (prévia e retorno). Ela chega pela sala como a de outra
    * pessoa: só é baixada enquanto alguém aqui olha, e na cópia menor (360p).
    */
-  private readonly selfViews = new Set<HTMLMediaElement>();
-  private watchMyPhoneCam(el: HTMLMediaElement): () => void {
+  private readonly selfViews = new Map<HTMLMediaElement, PreviewSize>();
+  /** A maior cópia que alguma prévia minha pede (a do celular é uma só para todas). */
+  private selfQuality(): VideoQuality | null {
+    const sizes = [...this.selfViews.values()];
+    if (sizes.length === 0) return null;
+    return sizes.includes('full') ? VideoQuality.HIGH : sizes.includes('medium') ? VideoQuality.MEDIUM : VideoQuality.LOW;
+  }
+  private watchMyPhoneCam(el: HTMLMediaElement, size: PreviewSize): () => void {
     const pub = this.phones().get(this.room.localParticipant.identity)?.getTrackPublication(Track.Source.Camera);
     if (!(pub instanceof RemoteTrackPublication) || !isLive(pub)) return () => undefined;
-    this.selfViews.add(el);
+    this.selfViews.set(el, size);
     this.followFocus(this.live);
     const attach = () => {
       if (pub.track === undefined || !this.selfViews.has(el)) return;
@@ -623,8 +674,17 @@ export class RoomSession {
     this.emit();
   }
 
+  /** Minha tela no palco (desligado por padrão, para não pesar em quem transmite). */
+  private myOnStage = false;
+  setMyOnStage(on: boolean) {
+    if (this.myOnStage === on) return;
+    this.myOnStage = on;
+    if (!on && this.live.some((s) => s.view.isLocal && s.view.id === this.focusedShareId)) this.focusedShareId = null;
+    this.emit();
+  }
+
   focusShare(id: string) {
-    if (this.live.some((s) => s.view.id === id && s.view.isLocal)) return;
+    if (!this.myOnStage && this.live.some((s) => s.view.id === id && s.view.isLocal)) return;
     this.focusedShareId = id;
     this.emit();
   }
@@ -649,7 +709,26 @@ export class RoomSession {
 
   /** Solta o vídeo de um elemento que vai sumir. */
   detachShare(id: string, el: HTMLMediaElement) {
+    this.dropCopy(el);
     this.live.find((s) => s.view.id === id)?.publication.track?.detach(el);
+  }
+
+  /**
+   * Minha tela (ou câmera) no palco, se você pediu: em vez da captura original (60 fps na
+   * resolução cheia, ~0,6 núcleo), uma cópia reduzida a 720p 30 fps. Quem assiste recebe a original.
+   */
+  private readonly copies = new Map<HTMLMediaElement, () => void>();
+  private attachLocal(el: HTMLMediaElement, pub: TrackPublication | undefined): boolean {
+    const track = pub?.track;
+    if (pub === undefined || pub instanceof RemoteTrackPublication || track?.mediaStreamTrack === undefined) return false;
+    if (track.mediaStreamTrack.readyState === 'ended') return false;
+    this.release(el);
+    this.copies.set(el, this.copyInto(el, track, 'medium'));
+    return true;
+  }
+  private dropCopy(el: HTMLMediaElement) {
+    this.copies.get(el)?.();
+    this.copies.delete(el);
   }
 
   /**
@@ -658,6 +737,7 @@ export class RoomSession {
    * o elemento junto (mesmo mostrando outra coisa).
    */
   private release(el: HTMLMediaElement) {
+    this.dropCopy(el);
     for (const s of this.live) {
       for (const t of [s.publication.track, s.cam?.track]) if (t !== undefined && t.attachedElements.includes(el)) t.detach(el);
     }
@@ -665,7 +745,9 @@ export class RoomSession {
 
   /** Liga o vídeo de uma tela qualquer (para a grade). */
   attachShare(id: string, el: HTMLMediaElement): boolean {
-    const track = this.live.find((s) => s.view.id === id)?.publication.track;
+    const s = this.live.find((x) => x.view.id === id);
+    if (s?.view.isLocal && !(s.publication instanceof RemoteTrackPublication)) return this.attachLocal(el, s.publication);
+    const track = s?.publication.track;
     if (track === undefined) return false;
     this.release(el);
     track.attach(el);
@@ -733,7 +815,9 @@ export class RoomSession {
 
   /** Liga a câmera que acompanha a tela de alguém (a janelinha do canto). */
   attachCam(id: string, el: HTMLMediaElement): boolean {
-    const track = this.live.find((s) => s.view.id === id)?.cam?.track;
+    const s = this.live.find((x) => x.view.id === id);
+    if (s?.view.isLocal && s.cam !== undefined && !(s.cam instanceof RemoteTrackPublication)) return this.attachLocal(el, s.cam);
+    const track = s?.cam?.track;
     if (track === undefined) return false;
     this.release(el);
     track.attach(el);
@@ -741,6 +825,7 @@ export class RoomSession {
   }
 
   detachCam(id: string, el: HTMLMediaElement) {
+    this.dropCopy(el);
     this.live.find((s) => s.view.id === id)?.cam?.track?.detach(el);
   }
 
@@ -791,6 +876,8 @@ export class RoomSession {
   /** Liga o vídeo da tela em foco ('main') ou da câmera que acompanha ela ('cam'). */
   attachFocused(el: HTMLMediaElement, which: 'main' | 'cam' = 'main'): boolean {
     const f = this.focusedLive();
+    const pub = which === 'cam' ? f?.cam : f?.publication;
+    if (f?.view.isLocal && pub !== undefined && !(pub instanceof RemoteTrackPublication)) return this.attachLocal(el, pub);
     const track = which === 'cam' ? f?.cam?.track : f?.publication.track;
     if (track === undefined) return false;
     this.release(el);
@@ -963,7 +1050,7 @@ export class RoomSession {
    * quem transmite (que normalmente está jogando). A prévia dela abre na barra de baixo, pequena.
    */
   private stageIds(shares: LiveShare[]) {
-    return shares.filter((s) => !s.view.isLocal && !this.hidden.has(s.view.id)).map((s) => s.view.id);
+    return shares.filter((s) => (this.myOnStage || !s.view.isLocal) && !this.hidden.has(s.view.id)).map((s) => s.view.id);
   }
 
   private describe(shares: LiveShare[]): RoomSnapshot {
@@ -1028,31 +1115,31 @@ export class RoomSession {
     const visible = this.stageIds(shares).length;
     const used = new Set<TrackPublication>();
     for (const s of shares) {
-      // A minha nunca vai para o palco (só para a prévia e o retorno da câmera).
+      // A minha só vai para o palco se você pediu (fora isso, só a prévia e o retorno da câmera).
       const shown =
-        !s.view.isLocal && !this.away && !this.hidden.has(s.view.id) && (grid || s.view.id === this.focusedShareId);
+        (this.myOnStage || !s.view.isLocal) && !this.away && !this.hidden.has(s.view.id) && (grid || s.view.id === this.focusedShareId);
       used.add(s.publication);
       if (s.cam !== undefined) used.add(s.cam);
       // A câmera junto da tela, se você não escondeu. Na grade, num cantinho de cada monitor: a cópia
       // menor. Em foco, na janelinha: a média; trocada com a tela (grande), a máxima.
       // Escondida, o servidor para de mandar: não baixa nem decodifica nada.
       if (s.cam instanceof RemoteTrackPublication) {
-        const camShown = s.view.isLocal ? this.selfViews.size > 0 : shown && !this.camClosed.has(s.view.id);
+        const onStage = shown && !this.camClosed.has(s.view.id);
+        const self = s.view.isLocal ? this.selfQuality() : null;
         s.cam.setSubscribed(true);
-        s.cam.setEnabled(camShown);
-        if (camShown)
-          s.cam.setVideoQuality(
-            grid || s.view.isLocal ? VideoQuality.LOW : this.camBig.has(s.view.id) ? VideoQuality.HIGH : VideoQuality.MEDIUM,
-          );
+        s.cam.setEnabled(onStage || self !== null);
+        if (onStage)
+          s.cam.setVideoQuality(grid ? VideoQuality.LOW : this.camBig.has(s.view.id) ? VideoQuality.HIGH : VideoQuality.MEDIUM);
+        else if (self !== null) s.cam.setVideoQuality(self);
       }
       // Minha própria câmera pelo celular também chega pela sala (as do PC são locais).
       if (!(s.publication instanceof RemoteTrackPublication)) continue;
       const pub = s.publication;
       pub.setSubscribed(true);
-      if (s.view.isLocal) {
-        const want = this.selfViews.size > 0 && !this.away;
-        pub.setEnabled(want);
-        if (want) pub.setVideoQuality(VideoQuality.LOW);
+      if (s.view.isLocal && !shown) {
+        const self = this.away ? null : this.selfQuality();
+        pub.setEnabled(self !== null);
+        if (self !== null) pub.setVideoQuality(self);
         continue;
       }
       if (!shown && s.view.id === this.previewId && !this.away) {

@@ -80,13 +80,13 @@ function iconFor(s: ShareView): string {
           <video #mv autoplay playsinline muted [class.mirror]="m.mirror" (playing)="mineTuned.set(true)"></video>
           @if (!mineTuned()) { <div class="snow" aria-hidden="true"><span class="mono">sintonizando</span></div> }
         </div>
-        @if (m.cam !== null) {
-          <div class="swap">
-            <button type="button" class="btn small" [class.on]="mineWhich() === 'main'" (click)="mineWhich.set('main')">tela</button>
-            <button type="button" class="btn small" [class.on]="mineWhich() === 'cam'" (click)="mineWhich.set('cam')">câmera</button>
-          </div>
-        }
-        <p class="foot">Prévia leve, só para você conferir. Quem assiste recebe na qualidade cheia.</p>
+        <div class="swap">
+          <button type="button" class="btn small" [class.on]="store.myOnStage()" [attr.aria-pressed]="store.myOnStage()"
+            title="Mostrar a sua tela grande no palco, como as dos outros (pesa um pouco mais no seu PC)"
+            (click)="toggleStage()">{{ store.myOnStage() ? 'tirar do palco' : 'ver grande no palco' }}</button>
+        </div>
+        <p class="foot">Prévia leve, só para você conferir. Quem assiste recebe na qualidade cheia.
+          @if (m.cam !== null) { A sua câmera fica no cantinho <b>você</b> do palco. }</p>
       </div>
     }
 
@@ -192,7 +192,7 @@ export class LiveStrip {
   /** Telas dos outros (inclusive as escondidas, apagadas). A minha tem a tecla "prévia". */
   protected readonly faces = computed<Face[]>(() => {
     const people = new Map(this.store.participants().map((p) => [p.identity, p]));
-    const all = [...this.store.stageShares(), ...this.store.hiddenShares()];
+    const all = [...this.store.stageShares(), ...this.store.hiddenShares()].filter((s) => !s.isLocal);
     return all.map((s) => ({
       share: s,
       name: s.ownerName,
@@ -210,7 +210,6 @@ export class LiveStrip {
   // ---------- prévia da minha tela
   protected readonly mineOpen = signal(false);
   protected readonly mineTuned = signal(false);
-  protected readonly mineWhich = signal<'main' | 'cam'>('main');
   private readonly mv = viewChild<ElementRef<HTMLVideoElement>>('mv');
 
   // ---------- cartão de quem está no ar
@@ -234,7 +233,7 @@ export class LiveStrip {
       const el = this.mv()?.nativeElement;
       const m = this.mine();
       if (el === undefined || m === null || !this.mineOpen()) return;
-      const which = m.cam !== null ? this.mineWhich() : 'main';
+      const which = 'main';
       void m.trackSid;
       this.mineTuned.set(false);
       const stop = this.store.startLocalPreview(el, which);
@@ -271,6 +270,17 @@ export class LiveStrip {
   label(f: Face): string {
     const who = `${f.share.kind === 'camera' ? 'Câmera' : 'Tela'} de ${f.name}`;
     return `${who}${f.line ? ' · ' + f.line : ''}${f.share.hidden ? ' (escondida)' : ''}`;
+  }
+
+  toggleStage() {
+    const on = !this.store.myOnStage();
+    this.store.setMyOnStage(on);
+    // No palco, a prévia pequena não precisa ficar aberta também.
+    if (on) {
+      this.mineOpen.set(false);
+      const m = this.mine();
+      if (m !== null) this.store.focusShare(m.id);
+    }
   }
 
   toggleMine() {

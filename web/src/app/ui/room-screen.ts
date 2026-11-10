@@ -187,7 +187,7 @@ function timecode(ms: number): string {
         @if (store.focused(); as f) {
           <cen-stage (click)="clickFocused()" (contextmenu)="openVolume($event, f)" />
           <div class="viewfinder" aria-hidden="true"></div>
-          @if (f.cam !== null) { <cen-cam-pip [share]="f" [source]="stage()?.source() ?? noSize" /> }
+          @if (f.cam !== null && !store.focusedCamClosed()) { <cen-cam-pip [share]="f" [source]="stage()?.source() ?? noSize" /> }
           @if (freshIssue(); as e) {
             <button type="button" class="issue" [attr.data-cause]="e.cause" (click)="openDiag()" title="Abrir o diagnóstico">
               <span class="cause">{{ causeLabel(e.cause) }}</span> {{ e.text }}
@@ -198,6 +198,13 @@ function timecode(ms: number): string {
               <button class="btn small ghost" (click)="clip()" [title]="clipTitle('Clipa os últimos 2 min desta tela (Alt+C)')">
                 <cen-icon name="scissors" [size]="15" /> clipar <span class="mono buf">{{ clipNote() }}</span></button>
             }
+            @if (f.cam !== null) {
+              <!-- A câmera de quem transmite: uma tecla só, sempre aqui, liga e desliga. Desligada, não baixa nada. -->
+              <button class="btn icon small ghost cam-key" [class.on]="!store.focusedCamClosed()" [attr.aria-pressed]="!store.focusedCamClosed()"
+                [title]="store.focusedCamClosed() ? 'Mostrar a câmera' : 'Esconder a câmera (para de baixar o vídeo dela)'"
+                (click)="store.setCamClosed(f.id, !store.focusedCamClosed())">
+                <cen-icon [name]="store.focusedCamClosed() ? 'cameraOff' : 'camera'" [size]="16" /></button>
+            }
             @if (store.stageShares().length > 1) {
               <button class="btn icon small ghost" title="Ver todas as telas" (click)="store.unfocus()"><cen-icon name="grid" [size]="16" /></button>
             }
@@ -206,7 +213,7 @@ function timecode(ms: number): string {
                 <cen-icon [name]="f.volume.muted || f.volume.level === 0 ? 'speakerOff' : 'speaker'" [size]="16" /></button>
             }
             @if (!f.isLocal || store.stageShares().length > 1) {
-              <button class="btn icon small ghost" title="Esconder esta tela (para de baixar o vídeo e o som dela)" (click)="store.hideShare(f.id)">
+              <button class="btn icon small ghost" [title]="f.isLocal ? 'Tirar a sua tela do palco (volta para a prévia da barra)' : 'Esconder esta tela (para de baixar o vídeo e o som dela)'" (click)="store.hideShare(f.id)">
                 <cen-icon name="eyeOff" [size]="16" /></button>
             }
             <button class="btn icon small ghost" title="Janela flutuante" (click)="stage()?.popout()"><cen-icon name="popout" [size]="16" /></button>
@@ -237,8 +244,12 @@ function timecode(ms: number): string {
               @if (store.myShare(); as mine) {
                 <p class="nosignal mono sending"><span class="led accent"></span>enviando</p>
                 <h2>{{ mine.kind === 'camera' ? 'Sua câmera está no ar.' : 'Sua tela está no ar.' }}</h2>
-                <p class="hint">A prévia fica fechada na barra de baixo, na tecla <b>prévia</b>, para não pesar no seu PC enquanto você joga.
+                <p class="hint">A prévia fica desligada para não pesar no seu PC enquanto você joga.
                   Quando alguém abrir a tela, ela aparece aqui.</p>
+                <div class="actions">
+                  <button class="btn" title="Mostrar a sua tela grande aqui (cópia em 720p 30 fps; quem assiste recebe a original)"
+                    (click)="store.setMyOnStage(true); store.focusShare(mine.id)"><cen-icon name="eye" [size]="16" /> Ver minha tela aqui</button>
+                </div>
                 @if (store.upload(); as u) {
                   @if (u.cap < u.target) {
                     <p class="hint warn-line">Sua internet está perdendo pacotes na subida ({{ (u.loss * 100).toFixed(1) }}%): o teto baixou para
