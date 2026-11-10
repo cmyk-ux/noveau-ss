@@ -15,6 +15,7 @@ import { ShareCallbacks, ShareRequest, ShareResult, startShare, stopShare, stopS
 import { Channel, isSilent, Mixer, Volume } from './volume';
 import { IS_MOBILE } from './device';
 import { installStereoReceive } from './stereo';
+import { ACTIVITY_ATTR, Activity, parseActivity } from './activity';
 
 // O som do OBS (WHIP) chega sem a marca de estéreo; veja stereo.ts.
 installStereoReceive();
@@ -46,6 +47,8 @@ export interface ShareView {
   hidden?: boolean;
   /** Travou várias vezes seguidas: recebendo a cópia menor por um tempo (só para você). */
   shielded?: { until: number; width: number; height: number } | null;
+  /** O que está passando (jogo, programa) e de onde vem a imagem. */
+  activity: Activity;
 }
 
 export interface PersonView {
@@ -69,6 +72,8 @@ export interface PersonView {
   guest: boolean;
   /** Quem chamou o convidado. */
   invitedBy: string | null;
+  /** O que está transmitindo agora (null = não está transmitindo). */
+  activity: Activity | null;
 }
 
 export interface RoomSnapshot {
@@ -389,6 +394,38 @@ export class RoomSession {
     this.room.localParticipant.setAttributes({ tx }).catch(() => (this.publishedTx = ''));
   }
 
+  /** Conta aos outros o que estou transmitindo (atributo "act"; vazio = nada). */
+  private publishedAct = '';
+  publishActivity(act: string) {
+    if (act === this.publishedAct || this.room.state !== ConnectionState.Connected) return;
+    this.publishedAct = act;
+    this.room.localParticipant.setAttributes({ [ACTIVITY_ATTR]: act }).catch(() => (this.publishedAct = ''));
+  }
+
+  // ---------- prévia (mouse em cima da foto de quem transmite)
+  // Uma tela fora de foco não está sendo recebida. Para a prévia ela é ligada na cópia menor
+  // (simulcast), que custa pouco para baixar e decodificar, e desligada assim que o mouse sai.
+  private previewId: string | null = null;
+
+  /** Liga a prévia de uma tela num elemento de vídeo. Devolve false se a tela não existe mais. */
+  startPreview(id: string, el: HTMLMediaElement): boolean {
+    const s = this.live.find((x) => x.view.id === id);
+    if (s === undefined) return false;
+    this.previewId = id;
+    this.followFocus(this.live);
+    const track = s.publication.track;
+    if (track === undefined) return false;
+    track.attach(el);
+    return true;
+  }
+
+  stopPreview(id: string, el: HTMLMediaElement) {
+    this.live.find((x) => x.view.id === id)?.publication.track?.detach(el);
+    if (this.previewId !== id) return;
+    this.previewId = null;
+    this.followFocus(this.live);
+  }
+
   /** Para o diagnóstico: quem transmite a tela em foco, como está a rede dele e a minha. */
   focusedProbe(): {
     shareId: string;
@@ -654,6 +691,11 @@ export class RoomSession {
           hasAudio: audio !== undefined && !audio.isMuted,
           trackSid: visual.publication.trackSid,
           volume: this.mixer.read('share', p.identity),
+          activity: obs
+            ? { surface: 'obs', name: '' }
+            : visual.kind === 'camera' && !isIngress
+              ? { surface: 'camera', name: '' }
+              : (parseActivity(p.attributes?.[ACTIVITY_ATTR]) ?? { surface: '', name: '' }),
         },
         publication: visual.publication,
       });
@@ -687,7 +729,7 @@ export class RoomSession {
   private describe(shares: LiveShare[]): RoomSnapshot {
     return {
       status: statusOf(this.room.state),
-      participants: this.collectParticipants(),
+      participants: this.collectParticipants(new Map(shares.map((s) => [s.view.id, s.view.activity]))),
       shares: shares.map((s) => {
         const v = this.hidden.has(s.view.id) ? { ...s.view, hidden: true } : s.view;
         const g = this.guards.get(s.view.id);
@@ -731,6 +773,12 @@ export class RoomSession {
       const shown = !this.away && !this.hidden.has(s.view.id) && (grid || s.view.id === this.focusedShareId);
       const pub = s.publication as any;
       pub.setSubscribed(true);
+      if (!shown && s.view.id === this.previewId && !this.away) {
+        // Só a prévia: a cópia menor basta para a miniatura.
+        pub.setEnabled(true);
+        pub.setVideoQuality(VideoQuality.LOW);
+        continue;
+      }
       pub.setEnabled(shown);
       if (!shown) continue;
       // Travando seguido: segura na cópia menor (só para quem trava), depois tenta voltar.
@@ -778,7 +826,7 @@ export class RoomSession {
     (track as any).setVolume(!audible || isSilent(v) ? 0 : v.level);
   }
 
-  private collectParticipants(): PersonView[] {
+  private collectParticipants(activities: Map<string, Activity>): PersonView[] {
     const speaking = new Set(this.room.activeSpeakers.map((p) => p.identity));
     return this.everyone().map((p) => ({
       identity: p.identity,
@@ -797,6 +845,7 @@ export class RoomSession {
       myOtherDevice: this.isMyOtherDevice(p),
       guest: p.attributes?.['guest'] === '1',
       invitedBy: p.attributes?.['invitedBy'] ?? null,
+      activity: activities.get(p.identity) ?? null,
     }));
   }
 }

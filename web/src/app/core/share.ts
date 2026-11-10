@@ -64,6 +64,8 @@ export interface ShareResult {
   gpu: boolean;
   /** 'monitor' (tela inteira), 'window' (janela) ou 'browser' (aba). */
   surface?: string;
+  /** Rótulo da faixa capturada (no Firefox, o título da janela). */
+  label: string;
 }
 
 /**
@@ -270,7 +272,7 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
   }
   const upload = new UploadGuard(() => (video as any).sender as RTCRtpSender | undefined, bitrate, cb.onUpload);
   upload.start();
-  return { codec, bitrate, resolution, audio: audioState, watch, surface, governor, upload, gpu: probes[codec]?.gpu === true };
+  return { codec, bitrate, resolution, audio: audioState, watch, surface, label: rawVideo.label, governor, upload, gpu: probes[codec]?.gpu === true };
 }
 
 export async function stopShareAudio(room: Room) {

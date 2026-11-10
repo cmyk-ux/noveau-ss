@@ -10,6 +10,7 @@ import { SendFx } from '../core/send-fx';
 import { Icon } from './icon';
 import { VolumeSlider } from './volume-slider';
 import { PixelIcon } from './pixel-icon';
+import { Activity, Surface, activityLine } from '../core/activity';
 
 /** Quem está na sala e o volume de cada um, só para você. Cada pessoa é uma linha, como um canal de mesa. */
 @Component({
@@ -69,8 +70,11 @@ import { PixelIcon } from './pixel-icon';
             </span>
             <span class="who">
               <span class="name" [title]="p.name">{{ p.name }}</span>
-              <span class="sub">
-                @if (p.isLocal) { você{{ isMobile ? ' · no celular' : '' }} }
+              <span class="sub" [class.doing]="p.activity !== null">
+                @if (p.activity; as a) {
+                  <cen-pixel class="act-icon" [name]="actIcon(a.surface)" [size]="9" />{{ p.isLocal ? 'você · ' + (a.name || actText(a)) : actText(a) }}
+                }
+                @else if (p.isLocal) { você{{ isMobile ? ' · no celular' : '' }} }
                 @else if (p.myOtherDevice) { você · {{ p.mobile ? 'no celular' : 'no PC' }} }
                 @else if (p.guest) { convidado{{ p.invitedBy ? ' de ' + p.invitedBy : '' }} }
                 @else if (p.mobile) { no celular }
@@ -83,7 +87,10 @@ import { PixelIcon } from './pixel-icon';
               <cen-icon [name]="p.micEnabled ? 'mic' : 'micOff'" [size]="13" />
             </span>
             @if (p.isLocal ? isMobile : p.mobile) { <cen-icon class="device" name="phone" [size]="13" title="Pelo celular" /> }
-            @if (p.isSharing) { <span class="tag live" title="Compartilhando a tela"><span class="led live"></span>ao vivo</span> }
+            @if (p.activity; as a) {
+              <span class="onair" [class.cam]="a.surface === 'camera'" [title]="a.surface === 'camera' ? 'Com a câmera ligada' : 'Transmitindo a tela'">
+                <span class="led"></span>{{ a.surface === 'camera' ? 'câmera' : 'ao vivo' }}</span>
+            }
             @if (p.guest && !p.isLocal && iAmDiscord()) {
               <button type="button" class="btn small kick" [class.danger]="kicking() === p.identity"
                 [title]="'Tirar ' + p.name + ' da sala (o convite deixa de valer)'" (click)="kick(p.identity, p.name)">
@@ -176,7 +183,16 @@ import { PixelIcon } from './pixel-icon';
     .mic { display: grid; place-items: center; color: var(--faint); flex-shrink: 0; }
     .mic.open { color: var(--muted); }
     .device { color: var(--faint); flex-shrink: 0; }
-    .live { color: var(--text); }
+    /* Selo "ao vivo", como o do Discord, numa plaqueta vermelha com a lâmpada piscando. */
+    .onair { display: inline-flex; align-items: center; gap: 0.3rem; flex-shrink: 0; height: 17px; padding: 0 0.4rem 0 0.35rem;
+      border-radius: 1px; background: #8f2f26; color: #f6e7e2; font: 500 0.58rem/1 var(--mono); letter-spacing: 0.12em;
+      text-transform: uppercase; box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.12), 0 1px 0 #000; animation: led-on 380ms steps(1) both; }
+    .onair .led { width: 5px; height: 5px; background: #ff8a7a; box-shadow: 0 0 4px rgb(255 120 100 / 0.7); animation: blink 1.6s steps(1) infinite; }
+    .onair.cam { background: var(--plate); color: var(--text); }
+    .onair.cam .led { background: var(--ok); box-shadow: 0 0 4px rgb(127 168 100 / 0.5); animation: none; }
+    /* O que está passando, no lugar do "ouvindo": como "Jogando Fortnite" no Discord. */
+    .sub.doing { color: var(--accent-hi); display: flex; align-items: center; gap: 0.3rem; }
+    .act-icon { flex-shrink: 0; }
 
     .fader { margin: 3px 0 0 calc(32px + 0.55rem - 4px); width: auto; }
     .kick { height: 22px; padding: 0 0.5rem; font-size: 0.72rem; }
@@ -232,6 +248,16 @@ export class PeoplePanel {
   private readonly router = inject(Router);
   protected readonly callRoom = isCallRoom();
   protected readonly isMobile = IS_MOBILE;
+
+  actIcon(s: Surface): string {
+    return s === 'window' ? 'window' : s === 'browser' ? 'tab' : s === 'camera' ? 'webcam' : s === 'obs' ? 'obs' : 'monitor';
+  }
+
+  actText(a: Activity): string {
+    if (a.surface === 'camera') return 'câmera ligada';
+    if (a.name !== '') return `transmitindo ${a.name}`;
+    return a.surface === 'monitor' || a.surface === '' ? 'transmitindo a tela' : `transmitindo ${activityLine(a)}`;
+  }
 
   /** Primeira letra do nome, para a telinha de quem não tem foto. */
   initial(name: string): string {
