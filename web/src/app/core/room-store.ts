@@ -177,6 +177,11 @@ export class RoomStore {
     return watchersOf(this._snapshot(), id);
   }
 
+  /** Sala da call do Discord (entrou sem link)? Aí o plugin ligado à conta já toca aqui. */
+  get isCallRoom() {
+    return this.link.key === '';
+  }
+
   async join(link: RoomLink, name: string) {
     await this.joinWith(() => requestToken(link, name), link);
   }

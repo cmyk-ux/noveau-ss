@@ -13,7 +13,9 @@ namespace
     std::once_flag netInit;
 } // namespace
 
-Streamer::Streamer() : juce::Thread ("noveau-rede")
+Streamer::Streamer()
+    : juce::Thread ("noveau-rede"),
+      instance (juce::Uuid().toString().substring (0, 12))
 {
     std::call_once (netInit, [] { ix::initNetSystem(); });
     ring.assign ((size_t) kFifoFrames * 2, 0.0f);
@@ -59,36 +61,79 @@ void Streamer::push (const juce::AudioBuffer<float>& buffer)
     copy (scope.startIndex2, scope.blockSize2, scope.blockSize1);
 }
 
+namespace
+{
+    struct Address
+    {
+        bool secure = true;
+        juce::String host;
+    };
+
+    /** "noveau.riajuu.net", "https://...", "http://localhost:4200" -> esquema e host. */
+    Address parseAddress (const juce::String& typed)
+    {
+        auto s = typed.trim();
+        if (s.isEmpty())
+            s = "noveau.riajuu.net";
+        Address a;
+        if (s.startsWithIgnoreCase ("http://") || s.startsWithIgnoreCase ("ws://"))
+            a.secure = false;
+        if (s.contains ("://"))
+            s = s.fromFirstOccurrenceOf ("://", false, false);
+        a.host = s.upToFirstOccurrenceOf ("/", false, false);
+        // Endereços locais sem "https://" na frente: teste no próprio PC.
+        if (! typed.contains ("://") && (a.host.startsWith ("localhost") || a.host.startsWith ("127.")))
+            a.secure = false;
+        return a;
+    }
+} // namespace
+
 juce::String Streamer::socketUrl (const juce::String& typed)
 {
-    auto s = typed.trim();
-    if (s.isEmpty())
-        s = "noveau.riajuu.net";
-    bool secure = true;
-    if (s.startsWithIgnoreCase ("http://") || s.startsWithIgnoreCase ("ws://"))
-        secure = false;
-    s = s.fromFirstOccurrenceOf ("://", false, false).isNotEmpty() ? s.fromFirstOccurrenceOf ("://", false, false) : s;
-    const auto host = s.upToFirstOccurrenceOf ("/", false, false);
-    // Endereços locais sem "https://" na frente: teste no próprio PC.
-    if (! typed.contains ("://") && (host.startsWith ("localhost") || host.startsWith ("127.")))
-        secure = false;
-    return juce::String (secure ? "wss://" : "ws://") + host + "/api/daw/send";
+    const auto a = parseAddress (typed);
+    return juce::String (a.secure ? "wss://" : "ws://") + a.host + "/api/daw/send";
 }
 
-void Streamer::connect (const juce::String& serverText, const juce::String& code)
+juce::String Streamer::siteUrl (const juce::String& typed, const juce::String& path)
+{
+    const auto a = parseAddress (typed);
+    return juce::String (a.secure ? "https://" : "http://") + a.host + path;
+}
+
+void Streamer::connectLink (const juce::String& serverText)
+{
+    open (serverText, Hello::link, Mode::discord, {});
+}
+
+void Streamer::connectKey (const juce::String& serverText, Mode mode, const juce::String& key)
+{
+    open (serverText, Hello::key, mode, key);
+}
+
+void Streamer::connectCode (const juce::String& serverText, const juce::String& code)
+{
+    if (code.trim().isEmpty())
+    {
+        std::lock_guard<std::mutex> g (lock);
+        st = {};
+        st.mode = Mode::room;
+        st.state = StreamStatus::State::failed;
+        st.message = juce::String::fromUTF8 ("Digite o código que aparece no site (tecla do plugin, na barra de baixo da sala).");
+        return;
+    }
+    open (serverText, Hello::code, Mode::room, code.trim().toUpperCase());
+}
+
+void Streamer::open (const juce::String& serverText, Hello how, Mode mode, const juce::String& what)
 {
     disconnect();
     {
         std::lock_guard<std::mutex> g (lock);
         server = serverText.trim();
-        pendingCode = code.trim();
-        if (pendingCode.isEmpty() && resume.isEmpty())
-        {
-            st = {};
-            st.state = StreamStatus::State::failed;
-            st.message = juce::String::fromUTF8 ("Gere um código no site (tecla do plugin, na barra de baixo) e digite aqui.");
-            return;
-        }
+        hello = how;
+        secret = what;
+        st = {};
+        st.mode = mode;
     }
 
     auto socket = std::make_unique<ix::WebSocket>();
@@ -103,17 +148,20 @@ void Streamer::connect (const juce::String& serverText, const juce::String& code
         {
             case ix::WebSocketMessageType::Open:
             {
-                auto hello = std::make_unique<juce::DynamicObject>();
-                hello->setProperty ("t", "hello");
-                hello->setProperty ("plugin", JucePlugin_VersionString);
+                auto h = std::make_unique<juce::DynamicObject>();
+                h->setProperty ("t", "hello");
+                h->setProperty ("plugin", JucePlugin_VersionString);
+                h->setProperty ("instance", instance);
                 {
                     std::lock_guard<std::mutex> g (lock);
-                    if (pendingCode.isNotEmpty())
-                        hello->setProperty ("code", pendingCode);
+                    if (hello == Hello::link)
+                        h->setProperty ("link", true);
+                    else if (hello == Hello::code)
+                        h->setProperty ("code", secret);
                     else
-                        hello->setProperty ("resume", resume);
+                        h->setProperty ("resume", secret);
                 }
-                raw->sendText (juce::JSON::toString (juce::var (hello.release()), true).toStdString());
+                raw->sendText (juce::JSON::toString (juce::var (h.release()), true).toStdString());
                 setStatus (StreamStatus::State::connecting, juce::String::fromUTF8 ("Conectado ao servidor, conferindo…"));
                 break;
             }
@@ -123,6 +171,7 @@ void Streamer::connect (const juce::String& serverText, const juce::String& code
                 break;
             case ix::WebSocketMessageType::Close:
                 live.store (false);
+                audience.store (0);
                 if (msg->closeInfo.code == 4000)
                 {
                     raw->disableAutomaticReconnection();
@@ -139,8 +188,9 @@ void Streamer::connect (const juce::String& serverText, const juce::String& code
                 break;
             case ix::WebSocketMessageType::Error:
                 live.store (false);
+                audience.store (0);
                 setStatus (StreamStatus::State::connecting,
-                           juce::String::fromUTF8 ("Não consegui falar com o servidor (") + juce::String (msg->errorInfo.reason) + "). Tentando de novo…");
+                           juce::String::fromUTF8 ("Não consegui falar com o servidor (") + juce::String (msg->errorInfo.reason) + juce::String::fromUTF8 ("). Tentando de novo…"));
                 break;
             default:
                 break;
@@ -151,12 +201,13 @@ void Streamer::connect (const juce::String& serverText, const juce::String& code
         ws = std::move (socket);
         ws->start();
     }
-    setStatus (StreamStatus::State::connecting, "Conectando…");
+    setStatus (StreamStatus::State::connecting, juce::String::fromUTF8 ("Conectando…"));
 }
 
 void Streamer::disconnect()
 {
     live.store (false);
+    audience.store (0);
     std::unique_ptr<ix::WebSocket> old;
     {
         std::lock_guard<std::mutex> g (wsLock);
@@ -165,7 +216,9 @@ void Streamer::disconnect()
     if (old != nullptr)
         old->stop();
     std::lock_guard<std::mutex> g (lock);
+    const auto mode = st.mode;
     st = {};
+    st.mode = mode;
     st.message = "Desconectado.";
 }
 
@@ -173,30 +226,61 @@ void Streamer::onText (const std::string& text)
 {
     const auto v = juce::JSON::parse (juce::String::fromUTF8 (text.c_str()));
     const auto t = v["t"].toString();
-    std::lock_guard<std::mutex> g (lock);
-    if (t == "ok")
+    std::function<void()> after;
     {
-        resume = v["resume"].toString();
-        pendingCode.clear();
-        st.state = StreamStatus::State::connected;
-        st.name = v["name"].toString();
-        st.listeners = (int) v["listeners"];
-        st.message = "Conectado.";
-        dropped.store (0);
-        live.store (true);
+        std::lock_guard<std::mutex> g (lock);
+        if (t == "link")
+        {
+            st.state = StreamStatus::State::linking;
+            st.linkCode = v["code"].toString();
+            st.message = juce::String::fromUTF8 ("Confirme no navegador.");
+        }
+        else if (t == "ok")
+        {
+            const auto mode = v["mode"].toString() == "room" ? Mode::room : Mode::discord;
+            const auto key = v["resume"].toString();
+            const auto name = v["name"].toString();
+            hello = Hello::key; // se a internet cair, volta com a chave (o código já foi usado)
+            secret = key;
+            st.state = StreamStatus::State::connected;
+            st.mode = mode;
+            st.name = name;
+            st.linkCode.clear();
+            st.call.clear();
+            st.listeners = 0;
+            st.message = "Conectado.";
+            dropped.store (0);
+            live.store (true);
+            if (onKey)
+                after = [this, mode, key, name] { onKey (mode, key, name); };
+        }
+        else if (t == "room")
+        {
+            st.call = v["call"].toString();
+            st.listeners = (int) v["listeners"];
+            audience.store (st.listeners);
+        }
+        else if (t == "listeners")
+        {
+            st.listeners = (int) v["n"];
+            audience.store (st.listeners);
+        }
+        else if (t == "error")
+        {
+            live.store (false);
+            st.state = StreamStatus::State::failed;
+            st.message = v["message"].toString();
+            st.linkCode.clear();
+            // Recusado com a chave guardada: ela não vale mais, esquece.
+            if (hello == Hello::key && onKey)
+            {
+                const auto mode = st.mode;
+                after = [this, mode] { onKey (mode, {}, {}); };
+            }
+        }
     }
-    else if (t == "listeners")
-    {
-        st.listeners = (int) v["n"];
-    }
-    else if (t == "error")
-    {
-        live.store (false);
-        st.state = StreamStatus::State::failed;
-        st.message = v["message"].toString();
-        // Código recusado: a chave de volta (se havia) também não vale mais.
-        resume.clear();
-    }
+    if (after)
+        after();
 }
 
 void Streamer::setStatus (StreamStatus::State s, const juce::String& msg)
@@ -207,18 +291,6 @@ void Streamer::setStatus (StreamStatus::State s, const juce::String& msg)
         return;
     st.state = s;
     st.message = msg;
-}
-
-juce::String Streamer::getResume() const
-{
-    std::lock_guard<std::mutex> g (lock);
-    return resume;
-}
-
-void Streamer::setResume (const juce::String& r)
-{
-    std::lock_guard<std::mutex> g (lock);
-    resume = r;
 }
 
 juce::String Streamer::getServer() const
@@ -253,9 +325,9 @@ void Streamer::run()
             windowBytes = 0;
         }
 
-        if (! live.load())
+        if (! live.load() || audience.load() == 0)
         {
-            // Sem conexão: esvazia a fila para não mandar som velho quando voltar.
+            // Sem conexão (ou ninguém ouvindo): esvazia a fila para não mandar som velho depois.
             const int ready = fifo.getNumReady();
             if (ready > 0)
                 fifo.read (ready);

@@ -14,6 +14,8 @@ namespace
     const juce::Colour bad { 0xffc0503f };
 
     juce::String u8 (const char* s) { return juce::String::fromUTF8 (s); }
+
+    juce::String mbps (double kbps) { return juce::String (kbps / 1000.0, 1).replace (".", ",") + " Mbps"; }
 } // namespace
 
 NoveauEditor::NoveauEditor (NoveauProcessor& p) : AudioProcessorEditor (p), proc (p)
@@ -40,30 +42,53 @@ NoveauEditor::NoveauEditor (NoveauProcessor& p) : AudioProcessorEditor (p), proc
     title.setFont (juce::FontOptions (20.0f, juce::Font::italic));
     addAndMakeVisible (title);
 
-    auto small = [] (juce::Label& l, const char* s) {
-        l.setText (u8 (s), juce::dontSendNotification);
+    auto small = [] (juce::Label& l, const juce::String& s) {
+        l.setText (s, juce::dontSendNotification);
         l.setFont (juce::FontOptions (11.0f));
         l.setColour (juce::Label::textColourId, muted);
     };
+    small (codeLabel, u8 ("SALA FORA DO DISCORD? CÓDIGO DA SALA"));
     small (serverLabel, "SITE");
-    small (codeLabel, u8 ("CÓDIGO DA SALA").toRawUTF8());
     small (formatLabel, "FORMATO");
-    for (auto* l : { &serverLabel, &codeLabel, &formatLabel })
+    for (auto* l : { &codeLabel, &serverLabel, &formatLabel })
         addAndMakeVisible (*l);
 
-    serverBox.setText (proc.serverText, false);
-    serverBox.onTextChange = [this] { proc.serverText = serverBox.getText(); };
-    addAndMakeVisible (serverBox);
+    status.setFont (juce::FontOptions (16.0f, juce::Font::bold));
+    addAndMakeVisible (status);
+    detail.setFont (juce::FontOptions (12.5f));
+    detail.setColour (juce::Label::textColourId, muted);
+    detail.setJustificationType (juce::Justification::topLeft);
+    detail.setMinimumHorizontalScale (1.0f);
+    addAndMakeVisible (detail);
+
+    mainButton.onClick = [this] { mainAction(); };
+    addAndMakeVisible (mainButton);
+
+    reopenButton.setButtonText (u8 ("abrir o navegador de novo"));
+    reopenButton.onClick = [this] { openBrowser (proc.streamer().status().linkCode); };
+    addChildComponent (reopenButton);
 
     codeBox.setTextToShowWhenEmpty ("ABCD-1234", muted);
     codeBox.setInputRestrictions (9, "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjklmnpqrstuvwxyz23456789- ");
-    codeBox.setFont (juce::FontOptions (18.0f));
     codeBox.setJustification (juce::Justification::centred);
-    codeBox.onReturnKey = [this] { toggleConnection(); };
+    codeBox.onReturnKey = [this] { codeButton.triggerClick(); };
     addAndMakeVisible (codeBox);
+    codeButton.setButtonText ("Usar");
+    codeButton.onClick = [this] {
+        if (codeBox.isEmpty())
+            return;
+        proc.useRoomCode (codeBox.getText());
+        codeBox.clear();
+        timerCallback();
+    };
+    addAndMakeVisible (codeButton);
+
+    serverBox.setText (proc.getServerText(), false);
+    serverBox.onTextChange = [this] { proc.setServerText (serverBox.getText()); };
+    addAndMakeVisible (serverBox);
 
     formatBox.addItem (u8 ("24-bit (padrão)"), 24);
-    formatBox.addItem (u8 ("32-bit float (idêntico à DAW)"), 32);
+    formatBox.addItem (u8 ("32-bit float (idêntico)"), 32);
     formatBox.addItem (u8 ("16-bit (mais leve)"), 16);
     formatBox.setSelectedId ((int) proc.streamer().getFormat(), juce::dontSendNotification);
     formatBox.onChange = [this] {
@@ -72,18 +97,14 @@ NoveauEditor::NoveauEditor (NoveauProcessor& p) : AudioProcessorEditor (p), proc
     };
     addAndMakeVisible (formatBox);
 
-    connectButton.onClick = [this] { toggleConnection(); };
-    addAndMakeVisible (connectButton);
+    forgetButton.setButtonText (u8 ("sair da conta"));
+    forgetButton.onClick = [this] {
+        proc.forgetAccount();
+        timerCallback();
+    };
+    addChildComponent (forgetButton);
 
-    status.setFont (juce::FontOptions (14.0f));
-    addAndMakeVisible (status);
-    detail.setFont (juce::FontOptions (12.0f));
-    detail.setColour (juce::Label::textColourId, muted);
-    detail.setJustificationType (juce::Justification::topLeft);
-    detail.setMinimumHorizontalScale (1.0f);
-    addAndMakeVisible (detail);
-
-    setSize (440, 300);
+    setSize (460, 340);
     timerCallback();
     startTimerHz (4);
 }
@@ -93,18 +114,30 @@ NoveauEditor::~NoveauEditor()
     setLookAndFeel (nullptr);
 }
 
-void NoveauEditor::toggleConnection()
+void NoveauEditor::openBrowser (const juce::String& code)
 {
-    auto& net = proc.streamer();
-    const auto s = net.status().state;
-    if (s == noveau::StreamStatus::State::connected || s == noveau::StreamStatus::State::connecting)
+    if (code.isEmpty())
+        return;
+    juce::URL (noveau::Streamer::siteUrl (proc.getServerText(), "/plugin?c=" + code)).launchInDefaultBrowser();
+}
+
+void NoveauEditor::mainAction()
+{
+    switch (action)
     {
-        net.disconnect();
-    }
-    else
-    {
-        net.connect (serverBox.getText(), codeBox.getText().toUpperCase());
-        codeBox.clear();
+        case Action::link:
+            openOnCode = true;
+            proc.linkDiscord();
+            break;
+        case Action::cancel:
+            proc.streamer().disconnect();
+            break;
+        case Action::pause:
+            proc.setSending (false);
+            break;
+        case Action::resume:
+            proc.setSending (true);
+            break;
     }
     timerCallback();
 }
@@ -113,37 +146,97 @@ void NoveauEditor::timerCallback()
 {
     const auto st = proc.streamer().status();
     using S = noveau::StreamStatus::State;
-    const bool active = st.state == S::connected || st.state == S::connecting;
-    connectButton.setButtonText (active ? "Desconectar" : (codeBox.isEmpty() && proc.streamer().getResume().isNotEmpty() ? "Reconectar" : "Conectar"));
-    codeBox.setEnabled (! active);
-    serverBox.setEnabled (! active);
+    const bool discord = st.mode == noveau::Mode::discord;
+    const bool account = proc.hasAccount();
+
+    // Código novo do servidor: abre o navegador uma vez (por clique).
+    if (st.linkCode.isNotEmpty() && st.linkCode != lastCode)
+    {
+        lastCode = st.linkCode;
+        if (openOnCode)
+            openBrowser (st.linkCode);
+        openOnCode = false;
+    }
 
     juce::String head, more;
     switch (st.state)
     {
+        case S::linking:
+            led = warn;
+            action = Action::cancel;
+            head = u8 ("Confirme no navegador");
+            more = u8 ("Abrimos a página do noveau. Clique em \"Conectar\" lá (entre com o Discord se pedir).\n")
+                 + u8 ("Confira se o código é o mesmo: ") + st.linkCode;
+            break;
         case S::connected:
             led = ok;
-            head = u8 ("Na sala como ") + st.name;
-            more = juce::String (st.listeners) + (st.listeners == 1 ? u8 (" pessoa ouvindo") : u8 (" pessoas ouvindo"));
-            more << u8 (" · ") << juce::String (st.kbps / 1000.0, 2).replace (".", ",") << " Mbps";
-            if (st.dropped > 0)
-                more << u8 (" · ") << st.dropped << u8 (" pacotes descartados (internet lenta)");
-            more << "\n" << u8 ("O som passa por aqui sem alteração. Deixe o plugin no fim do master.");
+            action = Action::pause;
+            if (discord && st.call.isEmpty())
+            {
+                led = warn;
+                head = u8 ("Entre numa call do Discord");
+                more = u8 ("Conectado como ") + st.name + u8 (". Assim que você entrar numa call, o som vai para quem abrir a sala dela no site.");
+            }
+            else
+            {
+                head = discord ? u8 ("Tocando na call ") + st.call : u8 ("Na sala como ") + st.name;
+                if (st.listeners == 0)
+                    more = u8 ("Ninguém ouvindo agora, então não está gastando internet. Quem abrir o site na ")
+                         + (discord ? u8 ("call") : u8 ("sala")) + u8 (" já ouve.");
+                else
+                    more = juce::String (st.listeners) + (st.listeners == 1 ? u8 (" pessoa ouvindo") : u8 (" pessoas ouvindo"))
+                         + u8 (" · ") + mbps (st.kbps);
+                if (st.dropped > 0)
+                    more << u8 (" · ") << st.dropped << u8 (" pacotes descartados (internet lenta)");
+                more << "\n" << u8 ("O som passa sem alteração. Deixe o plugin no fim do master.");
+            }
             break;
         case S::connecting:
             led = warn;
+            action = Action::pause;
             head = st.message;
             break;
         case S::failed:
             led = bad;
             head = st.message;
+            action = account || ! discord ? Action::resume : Action::link;
+            if (! account && discord)
+                more = u8 ("Clique em \"Conectar com o Discord\" para ligar de novo.");
             break;
         case S::idle:
             led = juce::Colours::grey;
-            head = u8 ("Desconectado");
-            more = u8 ("No site, abra a tecla do plugin (barra de baixo), gere um código e digite aqui.");
+            if (account && ! proc.isSending())
+            {
+                action = Action::resume;
+                head = u8 ("Pausado neste projeto");
+                more = u8 ("Conectado como ") + proc.accountName() + u8 (". O som deste projeto não sai daqui até você clicar em Transmitir.");
+            }
+            else if (account)
+            {
+                action = Action::resume;
+                head = u8 ("Desconectado");
+                more = u8 ("Conectado como ") + proc.accountName() + u8 (".");
+            }
+            else
+            {
+                action = Action::link;
+                head = u8 ("Leve o som da DAW para a call");
+                more = u8 ("Clique no botão abaixo. Você confirma com o Discord no navegador, só uma vez neste computador. ")
+                     + u8 ("Depois disso o plugin segue sozinho a call em que você estiver.");
+            }
             break;
     }
+
+    const char* labels[] = { "Conectar com o Discord", "Cancelar", "Pausar", "Transmitir" };
+    mainButton.setButtonText (u8 (labels[(int) action]));
+    mainButton.setToggleState (action == Action::link || action == Action::resume, juce::dontSendNotification);
+    reopenButton.setVisible (st.state == S::linking);
+    forgetButton.setVisible (account);
+    const bool busy = st.state == S::connected || st.state == S::connecting || st.state == S::linking;
+    codeBox.setEnabled (! busy);
+    codeButton.setEnabled (! busy);
+    serverBox.setEnabled (! busy);
+
     status.setText (head, juce::dontSendNotification);
     detail.setText (more, juce::dontSendNotification);
     repaint();
@@ -160,32 +253,40 @@ void NoveauEditor::paint (juce::Graphics& g)
     const auto b = status.getBounds();
     g.setColour (led);
     g.fillEllipse ((float) b.getX() - 14.0f, (float) b.getCentreY() - 4.0f, 8.0f, 8.0f);
+    // Linha separando o caminho normal (em cima) das opções (embaixo).
+    g.setColour (line);
+    g.fillRect (22, codeLabel.getY() - 8, getWidth() - 44, 1);
 }
 
 void NoveauEditor::resized()
 {
     auto r = getLocalBounds().reduced (22, 16);
-    title.setBounds (r.removeFromTop (30));
-    r.removeFromTop (6);
+    auto top = r.removeFromTop (30);
+    formatBox.setBounds (top.removeFromRight (170).withSizeKeepingCentre (170, 24));
+    formatLabel.setBounds (formatBox.getBounds().translated (-62, 0).withWidth (58));
+    title.setBounds (top);
+    r.removeFromTop (12);
 
-    auto row = r.removeFromTop (16);
-    serverLabel.setBounds (row.removeFromLeft (r.getWidth() / 2));
-    formatLabel.setBounds (row);
-    row = r.removeFromTop (28);
-    serverBox.setBounds (row.removeFromLeft (r.getWidth() / 2 - 6));
-    row.removeFromLeft (12);
-    formatBox.setBounds (row);
-    r.removeFromTop (10);
-
-    codeLabel.setBounds (r.removeFromTop (16));
-    row = r.removeFromTop (36);
-    connectButton.setBounds (row.removeFromRight (130));
-    row.removeFromRight (10);
-    codeBox.setBounds (row);
-    r.removeFromTop (16);
-
-    auto s = r.removeFromTop (22);
+    auto s = r.removeFromTop (24);
     s.removeFromLeft (16);
     status.setBounds (s);
-    detail.setBounds (r.withTrimmedLeft (16));
+    detail.setBounds (r.removeFromTop (62).withTrimmedLeft (16));
+    r.removeFromTop (6);
+
+    auto row = r.removeFromTop (40);
+    mainButton.setBounds (row);
+    r.removeFromTop (4);
+    row = r.removeFromTop (20);
+    reopenButton.setBounds (row.withSizeKeepingCentre (200, 20));
+    forgetButton.setBounds (row.removeFromRight (110));
+
+    r.removeFromTop (18);
+    codeLabel.setBounds (r.removeFromTop (16));
+    row = r.removeFromTop (28);
+    codeButton.setBounds (row.removeFromRight (70));
+    row.removeFromRight (8);
+    codeBox.setBounds (row.removeFromLeft (140));
+    row.removeFromLeft (16);
+    serverLabel.setBounds (row.removeFromLeft (32));
+    serverBox.setBounds (row);
 }
