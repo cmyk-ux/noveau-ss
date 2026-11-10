@@ -193,7 +193,7 @@ function timecode(ms: number): string {
             </button>
           }
           <div class="corner">
-            @if (store.canClip() && !isMobile) {
+            @if (store.clipsOn() && !isMobile) {
               <button class="btn small ghost" (click)="clip()" [title]="clipTitle('Clipa os últimos 2 min desta tela (Alt+C)')">
                 <cen-icon name="scissors" [size]="15" /> clipar <span class="mono buf">{{ clipNote() }}</span></button>
             }
@@ -217,7 +217,7 @@ function timecode(ms: number): string {
             </button>
           </div>
         } @else if (store.stageShares().length > 1) {
-          @if (store.canClip() && !isMobile) {
+          @if (store.clipsOn() && !isMobile) {
             <div class="corner">
               <button class="btn small ghost" (click)="clip()" title="Clipa os últimos 2 min de cada tela, um vídeo por tela (Alt+C)">
                 <cen-icon name="scissors" [size]="15" /> clipar todas <span class="mono buf">{{ clipNote() }}</span></button>
@@ -243,11 +243,6 @@ function timecode(ms: number): string {
                     <p class="hint warn-line">Sua internet está perdendo pacotes na subida ({{ (u.loss * 100).toFixed(1) }}%): o teto baixou para
                       {{ (u.cap / 1e6).toFixed(0) }} de {{ (u.target / 1e6).toFixed(0) }} Mbps e volta sozinho quando a rede limpar.</p>
                   }
-                }
-                @if (store.canClip() && !isMobile) {
-                  <div class="actions">
-                    <button class="btn" (click)="clip()" title="Clipa os últimos 2 min da sua tela (Alt+C)"><cen-icon name="scissors" [size]="15" /> clipar minha tela</button>
-                  </div>
                 }
               } @else {
               <p class="nosignal mono"><span class="led warn"></span>{{ store.waitingForCamera() ? 'aguardando câmera' : 'sem sinal' }}</p>
@@ -387,6 +382,14 @@ function timecode(ms: number): string {
             <cen-live-strip />
           }
 
+          @if (store.canClip() && !isMobile) {
+            <!-- Clipe só liga se a pessoa pedir: desligado, nada grava e nada fica na memória. -->
+            <button class="btn icon clip-key" [class.on]="store.clipsOn()" [attr.aria-pressed]="store.clipsOn()"
+              [title]="store.clipsOn() ? 'Clipes ligados: guardando os últimos 2 min das telas que você assiste (Alt+C clipa). Clique para desligar.' : 'Clipes desligados (nada grava). Clique para guardar os últimos 2 min das telas que você assiste.'"
+              aria-label="Clipes" (click)="toggleClips()">
+              <cen-icon name="scissors" />
+            </button>
+          }
           @if (!isMobile) {
             <button class="btn icon" [class.on]="menu() === 'daw' || dawPlaying()" title="Plugin de DAW: som da sua DAW sem compressão"
               aria-label="Plugin de DAW" [attr.aria-expanded]="menu() === 'daw'" (click)="toggleMenu('daw')"><cen-icon name="fader" /></button>
@@ -923,9 +926,15 @@ export class RoomScreen {
     return base;
   }
 
+  toggleClips() {
+    const on = !this.prefs.clips();
+    this.prefs.setClips(on);
+    this.toast.show(on ? 'Clipes ligados: guardando os últimos 2 min das telas que você assiste. Alt+C clipa.' : 'Clipes desligados: nada está gravando.');
+  }
+
   /** Em foco, clipa a tela em foco; na grade, cada tela vira um clipe. */
   clip() {
-    if (!this.store.canClip()) return;
+    if (!this.store.clipsOn()) return;
     const f = this.store.focused();
     const ids = f !== null ? [f.id] : this.store.shares().map((s) => s.id);
     if (ids.length === 0) return;

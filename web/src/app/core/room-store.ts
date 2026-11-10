@@ -1,6 +1,7 @@
 // Estado da sala para a interface. Uma instância por página de sala.
 import { LoadGovernor, LoadState } from './load';
 import { UploadGuard, UploadState } from './upload-guard';
+import { CodecGuard } from './codec-guard';
 import { Diagnostics, encodeSendHealth } from './diag';
 import { DestroyRef, Injectable, computed, effect, inject, signal } from '@angular/core';
 import {
@@ -92,11 +93,14 @@ export class RoomStore {
   private readonly _clipServer = signal<ClipServer | null>(null);
   /** O servidor tem onde guardar clipes e este navegador consegue gravar. */
   readonly canClip = computed(() => this._clipServer() !== null && clipsSupported());
+  /** Clipe ligado na tecla da barra de baixo. Desligado, nada grava nem fica na memória. */
+  readonly clipsOn = computed(() => this.canClip() && this.prefs.clips());
   readonly webcams = new DeviceList(listWebcams, () => this.session.activeDevice('videoinput'));
   readonly microphones = new DeviceList(listMicrophones, () => this.session.activeDevice('audioinput'));
   private watch: ShareWatch | null = null;
   private governor: LoadGovernor | null = null;
   private uploadGuard: UploadGuard | null = null;
+  private codecGuard: CodecGuard | null = null;
   private readonly _upload = signal<UploadState | null>(null);
   /** Diário de problemas da tela que estou assistindo. */
   readonly diag = new Diagnostics(() => this.session.focusedProbe(), () => this.token);
@@ -273,10 +277,10 @@ export class RoomStore {
       this.session.publishActivity(encodeActivity(a));
     });
     void clipServer().then((c) => this._clipServer.set(c));
-    // Gravação contínua para clipes: guarda sempre todas as telas (com o som delas), com ou sem
-    // foco, enquanto estiver ligada. A lista é conferida de novo a cada 2 s pelo próprio gravador.
+    // Gravação para clipes: só com a tecla ligada. Guarda as telas dos outros (com o som delas),
+    // com ou sem foco. Desligada, os gravadores são encerrados e a memória é solta.
     effect(() => {
-      const on = this.prefs.clips() && this.canClip() && this._join() === 'joined';
+      const on = this.clipsOn() && this._join() === 'joined';
       for (const s of this.shares()) void [s.trackSid, s.hasAudio];
       void this.focused()?.id;
       if (!on) {
@@ -550,8 +554,17 @@ export class RoomStore {
         onSilentAudio: () => void this.dropSilentAudio(),
         onLoad: (l) => this._load.set(l),
         onUpload: (u) => this._upload.set(u),
+        onCodecSwitch: (c) => {
+          this._encoder.set({ codec: c.to, gpu: true });
+          this.toast.show(
+            `${c.from.toUpperCase()} estava saindo no processador (${c.encoder}). ` +
+              `Troquei para ${c.to.toUpperCase()} na placa de vídeo para o seu PC não perder FPS.`,
+          );
+        },
       },
     );
+    this.codecGuard?.stop();
+    this.codecGuard = r.guard;
     this.watch = r.watch;
     this.governor = r.governor;
     this.uploadGuard?.stop();
@@ -593,6 +606,8 @@ export class RoomStore {
   }
 
   private forgetShare() {
+    this.codecGuard?.stop();
+    this.codecGuard = null;
     this.governor?.stop();
     this.governor = null;
     this.uploadGuard?.stop();

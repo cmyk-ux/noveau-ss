@@ -10,11 +10,12 @@ import {
   type TrackPublishOptions,
   VideoPreset,
 } from 'livekit-client';
-import { Codec, CodecChoice, cappedBitrate, parseDecoders, pickCodec, planSize, probeEncoders, StreamPlan, Size } from './stream';
+import { Codec, CodecChoice, cappedBitrate, encoderProbes, hardwareOnly, parseDecoders, pickCodec, planSize, probeEncoders, StreamPlan, Size } from './stream';
 import { LoadGovernor, LoadState } from './load';
 import { UploadGuard, UploadState } from './upload-guard';
 import { ShareHealth, ShareWatch, sourceAudioLevel } from './stats';
 import { StudioBits, StudioSender } from './studio';
+import { CodecGuard } from './codec-guard';
 
 /** Envio do som em modo estúdio (sem compressão), se estiver ativo. */
 let studio: StudioSender | null = null;
@@ -50,6 +51,16 @@ export interface ShareCallbacks {
   onLoad: (s: LoadState) => void;
   /** Teto de bitrate por perda na subida. */
   onUpload: (s: UploadState) => void;
+  /** O codec saía no processador e trocamos para um da placa de vídeo. */
+  onCodecSwitch?: (s: CodecSwitch) => void;
+}
+
+export interface CodecSwitch {
+  from: Codec;
+  /** Implementação que o navegador contou (ex.: OpenH264, libvpx). */
+  encoder: string;
+  to: Codec;
+  bitrate: number;
 }
 
 export interface ShareResult {
@@ -60,6 +71,8 @@ export interface ShareResult {
   watch: ShareWatch;
   governor: LoadGovernor | null;
   upload: UploadGuard;
+  /** Vigia que troca de codec se o navegador codificar no processador. */
+  guard: CodecGuard;
   /** Codec escolhido roda na placa de vídeo (segundo o navegador). */
   gpu: boolean;
   /** 'monitor' (tela inteira), 'window' (janela) ou 'browser' (aba). */
@@ -136,10 +149,14 @@ const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
 
 function videoPublishOptions(req: ShareRequest, codec: Codec, maxBitrate: number, size: Size): TrackPublishOptions {
   // H.265 só toca em quem tem decodificador de hardware; AV1/VP9 em navegadores antigos podem falhar.
-  // Com REGRESSION a reserva só é codificada se alguém da sala não conseguir decodificar. A reserva é
-  // VP8 e não H.264: no Chrome do Windows o H.264 do LiveKit é por software (OpenH264, uma thread só)
-  // e derrubava o FPS de quem joga assim que alguém de Firefox entrava.
+  // Com REGRESSION a reserva só é codificada se alguém da sala não conseguir decodificar. Ela sai na
+  // resolução cheia, então se cair no processador o jogo de quem transmite perde FPS no instante em
+  // que essa pessoa entra (era o "do nada"). Por isso o H.265 ficou por último no automático e a
+  // reserva é H.264 quando a placa codifica H.264. O CodecGuard confere o codificador de verdade.
   const needsBackup = codec === 'h265' || ((codec === 'av1' || codec === 'vp9') && req.maxCompatibility);
+  // A reserva é H.264 quando a placa codifica H.264: quem não decodifica o principal (iPhone, Firefox)
+  // recebe H.264 da placa, sem custo para o jogo. Só sem placa para H.264 ela volta a ser VP8.
+  const backup = encoderProbes().h264?.gpu === true ? 'h264' : 'vp8';
   // Automático (bitrate Auto): manda também uma cópia menor (2/3 da resolução). O servidor troca para ela
   // só para quem não está aguentando (rede ou PC), em vez de travar; quem aguenta continua no máximo.
   // AV1/VP9 já saem com camadas de tempo (L1T3), que fazem o mesmo cortando quadros.
@@ -159,7 +176,7 @@ function videoPublishOptions(req: ShareRequest, codec: Codec, maxBitrate: number
           ],
         }
       : {}),
-    ...(needsBackup ? { backupCodec: { codec: 'vp8' }, backupCodecPolicy: BackupCodecPolicy.REGRESSION } : {}),
+    ...(needsBackup ? { backupCodec: { codec: backup }, backupCodecPolicy: BackupCodecPolicy.REGRESSION } : {}),
   } as TrackPublishOptions;
 }
 
@@ -190,6 +207,14 @@ async function staysSilent(track: LocalTrack): Promise<boolean> {
     }
   }
   return true;
+}
+
+/** O que cada pessoa da sala disse que decodifica na placa de vídeo (atributo "hwdec"). */
+function viewersOf(room: Room): Set<string>[] {
+  return [...room.remoteParticipants.values()]
+    .filter((p) => p.attributes?.['phoneOf'] === undefined && p.attributes?.['obs'] !== '1')
+    .map((p) => parseDecoders(p.attributes?.['hwdec']))
+    .filter((d): d is Set<string> => d !== null);
 }
 
 async function settledSettings(track: MediaStreamTrack): Promise<MediaTrackSettings> {
@@ -235,11 +260,7 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
   // Com o tamanho real da captura, pergunta ao navegador quais codecs rodam na GPU e escolhe.
   const probes = await probeEncoders(resolution, req.plan.frameRate);
   // Quem já está na sala e disse o que decodifica na placa de vídeo (atributo "hwdec").
-  const viewers = [...room.remoteParticipants.values()]
-    .filter((p) => p.attributes?.['phoneOf'] === undefined && p.attributes?.['obs'] !== '1')
-    .map((p) => parseDecoders(p.attributes?.['hwdec']))
-    .filter((d): d is Set<string> => d !== null);
-  const codec = pickCodec(req.preferredCodec, viewers);
+  const codec = pickCodec(req.preferredCodec, viewersOf(room));
   const bitrate = cappedBitrate(resolution, req.plan, codec);
   video.mediaStreamTrack.addEventListener(
     'ended',
@@ -275,7 +296,34 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
   }
   const upload = new UploadGuard(() => (video as any).sender as RTCRtpSender | undefined, bitrate, cb.onUpload);
   upload.start();
-  return { codec, bitrate, resolution, audio: audioState, watch, surface, governor, upload, gpu: probes[codec]?.gpu === true };
+  // Vigia: se o navegador estiver codificando no processador (OpenH264, libvpx, libaom), republica a
+  // mesma captura com um codec que a placa codifica. Quem assiste vê um piscar; o jogo volta a ter FPS.
+  let current = codec;
+  const soft = new Set<Codec>();
+  const guard = new CodecGuard(
+    video,
+    () => current,
+    async (e) => {
+      soft.add(e.from);
+      const next = pickCodec('auto', viewersOf(room), soft);
+      if (next === current || !(encoderProbes()[next]?.gpu === true || hardwareOnly(next))) return null;
+      const live = () =>
+        video.mediaStreamTrack.readyState === 'live' &&
+        room.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.track === video;
+      if (!live()) return null;
+      const br = cappedBitrate(resolution, req.plan, next);
+      console.info(`[tela] ${e.from} saía no processador (${e.encoder}); trocando para ${next}`);
+      await room.localParticipant.unpublishTrack(video, false);
+      if (video.mediaStreamTrack.readyState !== 'live') return null;
+      await room.localParticipant.publishTrack(video, videoPublishOptions(req, next, br, resolution));
+      if (next === 'vp8') await addTemporalLayers(video);
+      current = next;
+      cb.onCodecSwitch?.({ from: e.from, encoder: e.encoder, to: next, bitrate: br });
+      return next;
+    },
+  );
+  guard.start();
+  return { codec, bitrate, resolution, audio: audioState, watch, surface, governor, upload, guard, gpu: probes[codec]?.gpu === true };
 }
 
 export async function stopShareAudio(room: Room) {
