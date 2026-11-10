@@ -222,7 +222,7 @@ export class PeoplePanel {
   protected readonly stageSound = computed(() => {
     const f = this.store.focused();
     if (f === null || f.isLocal || !f.hasAudio) return null;
-    return { share: f, label: f.isIngress ? f.ownerName : `${f.ownerName} (${f.kind === 'camera' ? 'câmera' : 'tela'})` };
+    return { share: f, label: f.isIngress ? f.ownerName : f.obs ? `${f.ownerName} (OBS)` : `${f.ownerName} (${f.kind === 'camera' ? 'câmera' : 'tela'})` };
   });
   /** Quem está na call do Discord mas não está nesta sala do site. */
   protected readonly outside = computed(() => {

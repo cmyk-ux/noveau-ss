@@ -1,4 +1,4 @@
-// Backend do Noveau: entrega tokens do LiveKit e (opcional) endereços RTMP de câmera.
+// Backend do Noveau: entrega tokens do LiveKit, a ponte WHIP do OBS (obs.mjs) e (opcional) endereços RTMP de câmera.
 // Reconstruído a partir do comportamento observado no cenaculum.capivaras.dev.
 //
 // Variáveis de ambiente (todas têm padrão para rodar local com `livekit-server --dev`):
@@ -28,6 +28,7 @@ const { AccessToken, IngressClient, IngressInput, RoomServiceClient, TokenVerifi
 const discord = await import('./discord.mjs');
 const clips = await import('./clips.mjs');
 const daw = await import('./daw.mjs');
+const { createObs, ObsError } = await import('./obs.mjs');
 
 const PORT = Number(process.env.PORT ?? 3001);
 const API_KEY = process.env.LIVEKIT_API_KEY ?? 'devkey';
@@ -240,6 +241,7 @@ const routes = {
     discord: discord.discordEnabled,
     clips: clips.clipsEnabled ? { ttlMs: clips.CLIP_TTL_MS } : null,
     daw: true,
+    obs: true,
   }),
   'GET /api/me': (req) => discord.me(req),
   'POST /api/discord/token': (req, body) => discordToken(req, body),
@@ -253,6 +255,7 @@ const routes = {
   'POST /api/camera': (_req, body) => camera(body),
   'POST /api/camera/stop': (_req, body) => stopCamera(body),
   'POST /api/daw/link': (req, body) => dawLink(req, body),
+  'POST /api/obs/key': (req) => obs.issueKey(req),
 };
 
 /** Página /plugin: quem está logado com o Discord confirma o pedido que o plugin abriu. */
@@ -268,7 +271,8 @@ async function kickFromCallRoom(userId, channelId) {
   const room = discord.roomForChannel(channelId);
   try {
     for (const p of await rooms.listParticipants(room)) {
-      if (p.attributes?.discordId === userId) {
+      // A transmissão do OBS dessa pessoa sai junto (se ela entrar em outra call, o OBS reconecta lá).
+      if (p.attributes?.discordId === userId || p.attributes?.obsOf === userId) {
         await rooms.removeParticipant(room, p.identity);
         console.log(`[discord] ${p.name} saiu da call, removido da sala dela`);
       }
@@ -388,8 +392,26 @@ async function diagRoute(req, res) {
   }
 }
 
+// ---------- OBS por WHIP (veja obs.mjs)
+const obs = createObs({
+  livekitHttpUrl: LIVEKIT_HTTP_URL,
+  AccessToken,
+  TrackSource,
+  apiKey: API_KEY,
+  apiSecret: API_SECRET,
+  secret: discord.derivedSecret('obs'),
+  callRoom: discord.discordEnabled
+    ? async (discordId) => {
+        const call = await discord.voiceChannelOf(discordId);
+        return call === null ? null : { room: discord.roomForChannel(call.id), name: call.name };
+      }
+    : null,
+  verifyRoomToken: (jwt) => verifier.verify(jwt),
+});
+
 const server = createServer(async (req, res) => {
   const path = new URL(req.url, 'http://x').pathname;
+  if (await obs.route(req, res, path)) return;
   if (path === '/api/daw/pair' && req.method === 'POST') return dawPair(req, res);
   if (path === '/api/clips' || path.startsWith('/api/clips/')) return clipRoute(req, res, path);
   if (path === '/api/diag' && req.method === 'POST') return diagRoute(req, res);
@@ -404,7 +426,7 @@ const server = createServer(async (req, res) => {
     const body = req.method === 'POST' ? await readJson(req) : {};
     send(res, 200, await route(req, body));
   } catch (e) {
-    const known = e instanceof HttpError || e instanceof discord.DiscordError || e instanceof daw.DawError;
+    const known = e instanceof HttpError || e instanceof discord.DiscordError || e instanceof daw.DawError || e instanceof ObsError;
     const status = known ? e.status : 500;
     if (status === 500) console.error(e);
     send(res, status, { error: known ? e.message : 'Erro no servidor.' });

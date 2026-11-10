@@ -100,13 +100,14 @@ Para um build de produção: `npm run build` e depois `npm run serve` (site + AP
 
 - O link da sala é `/room/<nome>#<chave>`. A chave fica no `#`, então não vai para o servidor no carregamento da página. A sala no LiveKit é `c_` + os 32 primeiros hex de `sha256(chave)`, igual ao Cenaculum original.
 - A API (`server/server.mjs`) só emite tokens JWT (4 h) para a sala certa. Toda a mídia passa pelo LiveKit.
+- OBS: transmite por WHIP direto para o LiveKit, sem recodificar e sem serviço extra no servidor. Veja [docs/OBS.md](docs/OBS.md).
 - Áudio da tela: Opus estéreo, sem DTX, com RED (`web/src/app/core/share.ts`, `SCREEN_AUDIO_PUBLISH`). É aqui que entra o próximo passo: subir para 510 kbps e depois um "modo estúdio" com PCM sem compressão pelo canal de dados.
 
 ## Estrutura
 
 ```
 docker-compose.yml   LiveKit em modo dev
-server/              API Node (tokens, config, câmera RTMP)
+server/              API Node (tokens, config, câmera RTMP, ponte WHIP do OBS)
 web/                 frontend Angular 22 + livekit-client
   src/app/core/      lógica: sala, transmissão, codecs, volumes, stats
   src/app/ui/        componentes de tela

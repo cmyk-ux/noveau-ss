@@ -107,3 +107,19 @@ export function requestGuestToken(id: string, holder: string, name: string): Pro
 export function kickGuest(identity: string): Promise<unknown> {
   return post('/api/discord/kick', { identity }, 'Não foi possível expulsar.');
 }
+
+/** Chave para o OBS transmitir por WHIP (veja server/obs.mjs). */
+export interface ObsKey {
+  token: string;
+  /** Sala da call do Discord: a chave segue a call em que você estiver. */
+  followsCall: boolean;
+  expiresAt: number;
+  path: string;
+}
+
+export async function requestObsKey(roomToken: string): Promise<ObsKey> {
+  const res = await fetch('/api/obs/key', { method: 'POST', headers: { authorization: `Bearer ${roomToken}` } });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok || typeof body.token !== 'string') throw new Error(body.error ?? `Erro ${res.status} ao pegar a chave do OBS.`);
+  return body as ObsKey;
+}

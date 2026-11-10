@@ -20,6 +20,7 @@ const ICONS: Record<string, string> = {
   rotate: `<path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 3.5V8h4.5"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20.5V16h-4.5"/>`,
   pulse: `<path d="M2.5 12h4l2.5-6.5 5 13 2.5-6.5h5"/>`,
   caret: `<path d="m6 9 6 6 6-6"/>`,
+  broadcast: `<circle cx="12" cy="12" r="2.2"/><path d="M8.1 15.9a5.5 5.5 0 0 1 0-7.8"/><path d="M15.9 8.1a5.5 5.5 0 0 1 0 7.8"/><path d="M5.3 18.7a9.5 9.5 0 0 1 0-13.4"/><path d="M18.7 5.3a9.5 9.5 0 0 1 0 13.4"/>`,
   speaker: `<path d="M4.5 9.5v5h3.2L13 18.5v-13L7.7 9.5z"/><path d="M16.5 9a4.5 4.5 0 0 1 0 6"/><path d="M19.2 6.3a8 8 0 0 1 0 11.4"/>`,
   speakerLow: `<path d="M4.5 9.5v5h3.2L13 18.5v-13L7.7 9.5z"/><path d="M16.5 9a4.5 4.5 0 0 1 0 6"/>`,
   speakerOff: `<path d="M4.5 9.5v5h3.2L13 18.5v-13L7.7 9.5z"/><path d="m16.5 9.5 5 5"/><path d="m21.5 9.5-5 5"/>`,

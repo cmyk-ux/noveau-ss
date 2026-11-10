@@ -14,6 +14,10 @@ import {
 import { ShareCallbacks, ShareRequest, ShareResult, startShare, stopShare, stopShareAudio } from './share';
 import { Channel, isSilent, Mixer, Volume } from './volume';
 import { IS_MOBILE } from './device';
+import { installStereoReceive } from './stereo';
+
+// O som do OBS (WHIP) chega sem a marca de estéreo; veja stereo.ts.
+installStereoReceive();
 
 const DEVICE_TOPIC = 'device';
 const GUARD_TICK_MS = 2000;
@@ -33,6 +37,8 @@ export interface ShareView {
   kind: 'screen' | 'camera';
   /** Câmera chegando por RTMP (LiveKit Ingress). */
   isIngress: boolean;
+  /** Tela chegando do OBS (WHIP). */
+  obs: boolean;
   hasAudio: boolean;
   trackSid: string;
   volume: Volume;
@@ -159,8 +165,8 @@ function focusIfOnly(ids: string[], arriving: string, _current: string | null) {
  * tela ganham a mesma folga para continuarem juntos. A voz não muda (fica sem atraso).
  */
 const SCREEN_CUSHION_MS = 150;
-function cushion(track: Track) {
-  if (track.source !== Track.Source.ScreenShare && track.source !== Track.Source.ScreenShareAudio) return;
+function cushion(track: Track, fromObs: boolean) {
+  if (!fromObs && track.source !== Track.Source.ScreenShare && track.source !== Track.Source.ScreenShareAudio) return;
   const receiver = (track as unknown as { receiver?: RTCRtpReceiver & { jitterBufferTarget?: number | null } }).receiver;
   if (receiver === undefined || !('jitterBufferTarget' in receiver)) return;
   try {
@@ -180,7 +186,19 @@ function pickVisual(p: { screen?: TrackPublication; webcam?: TrackPublication; w
   return null;
 }
 
+/**
+ * Transmissão do OBS (WHIP): o LiveKit marca o vídeo como câmera e o som como microfone, então
+ * para este participante a "câmera" é a tela e o "microfone" é o som da tela.
+ */
+export function isObs(p: Participant | undefined): boolean {
+  return p?.attributes?.['obs'] === '1';
+}
+function screenAudioSource(p: Participant | undefined) {
+  return isObs(p) ? Track.Source.Microphone : Track.Source.ScreenShareAudio;
+}
+
 export function displayName(p: Participant): string {
+  if (isObs(p) && p.attributes['obsName']) return p.attributes['obsName'];
   return p.name !== undefined && p.name !== '' ? p.name : p.identity.split('#')[0];
 }
 
@@ -273,8 +291,8 @@ export class RoomSession {
         changed();
       })
       .on(RoomEvent.TrackUnpublished, changed)
-      .on(RoomEvent.TrackSubscribed, (track) => {
-        cushion(track);
+      .on(RoomEvent.TrackSubscribed, (track, _pub, p) => {
+        cushion(track, isObs(p));
         if (track.kind === Track.Kind.Audio) this.audioContainer.appendChild(track.attach());
         changed();
       })
@@ -580,8 +598,8 @@ export class RoomSession {
   async focusedAudioReport(): Promise<RTCStatsReport | null> {
     const f = this.focusedLive();
     if (f === undefined || f.view.isLocal) return null;
-    const track = this.room.remoteParticipants.get(f.view.ownerIdentity)?.getTrackPublication(Track.Source.ScreenShareAudio)
-      ?.track as any;
+    const owner = this.room.remoteParticipants.get(f.view.ownerIdentity);
+    const track = owner?.getTrackPublication(screenAudioSource(owner))?.track as any;
     return (await track?.getRTCStatsReport()) ?? null;
   }
 
@@ -594,7 +612,7 @@ export class RoomSession {
     const audio =
       f.view.kind === 'camera' && !f.view.isIngress
         ? null
-        : (owner?.getTrackPublication(Track.Source.ScreenShareAudio)?.track?.mediaStreamTrack ?? null);
+        : (owner?.getTrackPublication(screenAudioSource(owner))?.track?.mediaStreamTrack ?? null);
     return { id: f.view.id, video, audio, name: f.view.isLocal ? 'minha-tela' : f.view.ownerName, local: f.view.isLocal };
   }
 
@@ -610,14 +628,19 @@ export class RoomSession {
     const out: LiveShare[] = [];
     for (const p of this.everyone()) {
       const isIngress = p.kind === ParticipantKind.INGRESS;
-      const audio = p.getTrackPublication(Track.Source.ScreenShareAudio);
+      const obs = isObs(p);
+      const audio = p.getTrackPublication(screenAudioSource(p));
       const webcam = p.getTrackPublication(Track.Source.Camera);
-      const visual = pickVisual({
-        screen: p.getTrackPublication(Track.Source.ScreenShare),
-        webcam,
-        webcamMuted: webcam?.isMuted,
-        isIngress,
-      });
+      const visual = obs
+        ? webcam === undefined
+          ? null
+          : { publication: webcam, kind: 'screen' as const }
+        : pickVisual({
+            screen: p.getTrackPublication(Track.Source.ScreenShare),
+            webcam,
+            webcamMuted: webcam?.isMuted,
+            isIngress,
+          });
       if (visual === null) continue;
       out.push({
         view: {
@@ -627,6 +650,7 @@ export class RoomSession {
           isLocal: p === this.room.localParticipant,
           kind: visual.kind,
           isIngress,
+          obs,
           hasAudio: audio !== undefined && !audio.isMuted,
           trackSid: visual.publication.trackSid,
           volume: this.mixer.read('share', p.identity),
@@ -691,7 +715,8 @@ export class RoomSession {
   }
 
   private collectWatchers() {
-    return this.everyone().map((p) => ({ identity: p.identity, name: displayName(p), watching: watchingOf(p.attributes) }));
+    // O OBS não é uma pessoa: aparece só como tela.
+    return this.everyone().filter((p) => !isObs(p)).map((p) => ({ identity: p.identity, name: displayName(p), watching: watchingOf(p.attributes) }));
   }
 
   /**
@@ -714,6 +739,16 @@ export class RoomSession {
     }
   }
 
+  /** Minha própria transmissão do OBS: o som dela eu já ouço no PC, não toca de novo (com atraso). */
+  private isMyObs(p: Participant) {
+    if (!isObs(p)) return false;
+    const me = this.room.localParticipant;
+    const mine = me.attributes?.['discordId'];
+    const of = p.attributes?.['obsOf'];
+    if (of !== undefined && of !== '') return of === mine;
+    return p.attributes?.['obsName'] === displayName(me);
+  }
+
   /** Mesma conta do Discord em outro aparelho (PC + celular na mesma call). */
   private isMyOtherDevice(p: Participant) {
     const mine = this.room.localParticipant.attributes?.['discordId'];
@@ -724,13 +759,14 @@ export class RoomSession {
     for (const p of this.room.remoteParticipants.values()) {
       const id = p.identity;
       // O microfone do meu outro aparelho não toca aqui: eu me ouviria com atraso (e daria eco).
-      this.tune(p, Track.Source.Microphone, this.mixer.read('mic', id), !this.isMyOtherDevice(p));
+      // (No OBS o "microfone" é o som da tela, tratado logo abaixo.)
+      if (!isObs(p)) this.tune(p, Track.Source.Microphone, this.mixer.read('mic', id), !this.isMyOtherDevice(p));
       // Na grade, o som de todas as telas toca (cada uma com seu volume); em foco, só a dela.
       this.tune(
         p,
-        Track.Source.ScreenShareAudio,
+        screenAudioSource(p),
         this.mixer.read('share', id),
-        !this.hidden.has(id) && (this.focusedShareId === null || id === this.focusedShareId),
+        !this.isMyObs(p) && !this.hidden.has(id) && (this.focusedShareId === null || id === this.focusedShareId),
       );
     }
   }
