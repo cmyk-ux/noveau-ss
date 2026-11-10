@@ -16,10 +16,11 @@ import { Stage } from './stage';
 import { VolumeSlider } from './volume-slider';
 import { StatsPanel } from './stats-panel';
 import { StreamPanel } from './stream-panel';
+import { ObsPanel } from './obs-panel';
 import { DawPanel } from './daw-panel';
 import { ClipItem } from '../core/clips';
 
-type Menu = 'mic' | 'screen' | 'camera' | 'daw';
+type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
 
 /** Tempo desde que entrou, como o contador de uma fita: 00:12:34. */
 function timecode(ms: number): string {
@@ -30,7 +31,7 @@ function timecode(ms: number): string {
 
 @Component({
   selector: 'cen-room-screen',
-  imports: [Icon, Stage, ShareTile, VolumeSlider, StatsPanel, PeoplePanel, StreamPanel, DevicesPanel, DawPanel],
+  imports: [Icon, Stage, ShareTile, VolumeSlider, StatsPanel, PeoplePanel, StreamPanel, DevicesPanel, DawPanel, ObsPanel],
   host: {
     '(document:fullscreenchange)': 'isFullscreen.set(fullscreenActive())',
     '(document:keydown.escape)': 'closeAll()',
@@ -341,6 +342,10 @@ function timecode(ms: number): string {
           @if (!isMobile) {
             <button class="btn icon" [class.on]="menu() === 'daw' || dawPlaying()" title="Plugin de DAW: som da sua DAW sem compressão"
               aria-label="Plugin de DAW" [attr.aria-expanded]="menu() === 'daw'" (click)="toggleMenu('daw')"><cen-icon name="fader" /></button>
+            @if (store.canPublish()) {
+              <button class="btn icon" [class.on]="menu() === 'obs' || obsLive()" title="Transmitir pelo OBS"
+                aria-label="Transmitir pelo OBS" [attr.aria-expanded]="menu() === 'obs'" (click)="toggleMenu('obs')"><cen-icon name="broadcast" /></button>
+            }
           }
 
           @if (isMobile) {
@@ -361,6 +366,7 @@ function timecode(ms: number): string {
               @case ('screen') { <cen-stream-panel /> }
               @case ('camera') { <cen-devices-panel section="camera" [open]="true" /> }
               @case ('daw') { <cen-daw-panel /> }
+              @case ('obs') { <cen-obs-panel /> }
             }
           </div>
         }
@@ -589,6 +595,7 @@ export class RoomScreen {
   protected readonly menu = signal<Menu | null>(null);
   /** Algum plugin de DAW tocando na sala: a tecla do plugin fica acesa. */
   protected readonly dawPlaying = computed(() => this.store.studio.streams().some((s) => s.source === 'daw'));
+  protected readonly obsLive = computed(() => this.store.shares().some((s) => s.obs));
   protected readonly diagOpen = signal(false);
   /** A travada mais recente, por 8 s, numa faixa sobre a tela. */
   protected readonly freshIssue = computed(() => {
@@ -780,7 +787,7 @@ export class RoomScreen {
   }
 
   menuTitle(m: Menu) {
-    return m === 'mic' ? 'microfone' : m === 'screen' ? 'transmissão da tela' : m === 'daw' ? 'plugin de DAW' : 'câmera';
+    return m === 'mic' ? 'microfone' : m === 'screen' ? 'transmissão da tela' : m === 'daw' ? 'plugin de DAW' : m === 'obs' ? 'transmitir pelo OBS' : 'câmera';
   }
 
   closeAll() {

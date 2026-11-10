@@ -3,7 +3,7 @@ import { LoadGovernor, LoadState } from './load';
 import { UploadGuard, UploadState } from './upload-guard';
 import { Diagnostics, encodeSendHealth } from './diag';
 import { DestroyRef, Injectable, computed, effect, inject, signal } from '@angular/core';
-import { CameraAddress, JoinGrant, requestCamera, requestToken, revokeCamera } from './api';
+import { CameraAddress, JoinGrant, requestCamera, requestObsKey, requestToken, revokeCamera } from './api';
 import { DeviceList, listMicrophones, listWebcams } from './devices';
 import { RoomLink } from './link';
 import { Prefs } from './prefs';
@@ -276,6 +276,11 @@ export class RoomStore {
   readonly studio = new StudioHub(this.session.room);
   /** Som dos plugins de DAW desta sala (chega pelo servidor, não pelo LiveKit). */
   readonly daw = new DawListener(this.studio, () => this.token);
+
+  /** Endereço e chave para o OBS transmitir nesta sala (ou na call, nas salas do Discord). */
+  obsKey() {
+    return requestObsKey(this.token);
+  }
 
   /** Código para digitar no plugin de DAW (vale 10 min). */
   dawCode() {
