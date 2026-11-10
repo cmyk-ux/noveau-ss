@@ -1,6 +1,8 @@
 # Clipes no Cloudflare R2
 
-O botão de clipe guarda os últimos 2 min da tela em foco. Ao clipar, o navegador manda o MP4
+O site guarda sempre os últimos 2 min de cada tela da sala (até 4), com ou sem foco, cada uma no
+seu buffer. Trocar de foco, voltar para a grade ou a trilha reconectar não apaga o que foi guardado.
+O botão clipa a tela em foco; na grade, "clipar todas" faz um vídeo por tela. Ao clipar, o navegador manda o MP4
 **direto para o R2** (o servidor só assina o endereço, então os ~150 MB não passam pela RAM dele),
 e quem clipou recebe um link de download que vale 5 min. Depois disso o arquivo é apagado.
 
