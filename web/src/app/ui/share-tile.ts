@@ -20,6 +20,7 @@ import { RoomStore } from '../core/room-store';
     <div class="name">
       <span class="led" [class.live]="!share().isLocal" [class.accent]="share().isLocal"></span>
       @if (share().isLocal) { Sua tela } @else { {{ share().ownerName }} }
+      @if (share().activity.name) { <span class="act" [title]="'Transmitindo ' + share().activity.name">{{ share().activity.name }}</span> }
       @if (share().hasAudio || hasStudio()) { <span class="snd" [class.off]="share().volume.muted || share().volume.level === 0">♪</span> }
       <button type="button" class="hide" title="Esconder esta tela (para de baixar o vídeo e o som dela)"
         (click)="$event.stopPropagation(); store.hideShare(share().id)"><cen-icon name="eyeOff" [size]="13" /></button>
@@ -36,6 +37,8 @@ import { RoomStore } from '../core/room-store';
       border: 1px solid rgb(255 255 255 / 0.08); font: 500 0.7rem/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase;
       display: flex; gap: 0.45rem; align-items: center; }
     .snd { color: var(--accent-hi); }
+    .act { max-width: 12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-transform: none; letter-spacing: 0.02em;
+      color: var(--accent-hi); padding-left: 0.45rem; border-left: 1px solid rgb(255 255 255 / 0.12); }
     .eye { position: absolute; right: 8px; top: 8px; padding: 2px 7px; border-radius: 3px; background: rgb(8 7 11 / 0.82);
       font: 0.72rem var(--mono); display: flex; gap: 0.3rem; align-items: center; }
     .mute { position: absolute; right: 8px; bottom: 8px; border: 1px solid rgb(255 255 255 / 0.1); border-radius: 3px; padding: 4px 6px;
