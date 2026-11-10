@@ -44,6 +44,8 @@ let sounds: Stored<EncodedAudioChunk>[] = [];
 let lastKey = -Infinity;
 let lastFrame = -Infinity;
 let canvas: OffscreenCanvas | null = null;
+/** A placa de vídeo falhou: daqui em diante codifica no processador (até a próxima fonte). */
+let softwareOnly = false;
 let draw: OffscreenCanvasRenderingContext2D | null = null;
 
 function post(msg: unknown, transfer: Transferable[] = []) {
@@ -92,7 +94,7 @@ async function openVideo(width: number, height: number) {
     latencyMode: 'realtime',
     avc: { format: 'avc' },
   };
-  let config: VideoEncoderConfig = { ...base, hardwareAcceleration: 'prefer-hardware' };
+  let config: VideoEncoderConfig = { ...base, hardwareAcceleration: softwareOnly ? 'prefer-software' : 'prefer-hardware' };
   if (!(await VideoEncoder.isConfigSupported(config)).supported) config = { ...base, hardwareAcceleration: 'no-preference' };
   if (!(await VideoEncoder.isConfigSupported(config)).supported) throw new Error('Este navegador não codifica H.264.');
   const gen = generation;
@@ -103,7 +105,15 @@ async function openVideo(width: number, height: number) {
       frames.push({ chunk, at: chunk.timestamp });
       trim();
     },
-    error: (e) => post({ type: 'error', message: `Codificador de vídeo: ${e.message}` }),
+    // A placa de vídeo pode recusar no meio (ex.: limite de sessões de codificação, que a própria
+    // transmissão também usa). O codificador fecha e nunca mais aceita quadros: sem isto, a
+    // gravação parava até recarregar a página. Reabre no processador no próximo quadro.
+    error: (e) => {
+      if (gen !== generation || video !== enc) return;
+      video = null;
+      if (config.hardwareAcceleration === 'prefer-hardware') softwareOnly = true;
+      post({ type: 'error', message: `Codificador de vídeo reiniciado: ${e.message}` });
+    },
   });
   enc.configure(config);
   video = enc;
@@ -128,8 +138,11 @@ async function openAudio(first: AudioData) {
       if (meta?.decoderConfig !== undefined) audioConfig = meta.decoderConfig;
       sounds.push({ chunk, at: chunk.timestamp + audioShift });
     },
+    // Falhou: tenta abrir de novo no próximo bloco de som.
     error: () => {
+      if (gen !== generation) return;
       audio = null;
+      audioFormat = null;
     },
   });
   enc.configure(config);
@@ -144,6 +157,8 @@ async function pumpVideo(reader: ReadableStreamDefaultReader<VideoFrame>, gen: n
     const { value: frame, done } = await reader.read();
     if (done || gen !== generation) {
       frame?.close();
+      // Descarta os quadros que ainda estavam na fila (senão o navegador reclama e pode travar a captura).
+      void reader.cancel().catch(() => undefined);
       return;
     }
     offset ??= performance.now() * 1000 - frame.timestamp;
@@ -153,9 +168,18 @@ async function pumpVideo(reader: ReadableStreamDefaultReader<VideoFrame>, gen: n
       continue;
     }
     lastFrame = at;
-    const want = fit(frame.displayWidth, frame.displayHeight, opts!.maxWidth, opts!.maxHeight);
+    let want = fit(frame.displayWidth, frame.displayHeight, opts!.maxWidth, opts!.maxHeight);
     let input: VideoFrame | null = null;
     try {
+      if (video !== null && video.state === 'closed') video = null;
+      // A tela de outra pessoa muda de resolução o tempo todo (a rede sobe e desce a qualidade).
+      // Reabrir o codificador apagava o que já estava guardado; agora só reabre se o formato da
+      // imagem mudou, ou se melhorou logo no começo. Senão, redimensiona para o tamanho atual.
+      if (video !== null && (want.width !== size.width || want.height !== size.height)) {
+        const sameShape = Math.abs(want.width / want.height - size.width / size.height) < 0.02;
+        const better = want.width * want.height > size.width * size.height;
+        if (sameShape && !(better && buffered() < 15)) want = size;
+      }
       if (video === null || want.width !== size.width || want.height !== size.height) await openVideo(want.width, want.height);
       if (frame.displayWidth !== want.width || frame.displayHeight !== want.height) {
         if (canvas === null || canvas.width !== want.width || canvas.height !== want.height) {
@@ -186,6 +210,7 @@ async function pumpAudio(reader: ReadableStreamDefaultReader<AudioData>, gen: nu
     const { value: data, done } = await reader.read();
     if (done || gen !== generation) {
       data?.close();
+      void reader.cancel().catch(() => undefined);
       return;
     }
     try {
@@ -266,6 +291,7 @@ function monotonic<T extends { at: number }>(list: T[]): T[] {
 
 function stop() {
   generation++;
+  softwareOnly = false;
   video?.close();
   audio?.close();
   video = null;

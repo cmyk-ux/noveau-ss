@@ -160,7 +160,7 @@ export class RoomStore {
         this.clips.stop();
         return;
       }
-      this.clips.follow(f === null ? null : this.session.focusedMedia());
+      this.clips.watch(() => this.session.focusedMedia());
     });
     this.studio.setLatency(this.prefs.studioLatency());
     // Som de estúdio segue a mesma regra do som da tela: na grade todas, em foco só a dela.
