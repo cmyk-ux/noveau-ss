@@ -18,9 +18,11 @@ cp -R "$src/noveau DAW.component" "$root/Library/Audio/Plug-Ins/Components/"
 
 # Sem isso o Installer "segue" uma cópia antiga do plugin para onde ela estiver (bundle relocável).
 pkgbuild --analyze --root "$root" "$work/components.plist"
+plutil -p "$work/components.plist"
 i=0
 while /usr/libexec/PlistBuddy -c "Print :$i" "$work/components.plist" >/dev/null 2>&1; do
-  /usr/libexec/PlistBuddy -c "Set :$i:BundleIsRelocatable false" "$work/components.plist"
+  /usr/libexec/PlistBuddy -c "Set :$i:BundleIsRelocatable false" "$work/components.plist" 2>/dev/null ||
+    /usr/libexec/PlistBuddy -c "Add :$i:BundleIsRelocatable bool false" "$work/components.plist"
   i=$((i + 1))
 done
 

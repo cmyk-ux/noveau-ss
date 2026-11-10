@@ -103,7 +103,8 @@ jobs:
           ditto -c -k --keepParent "$out" "$out.zip"
           version=$(sed -nE 's/^project\(NoveauDAW VERSION ([0-9.]+).*/\1/p' plugin/CMakeLists.txt)
           plugin/installer/mac-pkg.sh "$out" "$version" noveau-DAW-Mac.pkg
-          pkgutil --payload-files noveau-DAW-Mac.pkg | head -20
+          pkgutil --payload-files noveau-DAW-Mac.pkg | head -20 || true
+          ls -la noveau-DAW-Mac.pkg
 
       - uses: actions/upload-artifact@v4
         with:
