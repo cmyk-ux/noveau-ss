@@ -61,6 +61,13 @@ const store = {
   set showStats(v: boolean) {
     localStorage.setItem('cenaculum:stats', v ? 'yes' : 'no');
   },
+  // Diagnóstico de travadas: desligado por padrão, para quem não precisa não ver os avisos na tela.
+  get diagOn(): boolean {
+    return localStorage.getItem('noveau:diag') === 'on';
+  },
+  set diagOn(v: boolean) {
+    localStorage.setItem('noveau:diag', v ? 'on' : 'off');
+  },
   get volumeHinted(): boolean {
     return localStorage.getItem('cenaculum:volume-hint') === 'yes';
   },
@@ -132,6 +139,13 @@ export class Prefs {
   private readonly _shareAudio = signal(store.shareAudio);
   private readonly _showStats = signal(store.showStats);
   private readonly _clips = signal(store.clips);
+  private readonly _diagOn = signal(store.diagOn);
+  /** Avisos de travada sobre a tela e o diário de travadas à vista. */
+  readonly diagOn = this._diagOn.asReadonly();
+  setDiagOn(v: boolean) {
+    store.diagOn = v;
+    this._diagOn.set(v);
+  }
   /** Guardar os últimos 2 min da tela em foco para poder clipar. */
   readonly clips = this._clips.asReadonly();
   private readonly _maxCompatibility = signal(store.maxCompatibility);
