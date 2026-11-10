@@ -10,7 +10,7 @@ import { SendWindow } from './ui/send-window';
     <router-outlet />
     <cen-send-window />
     @if (toast.message(); as message) {
-      <div class="toast" role="status">
+      <div class="toast" role="status" animate.leave="torn">
         {{ message }}
         @if (toast.action(); as a) { <button type="button" class="undo" (click)="toast.runAction()">{{ a.label }}</button> }
       </div>
@@ -27,6 +27,9 @@ import { SendWindow } from './ui/send-window';
       animation: print 340ms steps(8) both;
       display: flex; align-items: center; gap: 0.9rem;
     }
+    /* Saindo: o recibo é rasgado e cai. */
+    .toast.torn { animation: tear 220ms steps(4) both; }
+    @keyframes tear { 30% { transform: rotate(-2deg); } to { transform: translateY(26px) rotate(4deg); opacity: 0; } }
     .undo { all: unset; cursor: pointer; font: 600 0.8rem var(--mono); text-transform: uppercase; letter-spacing: 0.08em;
       padding: 0.15rem 0.5rem; border: 1px solid #1d1b17; border-radius: 2px; }
     .undo:hover { background: #1d1b17; color: #ddd6c6; }
