@@ -12,7 +12,6 @@ export const DAW_INSTALLERS = {
   windows: `${LATEST}/noveau-DAW-Windows.exe`,
   mac: `${LATEST}/noveau-DAW-Mac.pkg`,
 };
-export const PLUGIN_BUDDY = 'https://www.modalics.com/products/plugin-buddy-free';
 
 export type DesktopOs = 'windows' | 'mac' | 'other';
 export function desktopOs(): DesktopOs {

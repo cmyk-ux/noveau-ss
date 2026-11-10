@@ -75,6 +75,7 @@ export class ClipRecorder {
   readonly size = this._size.asReadonly();
   private pendingName = '';
   private ticker?: number;
+  private watcher?: number;
 
   constructor(private readonly token: () => string) {}
 
@@ -82,10 +83,23 @@ export class ClipRecorder {
     return this.worker !== null && this.sourceKey !== null;
   }
 
+  /**
+   * Segue a fonte que `get` devolver, conferindo de novo a cada 2 s. A trilha da tela em foco
+   * costuma chegar depois do foco (ainda não inscrita) e o LiveKit troca a trilha ao reconectar;
+   * sem conferir de novo, a gravação ficava parada até recarregar a página.
+   */
+  watch(get: () => ClipSource | null) {
+    this.follow(get());
+    window.clearInterval(this.watcher);
+    this.watcher = window.setInterval(() => this.follow(get()), 2000);
+  }
+
   /** Começa (ou troca) a gravação contínua para esta fonte. */
   follow(src: ClipSource | null) {
+    if (src !== null && src.video.readyState === 'ended') src = null;
     const key = src === null ? null : `${src.id}:${src.video.id}:${src.audio?.id ?? ''}`;
-    if (key === this.sourceKey) return;
+    // Mesma fonte e a cópia ainda viva: nada a fazer. Cópia encerrada: recomeça.
+    if (key === this.sourceKey && !this.clones.some((t) => t.readyState === 'ended')) return;
     this.release();
     this.sourceKey = key;
     if (src === null) return;
@@ -112,6 +126,8 @@ export class ClipRecorder {
   }
 
   stop() {
+    window.clearInterval(this.watcher);
+    this.watcher = undefined;
     this.release();
     this.sourceKey = null;
     this.worker?.terminate();
