@@ -103,14 +103,17 @@ export class DawListener {
   }
 
   private onText(raw: string) {
-    let m: { t?: string; id?: string; name?: string };
+    let m: { t?: string; id?: string; name?: string; rate?: number; format?: number; channels?: number };
     try {
       m = JSON.parse(raw);
     } catch {
       return;
     }
-    if (m.t === 'on' && m.id !== undefined) this.names.set(m.id, m.name ?? 'DAW');
-    else if (m.t === 'off' && m.id !== undefined) {
+    if (m.t === 'on' && m.id !== undefined) {
+      // O plugin está na master: os controles aparecem já, mesmo sem som tocando.
+      this.names.set(m.id, m.name ?? 'DAW');
+      this.hub.announceDaw(m.id, m.name ?? 'DAW', m.rate, m.format, m.channels);
+    } else if (m.t === 'off' && m.id !== undefined) {
       this.names.delete(m.id);
       this.hub.dropDaw(m.id);
     }

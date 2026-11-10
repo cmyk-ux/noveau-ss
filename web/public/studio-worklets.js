@@ -45,6 +45,8 @@ class StudioPlayer extends AudioWorkletProcessor {
     this.band = sampleRate * 0.04;
     this.playing = false;
     this.underruns = 0;
+    /** Quando o buffer esvaziou (null = não esvaziou). Só conta engasgo se o som voltar logo. */
+    this.drainedAt = null;
     this.adjusts = 0;
     this.reportAt = 0;
     this.port.onmessage = (e) => {
@@ -61,6 +63,12 @@ class StudioPlayer extends AudioWorkletProcessor {
   }
   push(data) {
     const frames = data.length / 2;
+    // Esvaziou e o som voltou em até 2 s: foi engasgo (rede). Mais que isso foi a fonte que parou
+    // (DAW sem nada tocando), e não conta.
+    if (this.drainedAt !== null) {
+      if (currentTime - this.drainedAt < 2) this.underruns++;
+      this.drainedAt = null;
+    }
     if (this.level + frames > this.capacity) {
       // Estourou (aba ficou em segundo plano?): recomeça do ponto atual.
       this.read = this.write = this.level = 0;
@@ -111,7 +119,7 @@ class StudioPlayer extends AudioWorkletProcessor {
         this.level--;
       }
       if (this.level === 0) {
-        this.underruns++;
+        this.drainedAt = currentTime;
         this.playing = false; // rebufferiza até o alvo
       }
     }
