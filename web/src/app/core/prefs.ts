@@ -132,7 +132,7 @@ export class Prefs {
   private readonly _shareAudio = signal(store.shareAudio);
   private readonly _showStats = signal(store.showStats);
   private readonly _clips = signal(store.clips);
-  /** Guardar os últimos 2 min da tela em foco para poder clipar. */
+  /** Guardar os últimos 2 min de cada tela para poder clipar. */
   readonly clips = this._clips.asReadonly();
   private readonly _maxCompatibility = signal(store.maxCompatibility);
   private readonly _volumeHinted = signal(store.volumeHinted);

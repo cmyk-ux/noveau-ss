@@ -61,7 +61,7 @@ export class RoomStore {
 
   private link: RoomLink = { key: '', secret: '' };
   private token = '';
-  /** Gravador de clipes (últimos 2 min da tela em foco). */
+  /** Gravador de clipes (últimos 2 min de cada tela). */
   readonly clips = new ClipRecorder(() => this.token);
   private readonly _clipServer = signal<ClipServer | null>(null);
   /** O servidor tem onde guardar clipes e este navegador consegue gravar. */
@@ -150,17 +150,17 @@ export class RoomStore {
       );
     });
     void clipServer().then((c) => this._clipServer.set(c));
-    // Gravação contínua para clipes: segue a tela em foco (e o som dela) enquanto estiver ligada.
+    // Gravação contínua para clipes: guarda sempre todas as telas (com o som delas), com ou sem
+    // foco, enquanto estiver ligada. A lista é conferida de novo a cada 2 s pelo próprio gravador.
     effect(() => {
-      const f = this.focused();
       const on = this.prefs.clips() && this.canClip() && this._join() === 'joined';
-      void f?.trackSid;
-      void f?.hasAudio;
+      for (const s of this.shares()) void [s.trackSid, s.hasAudio];
+      void this.focused()?.id;
       if (!on) {
         this.clips.stop();
         return;
       }
-      this.clips.watch(() => this.session.focusedMedia());
+      this.clips.watch(() => this.session.clipSources());
     });
     this.studio.setLatency(this.prefs.studioLatency());
     // Som de estúdio segue a mesma regra do som da tela: na grade todas, em foco só a dela.

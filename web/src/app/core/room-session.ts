@@ -11,6 +11,7 @@ import {
   VideoPresets,
   VideoQuality,
 } from 'livekit-client';
+import type { ClipSource } from './clips';
 import { ShareCallbacks, ShareRequest, ShareResult, startShare, stopShare, stopShareAudio } from './share';
 import { Channel, isSilent, Mixer, Volume } from './volume';
 import { IS_MOBILE } from './device';
@@ -603,17 +604,38 @@ export class RoomSession {
     return (await track?.getRTCStatsReport()) ?? null;
   }
 
-  /** Faixas cruas da tela em foco (vídeo e o som dela), para o gravador de clipes. */
-  focusedMedia(): { id: string; video: MediaStreamTrack; audio: MediaStreamTrack | null; name: string; local: boolean } | null {
-    const f = this.focusedLive();
-    const video = f?.publication.track?.mediaStreamTrack;
-    if (f === undefined || video === undefined) return null;
-    const owner = f.view.isLocal ? this.room.localParticipant : this.room.remoteParticipants.get(f.view.ownerIdentity);
-    const audio =
-      f.view.kind === 'camera' && !f.view.isIngress
-        ? null
-        : (owner?.getTrackPublication(screenAudioSource(owner))?.track?.mediaStreamTrack ?? null);
-    return { id: f.view.id, video, audio, name: f.view.isLocal ? 'minha-tela' : f.view.ownerName, local: f.view.isLocal };
+  /**
+   * Faixas cruas (vídeo e o som dela) de todas as telas que você não escondeu, a em foco primeiro,
+   * para o gravador de clipes guardar sempre. As fora de foco não recebem vídeo agora, mas o
+   * buffer delas fica (e o som continua chegando).
+   */
+  clipSources(): ClipSource[] {
+    const out: ClipSource[] = [];
+    const order = [...this.live].sort((a, b) => rank(b) - rank(a));
+    const focused = this.focusedShareId;
+    function rank(s: LiveShare) {
+      return s.view.id === focused ? 2 : s.view.isLocal ? 1 : 0;
+    }
+    for (const s of order) {
+      if (this.hidden.has(s.view.id)) continue;
+      const video = s.publication.track?.mediaStreamTrack;
+      if (video === undefined) continue;
+      const owner = s.view.isLocal ? this.room.localParticipant : this.room.remoteParticipants.get(s.view.ownerIdentity);
+      const audio =
+        s.view.kind === 'camera' && !s.view.isIngress
+          ? null
+          : (owner?.getTrackPublication(screenAudioSource(owner))?.track?.mediaStreamTrack ?? null);
+      const dims = s.view.isLocal ? undefined : s.publication.dimensions;
+      out.push({
+        id: s.view.id,
+        video,
+        audio,
+        name: s.view.isLocal ? 'minha-tela' : s.view.ownerName,
+        local: s.view.isLocal,
+        size: dims !== undefined && dims.width > 0 && dims.height > 0 ? { width: dims.width, height: dims.height } : undefined,
+      });
+    }
+    return out;
   }
 
   private focusedLive() {

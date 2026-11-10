@@ -174,10 +174,8 @@ function timecode(ms: number): string {
           }
           <div class="corner">
             @if (store.canClip() && !isMobile) {
-              <button class="btn small ghost" (click)="clip()"
-                [title]="'Clipa os últimos 2 min desta tela (Alt+C). Guardado até agora: ' + mmss(store.clips.buffered()) + (store.clips.size() ? ' (' + store.clips.size() + ')' : '')">
-                <cen-icon name="scissors" [size]="15" /> clipar
-                <span class="mono buf">{{ mmss(store.clips.buffered()) }}</span></button>
+              <button class="btn small ghost" (click)="clip()" title="Clipa os últimos 2 min desta tela (Alt+C)">
+                <cen-icon name="scissors" [size]="15" /> clipar <span class="mono buf">últimos 2 min</span></button>
             }
             @if (store.shares().length > 1) {
               <button class="btn icon small ghost" title="Ver todas as telas" (click)="store.unfocus()"><cen-icon name="grid" [size]="16" /></button>
@@ -199,6 +197,12 @@ function timecode(ms: number): string {
             </button>
           </div>
         } @else if (store.shares().length > 1) {
+          @if (store.canClip() && !isMobile) {
+            <div class="corner">
+              <button class="btn small ghost" (click)="clip()" title="Clipa os últimos 2 min de cada tela, um vídeo por tela (Alt+C)">
+                <cen-icon name="scissors" [size]="15" /> clipar todas <span class="mono buf">últimos 2 min</span></button>
+            </div>
+          }
           <div class="grid" [style.--cols]="gridCols()">
             @for (s of store.shares(); track s.id) {
               <cen-share-tile [share]="s" (click)="store.focusShare(s.id)" (contextmenu)="openVolume($event, s)"
@@ -824,13 +828,15 @@ export class RoomScreen {
    * Ctrl + roda (e a pinça do touchpad, que o navegador entrega como Ctrl + roda) dava zoom na
    * página inteira em cima do vídeo. Na área da tela isso não faz sentido: bloqueia.
    */
+  /** Em foco, clipa a tela em foco; na grade, cada tela vira um clipe. */
   clip() {
-    if (!this.store.canClip() || this.store.focused() === null) return;
-    if (this.store.clips.buffered() < 1) {
-      this.toast.show('Ainda começando a guardar esta tela. Tente de novo em alguns segundos.');
-      return;
+    if (!this.store.canClip()) return;
+    const f = this.store.focused();
+    const ids = f !== null ? [f.id] : this.store.shares().map((s) => s.id);
+    if (ids.length === 0) return;
+    if (this.store.clips.clip(ids) === 0) {
+      this.toast.show(`Ainda começando a guardar ${ids.length > 1 ? 'as telas' : 'esta tela'}. Tente de novo em alguns segundos.`);
     }
-    this.store.clips.clip();
   }
 
   /** Apagar com 5 s para desfazer. */

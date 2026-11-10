@@ -1,13 +1,21 @@
 // Gravador de clipes, numa thread separada para continuar gravando com a aba em segundo plano
 // (quem transmite está no jogo, com o site escondido).
 //
-// Recebe os quadros crus (MediaStreamTrackProcessor), codifica em H.264 na placa de vídeo e
-// guarda só os últimos N segundos, começando sempre num quadro-chave. Ao clipar, monta um MP4.
+// Um worker por tela. Recebe os quadros crus (MediaStreamTrackProcessor), codifica em H.264 na
+// placa de vídeo e guarda só os últimos N segundos, começando sempre num quadro-chave. Ao clipar,
+// monta um MP4.
+//
+// O tamanho do vídeo é fixo desde o começo (a resolução de quem transmite, até 1080p): a imagem
+// que chega menor (rede ruim, tela fora de foco na grade) é ampliada, e a de outro formato ganha
+// faixas pretas. Assim nada obriga a reabrir o codificador e apagar o que já estava guardado.
 
 import { ArrayBufferTarget, Muxer } from 'mp4-muxer';
 
 interface Start {
   type: 'start';
+  /** Mesma tela, trilha nova: troca a entrada e mantém o que já foi guardado. */
+  keep: boolean;
+  target: { width: number; height: number } | null;
   video: ReadableStream<VideoFrame>;
   audio: ReadableStream<AudioData> | null;
   seconds: number;
@@ -16,7 +24,7 @@ interface Start {
   fps: number;
   bitrate: number;
 }
-type Incoming = Start | { type: 'clip' } | { type: 'stop' };
+type Incoming = Start | { type: 'clip'; id: string } | { type: 'stop' };
 
 interface Stored<C> {
   chunk: C;
@@ -25,6 +33,8 @@ interface Stored<C> {
 }
 
 const KEY_EVERY_US = 2_000_000;
+/** Sem quadro novo por tanto tempo (tela fora de foco, janela escondida): fecha o codificador. */
+const IDLE_US = 10_000_000;
 const ctx = self as unknown as {
   postMessage(msg: unknown, transfer: Transferable[]): void;
   onmessage: ((e: MessageEvent<Incoming>) => void) | null;
@@ -38,6 +48,9 @@ let videoConfig: VideoDecoderConfig | null = null;
 let audioConfig: AudioDecoderConfig | null = null;
 let audioCodec: 'aac' | 'opus' = 'aac';
 let audioFormat: { channels: number; sampleRate: number } | null = null;
+/** Formato do som que está guardado (fica mesmo com o codificador fechado). */
+let soundFormat: { channels: number; sampleRate: number } | null = null;
+let lastReady = false;
 let size = { width: 0, height: 0 };
 let frames: Stored<EncodedVideoChunk>[] = [];
 let sounds: Stored<EncodedAudioChunk>[] = [];
@@ -58,17 +71,26 @@ function fit(w: number, h: number, maxW: number, maxH: number) {
   return { width: even(w), height: even(h) };
 }
 
+function nowUs() {
+  return performance.now() * 1000;
+}
+
+/** Joga fora o que passou da janela. Pelo relógio, não pelo último quadro: sem vídeo chegando, o antigo também vence. */
 function trim() {
-  const newest = frames.at(-1)?.at;
-  if (newest === undefined || opts === null) return;
-  const span = opts.seconds * 1e6;
-  // Corta do começo até o próximo quadro-chave, enquanto ainda sobrar a janela inteira depois dele.
+  if (opts === null) return;
+  const oldest = nowUs() - opts.seconds * 1e6;
+  if (frames.length === 0 || frames.at(-1)!.at < oldest) {
+    frames = [];
+    sounds = [];
+    return;
+  }
+  // Corta do começo até o próximo quadro-chave que ainda esteja dentro da janela.
   for (;;) {
     const next = frames.findIndex((f, i) => i > 0 && f.chunk.type === 'key');
-    if (next <= 0 || newest - frames[next].at < span) break;
+    if (next <= 0 || frames[next].at > oldest) break;
     frames = frames.slice(next);
   }
-  const start = frames[0]?.at ?? newest;
+  const start = frames[0].at;
   while (sounds.length > 0 && sounds[0].at < start) sounds.shift();
 }
 
@@ -76,19 +98,36 @@ function buffered() {
   return frames.length < 2 ? 0 : (frames.at(-1)!.at - frames[0].at) / 1e6;
 }
 
+/** Mesmos parâmetros (SPS/PPS): os pedaços do codificador anterior continuam valendo no mesmo MP4. */
+function sameConfig(a: VideoDecoderConfig | AudioDecoderConfig, b: VideoDecoderConfig | AudioDecoderConfig) {
+  if (a.codec !== b.codec) return false;
+  const num = (c: object, k: string) => (c as Record<string, unknown>)[k];
+  for (const k of ['codedWidth', 'codedHeight', 'sampleRate', 'numberOfChannels']) if (num(a, k) !== num(b, k)) return false;
+  const bytes = (d: AllowSharedBufferSource | undefined) =>
+    d === undefined ? new Uint8Array(0) : ArrayBuffer.isView(d) ? new Uint8Array(d.buffer, d.byteOffset, d.byteLength) : new Uint8Array(d);
+  const x = bytes(a.description);
+  const y = bytes(b.description);
+  return x.length === y.length && x.every((v, i) => v === y[i]);
+}
+
+/** Taxa proporcional ao tamanho: 10 Mbps em 1080p, menos em telas menores (e menos memória). */
+function bitrateFor(width: number, height: number) {
+  return Math.round(Math.min(opts!.bitrate, Math.max(3_000_000, (opts!.bitrate * width * height) / (1920 * 1080))));
+}
+
+/** Abre o codificador. O que já está guardado fica, se o novo sair com os mesmos parâmetros. */
 async function openVideo(width: number, height: number) {
-  video?.close();
-  frames = [];
-  sounds = [];
+  if (video !== null && video.state !== 'closed') video.close();
+  video = null;
+  // O primeiro quadro do codificador novo tem de ser chave.
   lastKey = -Infinity;
-  videoConfig = null;
   size = { width, height };
   const base: VideoEncoderConfig = {
     // High 5.2: cobre 1080p a 60fps com folga.
     codec: 'avc1.640034',
     width,
     height,
-    bitrate: opts!.bitrate,
+    bitrate: bitrateFor(width, height),
     framerate: opts!.fps,
     bitrateMode: 'variable',
     latencyMode: 'realtime',
@@ -101,7 +140,14 @@ async function openVideo(width: number, height: number) {
   const enc = new VideoEncoder({
     output: (chunk, meta) => {
       if (gen !== generation) return;
-      if (meta?.decoderConfig !== undefined) videoConfig = meta.decoderConfig;
+      if (meta?.decoderConfig !== undefined) {
+        // Parâmetros diferentes não cabem no mesmo MP4: aí sim recomeça do zero.
+        if (videoConfig !== null && !sameConfig(videoConfig, meta.decoderConfig)) {
+          frames = [];
+          sounds = [];
+        }
+        videoConfig = meta.decoderConfig;
+      }
       frames.push({ chunk, at: chunk.timestamp });
       trim();
     },
@@ -122,6 +168,7 @@ async function openVideo(width: number, height: number) {
 
 async function openAudio(first: AudioData) {
   audioFormat = { channels: Math.min(2, first.numberOfChannels), sampleRate: first.sampleRate };
+  const format = audioFormat;
   const base = { numberOfChannels: audioFormat.channels, sampleRate: audioFormat.sampleRate, bitrate: 192_000 };
   // AAC toca em qualquer lugar (Windows, celular, Discord); Opus fica de reserva.
   let config: AudioEncoderConfig = { ...base, codec: 'mp4a.40.2' };
@@ -135,7 +182,11 @@ async function openAudio(first: AudioData) {
   const enc = new AudioEncoder({
     output: (chunk, meta) => {
       if (gen !== generation) return;
-      if (meta?.decoderConfig !== undefined) audioConfig = meta.decoderConfig;
+      if (meta?.decoderConfig !== undefined) {
+        if (audioConfig !== null && !sameConfig(audioConfig, meta.decoderConfig)) sounds = [];
+        audioConfig = meta.decoderConfig;
+        soundFormat = format;
+      }
       sounds.push({ chunk, at: chunk.timestamp + audioShift });
     },
     // Falhou: tenta abrir de novo no próximo bloco de som.
@@ -161,32 +212,42 @@ async function pumpVideo(reader: ReadableStreamDefaultReader<VideoFrame>, gen: n
       void reader.cancel().catch(() => undefined);
       return;
     }
-    offset ??= performance.now() * 1000 - frame.timestamp;
-    const at = frame.timestamp + offset;
+    offset ??= nowUs() - frame.timestamp;
+    let at = frame.timestamp + offset;
+    // Depois de um tempo sem vídeo (fora de foco), o relógio do quadro pode ter se afastado: reacerta.
+    if (Math.abs(at - nowUs()) > 1e6) {
+      offset = nowUs() - frame.timestamp;
+      at = Math.max(nowUs(), lastFrame + minGap + 1);
+    }
     if (at - lastFrame < minGap || (video !== null && video.encodeQueueSize > 3)) {
       frame.close();
       continue;
     }
     lastFrame = at;
-    let want = fit(frame.displayWidth, frame.displayHeight, opts!.maxWidth, opts!.maxHeight);
     let input: VideoFrame | null = null;
     try {
-      if (video !== null && video.state === 'closed') video = null;
-      // A tela de outra pessoa muda de resolução o tempo todo (a rede sobe e desce a qualidade).
-      // Reabrir o codificador apagava o que já estava guardado; agora só reabre se o formato da
-      // imagem mudou, ou se melhorou logo no começo. Senão, redimensiona para o tamanho atual.
-      if (video !== null && (want.width !== size.width || want.height !== size.height)) {
-        const sameShape = Math.abs(want.width / want.height - size.width / size.height) < 0.02;
-        const better = want.width * want.height > size.width * size.height;
-        if (sameShape && !(better && buffered() < 15)) want = size;
+      // O tamanho fica fixo: a resolução de quem transmite (até 1080p) ou, sem ela, a do primeiro quadro.
+      if (size.width === 0) {
+        const t = opts!.target ?? { width: frame.displayWidth, height: frame.displayHeight };
+        size = fit(t.width, t.height, opts!.maxWidth, opts!.maxHeight);
       }
-      if (video === null || want.width !== size.width || want.height !== size.height) await openVideo(want.width, want.height);
-      if (frame.displayWidth !== want.width || frame.displayHeight !== want.height) {
-        if (canvas === null || canvas.width !== want.width || canvas.height !== want.height) {
-          canvas = new OffscreenCanvas(want.width, want.height);
+      if (video !== null && video.state === 'closed') video = null;
+      if (video === null) await openVideo(size.width, size.height);
+      if (frame.displayWidth !== size.width || frame.displayHeight !== size.height) {
+        if (canvas === null || canvas.width !== size.width || canvas.height !== size.height) {
+          canvas = new OffscreenCanvas(size.width, size.height);
           draw = canvas.getContext('2d', { alpha: false, desynchronized: true });
+          draw!.imageSmoothingQuality = 'high';
         }
-        draw!.drawImage(frame, 0, 0, want.width, want.height);
+        // Amplia ou reduz mantendo o formato; sobra vira faixa preta.
+        const k = Math.min(size.width / frame.displayWidth, size.height / frame.displayHeight);
+        const w = Math.round(frame.displayWidth * k);
+        const h = Math.round(frame.displayHeight * k);
+        if (w !== size.width || h !== size.height) {
+          draw!.fillStyle = '#000';
+          draw!.fillRect(0, 0, size.width, size.height);
+        }
+        draw!.drawImage(frame, (size.width - w) / 2, (size.height - h) / 2, w, h);
         input = new VideoFrame(canvas, { timestamp: at });
       } else {
         input = new VideoFrame(frame, { timestamp: at });
@@ -232,10 +293,11 @@ async function pumpAudio(reader: ReadableStreamDefaultReader<AudioData>, gen: nu
 }
 let audioShift = 0;
 
-async function clip() {
+async function clip(id: string) {
   try {
-    if (video === null || videoConfig === null || frames.length === 0) {
-      post({ type: 'clip-error', message: 'Ainda não tem nada gravado. Espere alguns segundos.' });
+    trim();
+    if (videoConfig === null || frames.length === 0) {
+      post({ type: 'clip-error', id, message: 'Ainda não tem nada gravado. Espere alguns segundos.' });
       return;
     }
     // Sem flush(): no Windows, o codificador H.264 da placa de vídeo pode demorar (ou nunca
@@ -244,11 +306,11 @@ async function clip() {
     const vids = frames.slice();
     const start = vids[0].at;
     const end = vids.at(-1)!.at;
-    const snd = audioConfig !== null && audioFormat !== null ? monotonic(sounds.filter((s) => s.at >= start && s.at <= end)) : [];
+    const snd = audioConfig !== null && soundFormat !== null ? monotonic(sounds.filter((s) => s.at >= start && s.at <= end)) : [];
     const muxer = new Muxer({
       target: new ArrayBufferTarget(),
       video: { codec: 'avc', width: size.width, height: size.height, frameRate: opts!.fps },
-      audio: snd.length > 0 ? { codec: audioCodec, numberOfChannels: audioFormat!.channels, sampleRate: audioFormat!.sampleRate } : undefined,
+      audio: snd.length > 0 ? { codec: audioCodec, numberOfChannels: soundFormat!.channels, sampleRate: soundFormat!.sampleRate } : undefined,
       fastStart: 'in-memory',
       firstTimestampBehavior: 'cross-track-offset',
     });
@@ -270,15 +332,15 @@ async function clip() {
     add(vids, 1e6 / opts!.fps, (data, c, at, dur, i) =>
       muxer.addVideoChunkRaw(data, c.type, at, dur, i === 0 ? { decoderConfig: videoConfig! } : undefined),
     );
-    add(snd, (1e6 * 1024) / (audioFormat?.sampleRate ?? 48000), (data, c, at, dur, i) =>
+    add(snd, (1e6 * 1024) / (soundFormat?.sampleRate ?? 48000), (data, c, at, dur, i) =>
       muxer.addAudioChunkRaw(data, c.type, at, dur, i === 0 ? { decoderConfig: audioConfig! } : undefined),
     );
     muxer.finalize();
     const buffer = muxer.target.buffer;
-    post({ type: 'clip', buffer, seconds: (end - start) / 1e6, width: size.width, height: size.height }, [buffer]);
+    post({ type: 'clip', id, buffer, seconds: (end - start) / 1e6, width: size.width, height: size.height }, [buffer]);
   } catch (e) {
     // Nunca deixa o clipe preso em "montando": devolve o motivo para aparecer no cartão.
-    post({ type: 'clip-error', message: `Não consegui montar o vídeo: ${e instanceof Error ? e.message : String(e)}` });
+    post({ type: 'clip-error', id, message: `Não consegui montar o vídeo: ${e instanceof Error ? e.message : String(e)}` });
   }
 }
 
@@ -289,16 +351,22 @@ function monotonic<T extends { at: number }>(list: T[]): T[] {
   return out;
 }
 
-function stop() {
+/** Fecha os codificadores e as entradas atuais, sem apagar o que está guardado. */
+function detach() {
   generation++;
-  softwareOnly = false;
-  video?.close();
-  audio?.close();
+  if (video !== null && video.state !== 'closed') video.close();
+  if (audio !== null && audio.state !== 'closed') audio.close();
   video = null;
   audio = null;
   audioFormat = null;
+}
+
+function stop() {
+  detach();
+  softwareOnly = false;
   audioConfig = null;
   videoConfig = null;
+  soundFormat = null;
   frames = [];
   sounds = [];
   audioShift = 0;
@@ -309,17 +377,32 @@ function stop() {
 ctx.onmessage = (e: MessageEvent<Incoming>) => {
   const msg = e.data;
   if (msg.type === 'start') {
-    stop();
+    // Mesma tela com trilha nova (reconexão, parou e voltou a compartilhar): guarda o que já tem.
+    if (msg.keep && opts !== null) detach();
+    else stop();
     opts = msg;
     const gen = generation;
     void pumpVideo(msg.video.getReader(), gen);
     if (msg.audio !== null) void pumpAudio(msg.audio.getReader(), gen);
   } else if (msg.type === 'clip') {
-    void clip();
+    void clip(msg.id);
   } else {
     stop();
   }
 };
 
-// Avisa quanto já tem guardado, para o botão mostrar.
-setInterval(() => post({ type: 'buffered', seconds: buffered() }), 1000);
+setInterval(() => {
+  trim();
+  // Tela parada de chegar (fora de foco, janela escondida): solta o codificador, que na placa de
+  // vídeo é limitado (a transmissão também usa). Reabre no próximo quadro, sem perder o guardado.
+  if (video !== null && nowUs() - lastFrame > IDLE_US) {
+    if (video.state !== 'closed') video.close();
+    video = null;
+  }
+  // Só avisa quando muda (tem ou não o que clipar), para não acordar a página à toa.
+  const ready = buffered() >= 1;
+  if (ready !== lastReady) {
+    lastReady = ready;
+    post({ type: 'ready', ready });
+  }
+}, 1000);
