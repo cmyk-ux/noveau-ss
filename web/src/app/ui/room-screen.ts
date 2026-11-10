@@ -905,7 +905,7 @@ export class RoomScreen {
     const el = e.target instanceof Element ? e.target : null;
     if (this.diagOpen() && el?.closest('.diag-wrap, .issue') == null) this.diagOpen.set(false);
     if (this.menu() === null) return;
-    if (el?.closest('.pop, .caret, [aria-label="Plugin de DAW"]') == null) this.menu.set(null);
+    if (el?.closest('.pop, .caret, [aria-label="Plugin de DAW"], [aria-label="Transmitir pelo OBS"]') == null) this.menu.set(null);
   }
 
   /**
