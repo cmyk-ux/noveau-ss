@@ -375,12 +375,10 @@ function timecode(ms: number): string {
       @if (peopleOpen()) {
         <aside class="panel panel-surface" aria-label="Pessoas">
           <div class="people-head">
-            <img class="pixel" src="logo.svg" alt="" width="20" height="20" />
             <h2>Pessoas</h2>
-            <span class="lcd count">{{ store.participants().length.toString().padStart(2, '0') }}</span>
+            <span class="tag" title="Na sala">{{ store.participants().length }}</span>
             <button class="close" title="Fechar" (click)="peopleOpen.set(false)"><cen-icon name="close" [size]="16" /></button>
           </div>
-          <div class="ribbon" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
           <cen-people-panel />
         </aside>
       }
@@ -547,21 +545,11 @@ function timecode(ms: number): string {
     .panel { position: absolute; top: 60px; right: 0.75rem; bottom: 5rem; width: min(340px, calc(100% - 1.5rem));
       overflow-y: auto; padding: 0 0.8rem 1rem; z-index: 10; animation: slide-in 220ms var(--ease) both;
       scrollbar-width: thin; scrollbar-color: var(--plate) transparent; }
-    /* Cabeçalho do painel: a logo, o nome em itálico e quantos estão na sala num LCD. Fica preso no topo. */
-    .people-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 0.5rem; margin: 0 -0.8rem;
-      padding: 0.65rem 0.8rem 0.55rem; background-color: var(--surface); background-image: var(--grain), var(--brushed);
-      background-size: 160px 160px, auto; }
-    .people-head h2 { flex: 1; margin: 0; font-size: 1.35rem; line-height: 1; }
-    .people-head .count { height: 20px; font-size: 0.72rem; padding: 0 0.4rem; }
-    /* Faixa nas cores da logo, como as barras de teste da sala vazia. */
-    .ribbon { display: grid; grid-template-columns: 3fr 1fr 1fr 1fr 2fr; height: 3px; margin: 0 -0.8rem 0.2rem; }
-    .ribbon i:nth-child(1) { background: #57489a; } .ribbon i:nth-child(2) { background: #94cf7c; }
-    .ribbon i:nth-child(3) { background: #e2a12e; } .ribbon i:nth-child(4) { background: #b8b3a6; }
-    .ribbon i:nth-child(5) { background: #6c685e; }
-    .ribbon i { animation: unfold-x 520ms var(--ease) both; transform-origin: left; }
-    .ribbon i:nth-child(2) { animation-delay: 60ms; } .ribbon i:nth-child(3) { animation-delay: 120ms; }
-    .ribbon i:nth-child(4) { animation-delay: 180ms; } .ribbon i:nth-child(5) { animation-delay: 240ms; }
-    @keyframes unfold-x { from { transform: scaleX(0); } to { transform: none; } }
+    /* Cabeçalho do painel: título impresso e a contagem numa etiqueta. Fica preso no topo. */
+    .people-head { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 0.55rem; margin: 0 -0.8rem 0.2rem;
+      padding: 0.7rem 0.8rem 0.6rem; background-color: var(--surface); background-image: var(--grain), var(--brushed);
+      background-size: 160px 160px, auto; border-bottom: 1px solid var(--line); box-shadow: 0 1px 0 rgb(255 255 255 / 0.04); }
+    .people-head h2 { flex: 1; margin: 0; font-size: 1.3rem; line-height: 1; }
     @media (max-width: 640px) { .now { border-left: 0; padding-left: 0; } .roomname { max-width: 8rem; } .kind { display: none; } }
 
     /* ================= celular ================= */
