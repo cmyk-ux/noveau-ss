@@ -3,7 +3,20 @@ import { LoadGovernor, LoadState } from './load';
 import { UploadGuard, UploadState } from './upload-guard';
 import { Diagnostics, encodeSendHealth } from './diag';
 import { DestroyRef, Injectable, computed, effect, inject, signal } from '@angular/core';
-import { CameraAddress, JoinGrant, requestCamera, requestObsKey, requestToken, revokeCamera } from './api';
+import {
+  CameraAddress,
+  JoinGrant,
+  PhoneLink,
+  controlPhone,
+  createPhoneLink,
+  disconnectPhone,
+  phoneLinkStatus,
+  requestCamera,
+  requestObsKey,
+  requestToken,
+  revokeCamera,
+} from './api';
+import { CamPrefs } from './cam-prefs';
 import { DeviceList, listMicrophones, listWebcams } from './devices';
 import { RoomLink } from './link';
 import { Prefs } from './prefs';
@@ -30,6 +43,14 @@ import { Channel } from './volume';
 import { ClipRecorder, ClipServer, clipServer, clipsSupported } from './clips';
 import { ShareWatch } from './stats';
 
+function toggled(set: ReadonlySet<string>, id: string, on: boolean): ReadonlySet<string> {
+  if (set.has(id) === on) return set;
+  const next = new Set(set);
+  if (on) next.add(id);
+  else next.delete(id);
+  return next;
+}
+
 function audioContainer(): HTMLElement {
   const existing = document.getElementById('audio');
   if (existing !== null) return existing;
@@ -43,6 +64,7 @@ function audioContainer(): HTMLElement {
 @Injectable()
 export class RoomStore {
   private readonly prefs = inject(Prefs);
+  private readonly camPrefs = inject(CamPrefs);
   private readonly toast = inject(Toast);
   private readonly session = new RoomSession(audioContainer());
   private readonly sampler = new StatsSampler();
@@ -104,6 +126,93 @@ export class RoomStore {
   readonly webcamOn = computed(() => isWebcamOn(this._snapshot()));
   readonly micOn = computed(() => isMicOn(this._snapshot()));
   readonly focused = computed(() => focusedShare(this._snapshot()));
+  /** Meu celular ligado por link (câmera/microfone dele), ou null. */
+  readonly myPhone = computed(() => this._snapshot().me.phone);
+  /** Câmera do próprio PC ligada (sem contar o celular). */
+  readonly pcCamOn = computed(() => this._snapshot().me.cam);
+
+  // ---------- câmera junto da tela: qual está grande e se a janelinha foi fechada (só para você)
+  private readonly _camBig = signal<ReadonlySet<string>>(new Set());
+  private readonly _camClosed = signal<ReadonlySet<string>>(new Set());
+  /** A câmera da tela em foco está grande (trocou de lugar com a tela)? */
+  readonly focusedCamBig = computed(() => {
+    const f = this.focused();
+    return f !== null && f.cam !== null && this._camBig().has(f.id);
+  });
+  readonly focusedCamClosed = computed(() => {
+    const f = this.focused();
+    return f !== null && this._camClosed().has(f.id);
+  });
+  setCamBig(id: string, big: boolean) {
+    this._camBig.update((s) => toggled(s, id, big));
+    this.applyCamLayout(id);
+  }
+  setCamClosed(id: string, closed: boolean) {
+    this._camClosed.update((s) => toggled(s, id, closed));
+    // Fechou com a câmera grande: a tela volta a ser a grande.
+    if (closed) this._camBig.update((s) => toggled(s, id, false));
+    this.applyCamLayout(id);
+  }
+  private applyCamLayout(id: string) {
+    this.session.setCamLayout(id, { big: this._camBig().has(id), closed: this._camClosed().has(id) });
+  }
+  attachCam(id: string, el: HTMLMediaElement) {
+    return this.session.attachCam(id, el);
+  }
+  detachCam(id: string, el: HTMLMediaElement) {
+    this.session.detachCam(id, el);
+  }
+
+  // ---------- celular como câmera/microfone (link de 1 aparelho)
+  private readonly _phoneLink = signal<PhoneLink>({ state: 'none' });
+  private readonly _phoneBusy = signal(false);
+  readonly phoneLink = this._phoneLink.asReadonly();
+  readonly phoneBusy = this._phoneBusy.asReadonly();
+
+  /** Confere o link do celular (e, se o PC recarregou, religa o celular a esta página). */
+  async refreshPhone() {
+    if (this.token === '') return;
+    try {
+      this._phoneLink.set(await phoneLinkStatus(this.token));
+    } catch {
+      /* servidor antigo, sem celular */
+    }
+  }
+
+  async makePhoneLink() {
+    if (this._phoneBusy()) return;
+    this._phoneBusy.set(true);
+    try {
+      this._phoneLink.set(await createPhoneLink(this.token));
+    } catch (e) {
+      this.toast.show(e instanceof Error ? e.message : 'Não foi possível gerar o link do celular.');
+    } finally {
+      this._phoneBusy.set(false);
+    }
+  }
+
+  /** Tira o celular da sala e apaga o link: dá para gerar outro (para outro aparelho). */
+  async unlinkPhone() {
+    this._phoneBusy.set(true);
+    try {
+      await disconnectPhone(this.token);
+      this._phoneLink.set({ state: 'none' });
+      this.toast.show('Celular desconectado. Gere outro link quando quiser.');
+    } catch (e) {
+      this.toast.show(e instanceof Error ? e.message : 'Não foi possível desconectar o celular.');
+    } finally {
+      this._phoneBusy.set(false);
+    }
+  }
+
+  /** Liga/desliga a câmera ou o microfone do celular daqui do PC. */
+  async controlPhone(what: { cam?: boolean; mic?: boolean }) {
+    try {
+      await controlPhone(this.token, what);
+    } catch (e) {
+      this.toast.show(e instanceof Error ? e.message : 'O celular não respondeu.');
+    }
+  }
   focusedSender() {
     return this.session.focusedSender();
   }
@@ -198,6 +307,7 @@ export class RoomStore {
       this._cameraOffered.set(grant.camera);
       this.link = link ?? { key: '', secret: '' };
       this._join.set('joined');
+      void this.refreshPhone();
       this.diag.start();
       this.daw.start();
     } catch (e) {
@@ -292,8 +402,8 @@ export class RoomStore {
     return this.session.room;
   }
 
-  attachFocused(el: HTMLMediaElement) {
-    return this.session.attachFocused(el);
+  attachFocused(el: HTMLMediaElement, which: 'main' | 'cam' = 'main') {
+    return this.session.attachFocused(el, which);
   }
 
   async toggleShare() {
@@ -320,14 +430,21 @@ export class RoomStore {
     }
   }
 
-  async toggleWebcam(deviceId?: string) {
+  /**
+   * Liga/desliga a câmera. Tela e câmera agora andam juntas (antes ligar uma desligava a outra).
+   * Com o celular servindo de câmera, a tecla comanda a câmera do celular.
+   */
+  async toggleWebcam(deviceId?: string, target: 'auto' | 'pc' = 'auto') {
+    const phone = this.myPhone();
+    if (target === 'auto' && deviceId === undefined && phone !== null && phone.cam !== 'none' && !this._snapshot().me.cam) {
+      await this.controlPhone({ cam: phone.cam !== 'on' });
+      return;
+    }
     this._busy.set(true);
     try {
-      if (this.webcamOn()) await this.session.stopWebcam();
-      else {
-        if (this.sharing()) await this.session.stopShare();
-        await this.session.startWebcam(deviceId);
-      }
+      if (deviceId !== undefined) this.camPrefs.setDevice(deviceId);
+      if (this._snapshot().me.cam) await this.session.stopWebcam();
+      else await this.session.startWebcam(deviceId ?? (this.camPrefs.device() || undefined));
     } catch {
       this.toast.show('Não foi possível usar a câmera. Veja se o navegador tem permissão.');
     } finally {
@@ -336,6 +453,7 @@ export class RoomStore {
   }
 
   async switchWebcam(id: string) {
+    this.camPrefs.setDevice(id);
     try {
       await this.session.switchDevice('videoinput', id);
     } catch {
@@ -352,8 +470,14 @@ export class RoomStore {
   }
 
   async toggleMic() {
+    // Celular servindo de microfone: a tecla comanda o microfone do celular.
+    const phone = this.myPhone();
+    if (phone !== null && phone.mic !== 'none' && !this._snapshot().me.mic) {
+      await this.controlPhone({ mic: phone.mic !== 'on' });
+      return;
+    }
     try {
-      await this.session.setMicrophone(!this.micOn());
+      await this.session.setMicrophone(!this._snapshot().me.mic);
     } catch {
       this.toast.show('Não foi possível acessar o microfone.');
     }
@@ -385,7 +509,6 @@ export class RoomStore {
   }
 
   private async beginShare() {
-    if (this.webcamOn()) await this.session.stopWebcam();
     const r = await this.session.startShare(
       {
         plan: planFor(this.prefs.stream()),

@@ -20,8 +20,8 @@ const QUALITY_EVERY_MS = 2000;
     '[class.panning]': 'panning',
   },
   template: `<div class="lens" [style.transform]="lens()">
-      <video #video autoplay playsinline muted (resize)="readSource()"></video>
-      <cen-cursor-layer [source]="source()" [zoom]="zoom()" />
+      <video #video autoplay playsinline muted [class.mirror]="mirror()" [class.tuning]="tuning()" (resize)="readSource()"></video>
+      @if (!camBig()) { <cen-cursor-layer [source]="source()" [zoom]="zoom()" /> }
     </div>
     @if (zoom() > 1) {
       <button type="button" class="zoom-tag" title="Voltar ao tamanho normal (ou clique duplo)" (click)="$event.stopPropagation(); resetZoom()"
@@ -35,6 +35,16 @@ const QUALITY_EVERY_MS = 2000;
     :host(.panning) { cursor: grabbing; }
     .lens { position: absolute; inset: 0; transform-origin: 0 0; will-change: transform; }
     video { width: 100%; height: 100%; object-fit: contain; background: #000; display: block; }
+    /* A própria câmera aparece espelhada (como espelho); os outros veem do jeito certo. */
+    video.mirror { transform: scaleX(-1); }
+    /* Trocou a câmera com a tela: a imagem fecha numa faixa e abre de novo, como TV trocando de canal. */
+    video.tuning { animation: tune-big 300ms steps(6) both; }
+    @keyframes tune-big {
+      0% { clip-path: inset(49% 0 49% 0); filter: brightness(2) contrast(1.5) grayscale(1); }
+      55% { clip-path: inset(0 0 0 0); filter: brightness(1.3); }
+      100% { clip-path: inset(0 0 0 0); filter: none; }
+    }
+    @media (prefers-reduced-motion: reduce) { video.tuning { animation: none; } }
     .zoom-tag { position: absolute; left: 50%; bottom: 0.9rem; translate: -50% 0; z-index: 4; height: 24px; padding: 0 0.6rem;
       border-radius: 3px; border: 1px solid #000; background: var(--plate); color: var(--text);
       font: 500 0.7rem/1 var(--mono); letter-spacing: 0.06em; box-shadow: var(--key-shadow); }
@@ -53,6 +63,14 @@ export class Stage {
   private readonly toast = inject(Toast);
   private readonly video = viewChild.required<ElementRef<HTMLVideoElement>>('video');
   private attachedTrackSid: string | null = null;
+  /** A câmera foi para trás (grande) e a tela virou a janelinha. */
+  protected readonly camBig = this.store.focusedCamBig;
+  protected readonly mirror = computed(() => {
+    const f = this.store.focused();
+    if (f === null) return false;
+    return this.camBig() ? f.cam?.mirror === true : f.mirror;
+  });
+  protected readonly tuning = signal(false);
   private previousFrames = 0;
   /** Zoom com a roda, no ponto onde o mouse está (1 = normal, até 8x). */
   protected readonly zoom = signal(1);
@@ -77,7 +95,16 @@ export class Stage {
         this.attachedTrackSid = null;
         return;
       }
-      if (this.attachedTrackSid !== f.trackSid) this.attach(f.trackSid);
+      const big = this.camBig() && f.cam !== null;
+      const key = big ? `cam:${f.cam!.trackSid}` : f.trackSid;
+      if (this.attachedTrackSid === key) return;
+      // Mesma pessoa, só trocou câmera e tela de lugar: efeito de troca de canal.
+      const swapped = this.attachedTrackSid !== null && (this.attachedTrackSid.startsWith('cam:') !== big);
+      this.attach(key, big ? 'cam' : 'main');
+      if (swapped) {
+        this.tuning.set(true);
+        window.setTimeout(() => this.tuning.set(false), 320);
+      }
     });
     effect((onCleanup) => {
       this.readPlaybackQuality();
@@ -260,10 +287,10 @@ export class Stage {
     this.pan.set({ x: Math.min(0, Math.max(w - w * z, x)), y: Math.min(0, Math.max(h - h * z, y)) });
   }
 
-  private attach(trackSid: string) {
+  private attach(trackSid: string, which: 'main' | 'cam' = 'main') {
     this.resetZoom();
     const v = this.video().nativeElement;
-    if (!this.store.attachFocused(v)) return;
+    if (!this.store.attachFocused(v, which)) return;
     v.muted = true;
     this.attachedTrackSid = trackSid;
     this.previousFrames = 0;

@@ -4,6 +4,7 @@ import {
   Participant,
   ParticipantKind,
   RemoteParticipant,
+  RemoteTrackPublication,
   Room,
   RoomEvent,
   Track,
@@ -46,6 +47,28 @@ export interface ShareView {
   hidden?: boolean;
   /** Travou várias vezes seguidas: recebendo a cópia menor por um tempo (só para você). */
   shielded?: { until: number; width: number; height: number } | null;
+  /** A imagem principal é a sua própria câmera: aparece espelhada, como num espelho. */
+  mirror: boolean;
+  /** Câmera junto da tela (a pessoa transmite as duas): aparece numa janelinha no canto. */
+  cam: CamView | null;
+}
+
+export interface CamView {
+  trackSid: string;
+  /** Sua própria câmera do PC: espelhada só para você. */
+  mirror: boolean;
+  /** Vem do celular da pessoa (link de celular como câmera). */
+  fromPhone: boolean;
+}
+
+/** 'none' = o celular não publicou; 'off' = publicou e está desligado; 'on' = ao vivo. */
+export type PhoneTrackState = 'none' | 'on' | 'off';
+
+/** Seus aparelhos: câmera e microfone do PC e do celular ligado por link. */
+export interface MyDevices {
+  cam: boolean;
+  mic: boolean;
+  phone: { identity: string; cam: PhoneTrackState; mic: PhoneTrackState } | null;
 }
 
 export interface PersonView {
@@ -69,6 +92,8 @@ export interface PersonView {
   guest: boolean;
   /** Quem chamou o convidado. */
   invitedBy: string | null;
+  /** Está usando o celular como câmera ou microfone. */
+  phone: boolean;
 }
 
 export interface RoomSnapshot {
@@ -80,11 +105,14 @@ export interface RoomSnapshot {
   watchers: Map<string, number>;
   /** Nomes de quem está vendo cada tela. */
   viewers: Map<string, string[]>;
+  me: MyDevices;
 }
 
 interface LiveShare {
   view: ShareView;
   publication: TrackPublication;
+  /** Câmera que acompanha a tela (do PC ou do celular da pessoa). */
+  cam?: TrackPublication;
 }
 
 const WATCHING = 'watching';
@@ -126,10 +154,10 @@ export function isSharingScreen(s: RoomSnapshot) {
   return localShare(s)?.kind === 'screen';
 }
 export function isWebcamOn(s: RoomSnapshot) {
-  return localShare(s)?.kind === 'camera';
+  return s.me.cam || s.me.phone?.cam === 'on';
 }
 export function isMicOn(s: RoomSnapshot) {
-  return localPerson(s)?.micEnabled ?? false;
+  return s.me.mic || s.me.phone?.mic === 'on';
 }
 export function watchersOf(s: RoomSnapshot, id: string) {
   return s.watchers.get(id) ?? 0;
@@ -176,6 +204,20 @@ function cushion(track: Track, fromObs: boolean) {
   }
 }
 
+/** Celular usado como câmera/microfone de alguém: a identidade do dono (veja server/phone.mjs). */
+export function phoneOf(p: Participant | undefined): string | null {
+  const v = p?.attributes?.['phoneOf'];
+  return v === undefined || v === '' ? null : v;
+}
+
+function isLive(pub: TrackPublication | undefined): pub is TrackPublication {
+  return pub !== undefined && !pub.isMuted;
+}
+
+function phoneState(pub: TrackPublication | undefined): PhoneTrackState {
+  return pub === undefined ? 'none' : pub.isMuted ? 'off' : 'on';
+}
+
 function isVisual(source: Track.Source) {
   return source === Track.Source.ScreenShare || source === Track.Source.Camera;
 }
@@ -202,7 +244,20 @@ export function displayName(p: Participant): string {
   return p.name !== undefined && p.name !== '' ? p.name : p.identity.split('#')[0];
 }
 
-const WEBCAM_RESOLUTION = VideoPresets.h720.resolution;
+/**
+ * Câmera do PC: pede 1080p a 30 fps (a câmera entrega o máximo que tiver até isso). Antes era 720p a
+ * 1,7 Mbps, o padrão do LiveKit, que borrava rosto e fundo. Agora vai a até 4 Mbps em 1080p, com
+ * uma cópia em 360p para a janelinha do canto e para quem está com a internet ruim.
+ * VP8: todo navegador decodifica, e uma câmera a 30 fps custa pouco no processador.
+ */
+const WEBCAM_CAPTURE = { width: 1920, height: 1080, frameRate: 30 };
+const WEBCAM_PUBLISH = {
+  videoCodec: 'vp8' as const,
+  simulcast: true,
+  videoEncoding: { maxBitrate: 4_000_000, maxFramerate: 30 },
+  videoSimulcastLayers: [VideoPresets.h360],
+  degradationPreference: 'balanced' as const,
+};
 
 export class RoomSession {
   private focusedShareId: string | null = null;
@@ -279,7 +334,10 @@ export class RoomSession {
       })
       .on(RoomEvent.ActiveSpeakersChanged, changed)
       .on(RoomEvent.TrackMuted, changed)
-      .on(RoomEvent.TrackUnmuted, changed)
+      .on(RoomEvent.TrackUnmuted, (pub, p) => {
+        this.micMovedToPhone(pub, p);
+        changed();
+      })
       .on(RoomEvent.LocalTrackPublished, (pub) => {
         if (isVisual(pub.source))
           this.focusedShareId = focusIfOnly(this.liveIds(), this.room.localParticipant.identity, this.focusedShareId);
@@ -287,7 +345,9 @@ export class RoomSession {
       })
       .on(RoomEvent.LocalTrackUnpublished, changed)
       .on(RoomEvent.TrackPublished, (pub, p) => {
-        if (isVisual(pub.source)) this.focusedShareId = focusIfOnly(this.liveIds(), p.identity, this.focusedShareId);
+        // A câmera do celular conta como a câmera do dono dele.
+        if (isVisual(pub.source)) this.focusedShareId = focusIfOnly(this.liveIds(), phoneOf(p) ?? p.identity, this.focusedShareId);
+        this.micMovedToPhone(pub, p);
         changed();
       })
       .on(RoomEvent.TrackUnpublished, changed)
@@ -485,10 +545,22 @@ export class RoomSession {
     this.live.find((s) => s.view.id === id)?.publication.track?.detach(el);
   }
 
+  /**
+   * Solta o elemento de qualquer vídeo em que ele esteja ligado. Sem isso, trocar a câmera com a tela
+   * deixava o elemento ainda preso ao vídeo antigo, e quando aquele vídeo acabasse o LiveKit apagava
+   * o elemento junto (mesmo mostrando outra coisa).
+   */
+  private release(el: HTMLMediaElement) {
+    for (const s of this.live) {
+      for (const t of [s.publication.track, s.cam?.track]) if (t !== undefined && t.attachedElements.includes(el)) t.detach(el);
+    }
+  }
+
   /** Liga o vídeo de uma tela qualquer (para a grade). */
   attachShare(id: string, el: HTMLMediaElement): boolean {
     const track = this.live.find((s) => s.view.id === id)?.publication.track;
     if (track === undefined) return false;
+    this.release(el);
     track.attach(el);
     return true;
   }
@@ -522,8 +594,46 @@ export class RoomSession {
   }
 
   async startWebcam(deviceId?: string) {
-    await this.room.localParticipant.setCameraEnabled(true, { deviceId, resolution: WEBCAM_RESOLUTION });
+    const lp = this.room.localParticipant;
+    try {
+      await lp.setCameraEnabled(true, { deviceId, resolution: WEBCAM_CAPTURE }, WEBCAM_PUBLISH);
+    } catch (e) {
+      // A câmera escolhida da outra vez sumiu (desplugada): usa a padrão.
+      if (deviceId === undefined) throw e;
+      await lp.setCameraEnabled(true, { resolution: WEBCAM_CAPTURE }, WEBCAM_PUBLISH);
+    }
     this.emit();
+  }
+
+  /** Meu celular ligou o microfone: o do PC desliga, para a voz não sair dobrada. */
+  private micMovedToPhone(pub: TrackPublication, p: Participant) {
+    const lp = this.room.localParticipant;
+    if (pub.source !== Track.Source.Microphone || pub.isMuted || phoneOf(p) !== lp.identity || !lp.isMicrophoneEnabled) return;
+    void this.setMicrophone(false).then(() => this.onMicMoved?.(true));
+  }
+
+  /** Janelinha da câmera: grande (trocou com a tela) ou fechada. Só para você. */
+  setCamLayout(id: string, layout: { big: boolean; closed: boolean }) {
+    if (layout.big) this.camBig.add(id);
+    else this.camBig.delete(id);
+    if (layout.closed) this.camClosed.add(id);
+    else this.camClosed.delete(id);
+    this.followFocus(this.live);
+  }
+  private readonly camBig = new Set<string>();
+  private readonly camClosed = new Set<string>();
+
+  /** Liga a câmera que acompanha a tela de alguém (a janelinha do canto). */
+  attachCam(id: string, el: HTMLMediaElement): boolean {
+    const track = this.live.find((s) => s.view.id === id)?.cam?.track;
+    if (track === undefined) return false;
+    this.release(el);
+    track.attach(el);
+    return true;
+  }
+
+  detachCam(id: string, el: HTMLMediaElement) {
+    this.live.find((s) => s.view.id === id)?.cam?.track?.detach(el);
   }
 
   async stopWebcam() {
@@ -570,9 +680,12 @@ export class RoomSession {
     this.emit();
   }
 
-  attachFocused(el: HTMLMediaElement): boolean {
-    const track = this.focusedLive()?.publication.track;
+  /** Liga o vídeo da tela em foco ('main') ou da câmera que acompanha ela ('cam'). */
+  attachFocused(el: HTMLMediaElement, which: 'main' | 'cam' = 'main'): boolean {
+    const f = this.focusedLive();
+    const track = which === 'cam' ? f?.cam?.track : f?.publication.track;
     if (track === undefined) return false;
+    this.release(el);
     track.attach(el);
     return true;
   }
@@ -624,38 +737,62 @@ export class RoomSession {
     return [this.room.localParticipant, ...this.room.remoteParticipants.values()];
   }
 
+  /** Celular-câmera de cada pessoa (identidade do dono -> participante do celular). */
+  private phones(): Map<string, RemoteParticipant> {
+    const out = new Map<string, RemoteParticipant>();
+    for (const p of this.room.remoteParticipants.values()) {
+      const of = phoneOf(p);
+      if (of !== null && !out.has(of)) out.set(of, p);
+    }
+    return out;
+  }
+
   private collectShares(): LiveShare[] {
     const out: LiveShare[] = [];
+    const phones = this.phones();
     for (const p of this.everyone()) {
+      // O celular não aparece sozinho: a câmera dele vira a câmera do dono.
+      if (phoneOf(p) !== null) continue;
       const isIngress = p.kind === ParticipantKind.INGRESS;
       const obs = isObs(p);
       const audio = p.getTrackPublication(screenAudioSource(p));
-      const webcam = p.getTrackPublication(Track.Source.Camera);
+      const ownCam = p.getTrackPublication(Track.Source.Camera);
+      const phoneCam = phones.get(p.identity)?.getTrackPublication(Track.Source.Camera);
+      // A câmera do PC tem preferência; sem ela, a do celular.
+      const camPub = obs ? undefined : isLive(ownCam) ? ownCam : isLive(phoneCam) ? phoneCam : undefined;
       const visual = obs
-        ? webcam === undefined
+        ? ownCam === undefined
           ? null
-          : { publication: webcam, kind: 'screen' as const }
+          : { publication: ownCam, kind: 'screen' as const }
         : pickVisual({
             screen: p.getTrackPublication(Track.Source.ScreenShare),
-            webcam,
-            webcamMuted: webcam?.isMuted,
+            webcam: camPub,
             isIngress,
           });
       if (visual === null) continue;
+      const isLocal = p === this.room.localParticipant;
+      // Tela e câmera ao mesmo tempo: a câmera vai junto, numa janelinha.
+      const cam = visual.kind === 'screen' && !isIngress && camPub !== undefined ? camPub : undefined;
       out.push({
         view: {
           id: p.identity,
           ownerIdentity: p.identity,
           ownerName: displayName(p),
-          isLocal: p === this.room.localParticipant,
+          isLocal,
           kind: visual.kind,
           isIngress,
           obs,
           hasAudio: audio !== undefined && !audio.isMuted,
           trackSid: visual.publication.trackSid,
           volume: this.mixer.read('share', p.identity),
+          mirror: isLocal && visual.publication === ownCam && visual.kind === 'camera',
+          cam:
+            cam === undefined
+              ? null
+              : { trackSid: cam.trackSid, mirror: isLocal && cam === ownCam, fromPhone: cam !== ownCam },
         },
         publication: visual.publication,
+        cam,
       });
     }
     return out;
@@ -695,10 +832,28 @@ export class RoomSession {
       }),
       focusedShareId: this.focusedShareId,
       needsAudioUnlock: !this.room.canPlaybackAudio,
+      me: this.readMe(),
       ...(() => {
         const viewers = viewersByShare(this.collectWatchers(), shares.map((s) => s.view.id));
         return { viewers, watchers: new Map([...viewers].map(([k, v]) => [k, v.length])) };
       })(),
+    };
+  }
+
+  private readMe(): MyDevices {
+    const lp = this.room.localParticipant;
+    const phone = this.phones().get(lp.identity);
+    return {
+      cam: isLive(lp.getTrackPublication(Track.Source.Camera)),
+      mic: lp.isMicrophoneEnabled,
+      phone:
+        phone === undefined
+          ? null
+          : {
+              identity: phone.identity,
+              cam: phoneState(phone.getTrackPublication(Track.Source.Camera)),
+              mic: phoneState(phone.getTrackPublication(Track.Source.Microphone)),
+            },
     };
   }
 
@@ -716,7 +871,7 @@ export class RoomSession {
 
   private collectWatchers() {
     // O OBS não é uma pessoa: aparece só como tela.
-    return this.everyone().filter((p) => !isObs(p)).map((p) => ({ identity: p.identity, name: displayName(p), watching: watchingOf(p.attributes) }));
+    return this.everyone().filter((p) => !isObs(p) && phoneOf(p) === null).map((p) => ({ identity: p.identity, name: displayName(p), watching: watchingOf(p.attributes) }));
   }
 
   /**
@@ -725,17 +880,35 @@ export class RoomSession {
    */
   private followFocus(shares: LiveShare[]) {
     const grid = this.focusedShareId === null;
-    const remote = shares.filter((s) => !s.view.isLocal);
     const visible = shares.filter((s) => !this.hidden.has(s.view.id)).length;
-    for (const s of remote) {
+    const used = new Set<TrackPublication>();
+    for (const s of shares) {
       const shown = !this.away && !this.hidden.has(s.view.id) && (grid || s.view.id === this.focusedShareId);
-      const pub = s.publication as any;
+      used.add(s.publication);
+      if (s.cam !== undefined) used.add(s.cam);
+      // A câmera do canto: só com a tela em foco (na grade não cabe) e se você não fechou a janelinha.
+      // Pequena, recebe a cópia média; trocada com a tela (grande), a máxima.
+      if (s.cam instanceof RemoteTrackPublication) {
+        const big = this.camBig.has(s.view.id);
+        const camShown = shown && !grid && !this.camClosed.has(s.view.id);
+        s.cam.setSubscribed(true);
+        s.cam.setEnabled(camShown);
+        if (camShown) s.cam.setVideoQuality(big ? VideoQuality.HIGH : VideoQuality.MEDIUM);
+      }
+      // Minha própria câmera pelo celular também chega pela sala (as do PC são locais).
+      if (!(s.publication instanceof RemoteTrackPublication)) continue;
+      const pub = s.publication;
       pub.setSubscribed(true);
       pub.setEnabled(shown);
       if (!shown) continue;
       // Travando seguido: segura na cópia menor (só para quem trava), depois tenta voltar.
       if (this.shielded(s.view.id)) pub.setVideoQuality(VideoQuality.LOW);
       else pub.setVideoQuality(grid && (visible > 2 || IS_MOBILE) ? VideoQuality.MEDIUM : VideoQuality.HIGH);
+    }
+    // Câmeras que ninguém está mostrando (ex.: celular de quem já tem câmera no PC): não baixa.
+    for (const p of this.room.remoteParticipants.values()) {
+      const camPub = p.getTrackPublication(Track.Source.Camera);
+      if (camPub instanceof RemoteTrackPublication && !used.has(camPub)) camPub.setEnabled(false);
     }
   }
 
@@ -756,8 +929,18 @@ export class RoomSession {
   }
 
   private mix() {
+    const me = this.room.localParticipant;
     for (const p of this.room.remoteParticipants.values()) {
       const id = p.identity;
+      // Microfone do celular de alguém: é a voz dele, com o volume dele. O do meu celular não toca
+      // aqui (eu me ouviria), e o de quem já saiu da sala também não.
+      const of = phoneOf(p);
+      if (of !== null) {
+        const owner = this.room.remoteParticipants.get(of);
+        const audible = of !== me.identity && owner !== undefined && !this.isMyOtherDevice(owner);
+        this.tune(p, Track.Source.Microphone, this.mixer.read('mic', of), audible);
+        continue;
+      }
       // O microfone do meu outro aparelho não toca aqui: eu me ouviria com atraso (e daria eco).
       // (No OBS o "microfone" é o som da tela, tratado logo abaixo.)
       if (!isObs(p)) this.tune(p, Track.Source.Microphone, this.mixer.read('mic', id), !this.isMyOtherDevice(p));
@@ -780,24 +963,30 @@ export class RoomSession {
 
   private collectParticipants(): PersonView[] {
     const speaking = new Set(this.room.activeSpeakers.map((p) => p.identity));
-    return this.everyone().map((p) => ({
-      identity: p.identity,
-      name: displayName(p),
-      isLocal: p === this.room.localParticipant,
-      isSpeaking: speaking.has(p.identity),
-      micEnabled: p.getTrackPublication(Track.Source.Microphone)?.isMuted === false,
-      isSharing:
-        p.getTrackPublication(Track.Source.ScreenShare) !== undefined ||
-        p.getTrackPublication(Track.Source.Camera) !== undefined,
-      canPublish: p.permissions?.canPublish === true,
-      volume: this.mixer.read('mic', p.identity),
-      discordId: p.attributes?.['discordId'] ?? null,
-      avatar: p.attributes?.['avatar'] ?? null,
-      mobile: p.attributes?.['device'] === 'mobile',
-      myOtherDevice: this.isMyOtherDevice(p),
-      guest: p.attributes?.['guest'] === '1',
-      invitedBy: p.attributes?.['invitedBy'] ?? null,
-    }));
+    const phones = this.phones();
+    return this.everyone().filter((p) => phoneOf(p) === null).map((p) => {
+      const phone = phones.get(p.identity);
+      return {
+        identity: p.identity,
+        name: displayName(p),
+        isLocal: p === this.room.localParticipant,
+        isSpeaking: speaking.has(p.identity) || (phone !== undefined && speaking.has(phone.identity)),
+        micEnabled: p.getTrackPublication(Track.Source.Microphone)?.isMuted === false || isLive(phone?.getTrackPublication(Track.Source.Microphone)),
+        isSharing:
+          p.getTrackPublication(Track.Source.ScreenShare) !== undefined ||
+          p.getTrackPublication(Track.Source.Camera) !== undefined ||
+          isLive(phone?.getTrackPublication(Track.Source.Camera)),
+        canPublish: p.permissions?.canPublish === true,
+        volume: this.mixer.read('mic', p.identity),
+        discordId: p.attributes?.['discordId'] ?? null,
+        avatar: p.attributes?.['avatar'] ?? null,
+        mobile: p.attributes?.['device'] === 'mobile',
+        myOtherDevice: this.isMyOtherDevice(p),
+        guest: p.attributes?.['guest'] === '1',
+        invitedBy: p.attributes?.['invitedBy'] ?? null,
+        phone: phone !== undefined,
+      };
+    });
   }
 }
 
@@ -810,6 +999,7 @@ function emptySnapshot(): RoomSnapshot {
     needsAudioUnlock: false,
     watchers: new Map(),
     viewers: new Map(),
+    me: { cam: false, mic: false, phone: null },
   };
 }
 
