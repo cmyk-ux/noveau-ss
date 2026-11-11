@@ -986,7 +986,19 @@ export class RoomSession {
   /** A redução de ruído por IA não carregou e o microfone foi com o filtro do navegador. */
   onVoiceFallback: (() => void) | null = null;
 
-  async setMicrophone(on: boolean, mode?: VoiceMode) {
+  /**
+   * Liga/desliga o microfone, um pedido de cada vez. Ligar demora (cria a trilha, carrega a redução
+   * de ruído, publica); antes, um segundo clique nesse meio-tempo corria junto com o primeiro e o
+   * microfone ficava no estado errado (ou publicado duas vezes).
+   */
+  setMicrophone(on: boolean, mode?: VoiceMode): Promise<void> {
+    const run = this.micQueue.then(() => this.applyMicrophone(on, mode));
+    this.micQueue = run.catch(() => undefined);
+    return run;
+  }
+  private micQueue: Promise<unknown> = Promise.resolve();
+
+  private async applyMicrophone(on: boolean, mode?: VoiceMode) {
     if (mode !== undefined) this.voiceMode = mode;
     const lp = this.room.localParticipant;
     if (on && lp.getTrackPublication(Track.Source.Microphone)?.track === undefined) await this.publishMic();
@@ -1037,7 +1049,14 @@ export class RoomSession {
   }
 
   /** Troca o tratamento do microfone; se ele estiver no ar, republica na hora. */
-  async setVoiceMode(mode: VoiceMode) {
+  setVoiceMode(mode: VoiceMode): Promise<void> {
+    // Na mesma fila do liga/desliga: trocar o modo republica a trilha.
+    const run = this.micQueue.then(() => this.applyVoiceMode(mode));
+    this.micQueue = run.catch(() => undefined);
+    return run;
+  }
+
+  private async applyVoiceMode(mode: VoiceMode) {
     if (mode === this.voiceMode) return;
     this.voiceMode = mode;
     const lp = this.room.localParticipant;
@@ -1285,7 +1304,12 @@ export class RoomSession {
       status: statusOf(this.room.state),
       participants: this.collectParticipants(new Map(shares.map((s) => [s.view.id, s.view.activity]))),
       shares: shares.map((s) => {
-        const v = this.hidden.has(s.view.id) ? { ...s.view, hidden: true } : s.view;
+        // O volume vem sempre do mixer, na hora: `s.view` foi montado no último 'full', e mutar ou
+        // mexer no volume só pede 'view'. Sem isto o botão de mutar a tela não mudava (só no próximo
+        // evento da sala), e o segundo clique desfazia o primeiro sem a tela mostrar.
+        const volume = this.mixer.read('share', s.view.id);
+        const fresh = volume === s.view.volume ? s.view : { ...s.view, volume };
+        const v = this.hidden.has(s.view.id) ? { ...fresh, hidden: true } : fresh;
         const g = this.guards.get(s.view.id);
         return g !== undefined && g.until > Date.now() ? { ...v, shielded: { until: g.until, width: g.width, height: g.height } } : v;
       }),

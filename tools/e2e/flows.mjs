@@ -30,6 +30,12 @@ const click = (p, title) => p.page.locator(`button[title="${title}"]`).first().c
 const until = async (p, fn, arg, ms = 15000) => { try { await p.page.waitForFunction(fn, arg, { timeout: ms }); return true; } catch { return false; } };
 const playing = (sel) => { const v = document.querySelector(sel); return v !== null && v.videoWidth > 0 && !v.paused; };
 
+// Dois cliques rápidos no microfone (o segundo antes do primeiro terminar): tem de acabar desligado.
+const micKey = A.page.locator('footer.dock .split button.btn.icon').first();
+await micKey.click();
+await micKey.click();
+await wait(3000);
+ok('A: dois cliques rápidos no microfone = desligado', (await micKey.getAttribute('title')) === 'Ligar microfone', await micKey.getAttribute('title'));
 await click(A, 'Ligar microfone');
 await click(B, 'Ligar microfone');
 await click(A, 'Compartilhar tela');
@@ -40,6 +46,14 @@ ok('A vê "sua tela está no ar" (não vai pro palco)', await until(A, () => doc
 await click(B, 'Ligar câmera');
 ok('C vê a grade com 2 telas', await until(C, () => document.querySelectorAll('cen-share-tile').length === 2));
 ok('vídeos da grade tocando para C', await until(C, () => [...document.querySelectorAll('cen-share-tile video')].filter((v) => v.videoWidth > 0).length >= 2));
+// C muta o som da tela de A pela grade: o botão tem de mudar na hora (antes só mudava no próximo
+// evento da sala, então parecia que o clique não fazia nada e o segundo clique desfazia o primeiro).
+const tileA = C.page.locator('cen-share-tile').filter({ has: C.page.locator('.name', { hasText: /^\s*A\b/ }) });
+await tileA.hover();
+await tileA.locator('button.mute').click({ timeout: 10000 });
+ok('C mutou a tela de A: o botão mostra "Ativar o som"', await until(C, () => document.querySelector('cen-share-tile button.mute.on[title="Ativar o som"]') !== null, undefined, 1000));
+await tileA.locator('button.mute').click({ timeout: 10000 });
+ok('C desmutou a tela de A: o botão volta a "Mutar"', await until(C, () => document.querySelector('cen-share-tile button.mute.on') === null, undefined, 1000));
 // C foca A
 await C.page.locator('cen-share-tile').first().click();
 ok('C focou uma tela (palco)', await until(C, playing, 'cen-stage video'));
