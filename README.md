@@ -103,7 +103,8 @@ Para um build de produção: `npm run build` e depois `npm run serve` (site + AP
 - A API (`server/server.mjs`) só emite tokens JWT (4 h) para a sala certa. Toda a mídia passa pelo LiveKit.
 - OBS: transmite por WHIP direto para o LiveKit, sem recodificar e sem serviço extra no servidor. Veja [docs/OBS.md](docs/OBS.md).
 - Câmera junto da tela: quem transmite as duas aparece com a câmera numa janelinha no canto da tela (clique troca, arraste move, o canto redimensiona). O celular também pode virar câmera e microfone por um link. Veja [docs/CELULAR.md](docs/CELULAR.md).
-- Áudio da tela: Opus estéreo, sem DTX, com RED (`web/src/app/core/share.ts`, `SCREEN_AUDIO_PUBLISH`). É aqui que entra o próximo passo: subir para 510 kbps e depois um "modo estúdio" com PCM sem compressão pelo canal de dados.
+- Áudio da tela: Opus estéreo a 192 kbps, sem DTX, com RED (`web/src/app/core/share.ts`, `SCREEN_AUDIO_PUBLISH`). Para o som exato, o "modo estúdio" manda PCM sem compressão pelo canal de dados, e o plugin de DAW manda o som da DAW pelo servidor.
+- Arquitetura e regras para o app não pesar (um estado só, uma leitura de estatísticas por lado, o que manda mensagem ao servidor): [docs/ARQUITETURA.md](docs/ARQUITETURA.md). Medições: [docs/DESEMPENHO.md](docs/DESEMPENHO.md). Testes com 3 navegadores: `tools/e2e/`.
 
 ## Estrutura
 
