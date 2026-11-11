@@ -128,6 +128,10 @@ export class RoomStore {
   readonly liveSignature = this._liveSignature.asReadonly();
   readonly status = computed(() => this._snapshot().status);
   readonly participants = computed(() => this._snapshot().participants);
+  /** Minha conversa direta (null = falando com todos). */
+  readonly direct = computed(() => this._snapshot().direct);
+  /** Quem está falando só comigo agora. */
+  readonly whispers = computed(() => this._snapshot().whispers);
   /** Telas à mostra (sem as que você escondeu). */
   readonly shares = computed(() => this._snapshot().shares.filter((s) => !s.hidden));
   /** Telas que vão para o palco e a grade: as dos outros. A minha só aparece na prévia da barra de baixo. */
@@ -262,6 +266,7 @@ export class RoomStore {
   constructor() {
     // Espelhar o próprio retorno (PC ou celular) vale em todo lugar onde você se vê.
     effect(() => this.session.setMirrorSelf(this.camPrefs.mirror()));
+    void this.session.setVoiceMode(this.prefs.voiceMode());
     this.session.onVoiceFallback = () =>
       this.toast.show('A redução de ruído por IA não carregou; o microfone foi com o filtro do navegador.');
     this.session.onMicMoved = (toMobile) =>
@@ -532,6 +537,21 @@ export class RoomStore {
     } catch {
       this.toast.show('Não foi possível trocar de microfone.');
     }
+  }
+
+  /** Segurando o botão na pessoa: fala e ouve só com ela até soltar. */
+  directHold(identity: string) {
+    this.session.directHold(identity);
+  }
+  directRelease(identity: string) {
+    this.session.directRelease(identity);
+  }
+  /** Segurou e arrastou: fica falando só com ela até alguém voltar para todos. */
+  directLock(identity: string) {
+    this.session.directLock(identity);
+  }
+  directEnd() {
+    this.session.directEnd();
   }
 
   async toggleMic() {

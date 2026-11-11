@@ -9,13 +9,15 @@ import { Toast } from '../core/toast';
 import { SendFx } from '../core/send-fx';
 import { Icon } from './icon';
 import { VolumeSlider } from './volume-slider';
+import { DirectKey } from './direct-key';
+import { PersonView } from '../core/room-session';
 import { PixelIcon } from './pixel-icon';
 import { Activity, Surface, activityLine } from '../core/activity';
 
 /** Quem está na sala e o volume de cada um, só para você. Cada pessoa é uma linha, como um canal de mesa. */
 @Component({
   selector: 'cen-people-panel',
-  imports: [Icon, VolumeSlider, PixelIcon],
+  imports: [Icon, VolumeSlider, PixelIcon, DirectKey],
   template: `
     @if (stageSound(); as s) {
       <p class="label">som da tela</p>
@@ -64,18 +66,30 @@ import { Activity, Surface, activityLine } from '../core/activity';
       </div>
     }
 
+    @if (store.direct(); as d) {
+      @if (d.mode === 'lock') {
+        <div class="direct-bar">
+          <cen-icon name="direct" [size]="14" />
+          <span class="msg">Só com <strong>{{ nameOf(d.peer) }}</strong>{{ d.waiting ? ' (em outra conversa agora)' : '' }}</span>
+          <button type="button" class="btn small" (click)="store.directEnd()">voltar para todos</button>
+        </div>
+      }
+    }
     <p class="label">na sala</p>
     <ul class="strips">
       @for (p of store.participants(); track p.identity) {
-        <li class="strip" [class.speaking]="p.isSpeaking" [class.me]="p.isLocal" animate.enter="row-in" animate.leave="row-out">
+        <li class="strip" [class.speaking]="p.isSpeaking" [class.me]="p.isLocal" [class.direct]="directState(p) !== 'idle'"
+          [class.away]="privateElsewhere(p)" animate.enter="row-in" animate.leave="row-out">
           <div class="row">
             <span class="avatar" aria-hidden="true">
               @if (p.avatar) { <img [src]="p.avatar" alt="" width="28" height="28" /> } @else { <b>{{ initial(p.name) }}</b> }
             </span>
             <span class="who">
               <span class="name" [title]="p.name">{{ p.name }}</span>
-              <span class="sub" [class.doing]="p.activity !== null">
-                @if (p.activity; as a) {
+              <span class="sub" [class.doing]="p.activity !== null" [class.whisper]="directLine(p) !== null">
+                @if (directLine(p); as d) {
+                  {{ d }}
+                } @else if (p.activity; as a) {
                   <cen-pixel class="act-icon" [name]="actIcon(a.surface)" [size]="9" />{{ p.isLocal ? 'você · ' : '' }}{{ actText(a) }}
                 }
                 @else if (p.isLocal) { você{{ isMobile ? ' · no celular' : '' }} }
@@ -87,6 +101,12 @@ import { Activity, Surface, activityLine } from '../core/activity';
                 @else { ouvindo }
               </span>
             </span>
+            @if (canDirect(p)) {
+              <cen-direct-key class="dk" [class.on]="directState(p) !== 'idle'" [name]="p.name" [state]="directState(p)"
+                [disabled]="directBlocked(p)"
+                (hold)="store.directHold(p.identity)" (release)="store.directRelease(p.identity)"
+                (lock)="store.directLock(p.identity)" (unlock)="store.directEnd()" />
+            }
             <span class="mic" [class.open]="p.micEnabled" [title]="p.micEnabled ? 'Microfone aberto' : 'Microfone fechado'">
               <cen-icon [name]="p.micEnabled ? 'mic' : 'micOff'" [size]="13" />
             </span>
@@ -162,7 +182,8 @@ import { Activity, Surface, activityLine } from '../core/activity';
         </button>
       </div>
     }
-    <p class="foot">Os volumes valem só para você. O contorno verde é quem está falando.</p>
+    <p class="foot">Os volumes valem só para você. O contorno verde é quem está falando.
+      @if (canDirectAny()) { Passe o mouse numa pessoa: segure a tecla para falar só com ela; arraste até o cadeado para continuar só com ela. }</p>
   `,
   styles: `
     :host { display: block; }
@@ -185,7 +206,18 @@ import { Activity, Surface, activityLine } from '../core/activity';
     .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 0.66rem/1.3 var(--mono);
       letter-spacing: 0.04em; color: var(--faint); }
 
-    .mic { display: grid; place-items: center; color: var(--faint); flex-shrink: 0; }
+    /* Conversa direta: a tecla aparece ao passar o mouse na pessoa (no celular, sempre). */
+    .dk { opacity: 0; pointer-events: none; transition: opacity 100ms; }
+    .strip:hover .dk, .dk:focus-within, .dk.on { opacity: 1; pointer-events: auto; }
+    .strip.direct { background: linear-gradient(90deg, rgb(255 255 255 / 0.035), transparent); }
+    .sub.whisper { color: var(--accent-hi); }
+    /* Falando direto com outra pessoa: aqui não se ouve. */
+    .strip.away .avatar img, .strip.away .avatar b { opacity: 0.5; }
+.direct-bar { display: flex; align-items: center; gap: 0.5rem; padding: 6px 8px; margin-bottom: 0.6rem; border-radius: 2px;
+      background: var(--well); box-shadow: var(--inset); color: var(--accent-hi); font-size: 0.8rem; }
+    .direct-bar .msg { flex: 1; min-width: 0; color: var(--text); }
+    .direct-bar .btn { height: 22px; font-size: 0.72rem; }
+        .mic { display: grid; place-items: center; color: var(--faint); flex-shrink: 0; }
     .mic.open { color: var(--muted); }
     .device { color: var(--faint); flex-shrink: 0; }
     /* Selo "ao vivo", como o do Discord, numa plaqueta vermelha com a lâmpada piscando. */
@@ -264,6 +296,7 @@ import { Activity, Surface, activityLine } from '../core/activity';
     .foot { margin: 1rem 0 0; font-size: 0.72rem; color: var(--muted); }
 
     @media (hover: none) {
+      .dk { opacity: 1; pointer-events: auto; }
       .key { padding: 0.65rem 0.75rem; }
       .invite { height: 30px; }
     }
@@ -276,6 +309,45 @@ export class PeoplePanel {
   private readonly router = inject(Router);
   protected readonly callRoom = isCallRoom();
   protected readonly isMobile = IS_MOBILE;
+
+  private readonly me = computed(() => this.store.participants().find((p) => p.isLocal) ?? null);
+  /** Dá para falar direto com esta pessoa (outra pessoa de verdade, e eu posso falar na sala). */
+  canDirect(p: PersonView): boolean {
+    return !p.isLocal && !p.myOtherDevice && this.me()?.canPublish === true;
+  }
+  protected readonly canDirectAny = computed(() => this.store.participants().some((p) => this.canDirect(p)));
+  directState(p: PersonView): 'idle' | 'hold' | 'lock' {
+    const d = this.store.direct();
+    return d !== null && d.peer === p.identity ? d.mode : 'idle';
+  }
+  /** Travado com outra pessoa: as outras teclas ficam apagadas até voltar para todos. */
+  directBlocked(p: PersonView): boolean {
+    const d = this.store.direct();
+    return d !== null && d.mode === 'lock' && d.peer !== p.identity;
+  }
+  /** Falando direto com outra pessoa (não comigo). */
+  privateElsewhere(p: PersonView): boolean {
+    return !p.isLocal && p.direct !== null && p.direct.to !== this.me()?.identity;
+  }
+  nameOf(identity: string): string {
+    return this.store.participants().find((x) => x.identity === identity)?.name ?? 'alguém';
+  }
+    directLine(p: PersonView): string | null {
+    if (p.direct === null) return null;
+    const me = this.me()?.identity;
+    const other = this.store.participants().find((x) => x.identity === p.direct?.to)?.name ?? 'alguém';
+    if (p.isLocal) {
+      const d = this.store.direct();
+      if (d?.waiting) return `você · esperando ${other}`;
+      return `você · só com ${other}`;
+    }
+    if (p.direct.to === me) {
+      const d = this.store.direct();
+      if (d !== null && d.peer === p.identity && d.mode === 'lock') return 'conversa a dois com você';
+      return p.direct.mode === 'hold' ? 'falando só com você' : 'quer falar só com você';
+    }
+    return `em conversa direta com ${other}`;
+  }
 
   actIcon(s: Surface): string {
     return s === 'window' ? 'window' : s === 'browser' ? 'tab' : s === 'camera' ? 'webcam' : s === 'obs' ? 'obs' : 'monitor';
