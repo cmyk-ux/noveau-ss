@@ -15,9 +15,9 @@
 // Tudo isso pode ficar num arquivo .env na raiz do projeto (ele não vai para o git).
 
 import { createHash, randomBytes } from 'node:crypto';
-import { createReadStream, existsSync, statSync } from 'node:fs';
+import { createReadStream, existsSync, readdirSync, statSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { extname, join, normalize } from 'node:path';
+import { extname, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 // Carrega ../.env antes de ler as variáveis (inclusive as do discord.mjs, importado abaixo).
@@ -203,16 +203,82 @@ const MIME = {
   '.png': 'image/png',
   '.webmanifest': 'application/manifest+json',
   '.woff2': 'font/woff2',
+  '.woff': 'font/woff',
+  '.wasm': 'application/wasm',
   '.json': 'application/json',
+  '.txt': 'text/plain; charset=utf-8',
 };
 
-function serveStatic(req, res) {
-  const path = decodeURIComponent(new URL(req.url, 'http://x').pathname);
-  let file = normalize(join(STATIC_DIR, path));
-  if (!file.startsWith(normalize(STATIC_DIR))) file = '';
-  if (file === '' || !existsSync(file) || statSync(file).isDirectory()) file = join(STATIC_DIR, 'index.html');
-  res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream', 'cache-control': 'no-cache' });
-  createReadStream(file).pipe(res);
+// ---------- Site compilado
+// A pasta do site não muda com o servidor no ar (vem na imagem), então é lida uma vez na partida:
+// cada pedido vira uma consulta num Map, sem tocar no disco para procurar o arquivo.
+// - Arquivos com hash no nome (main-ABCD1234.js, fontes): guardados pelo navegador por 1 ano.
+//   Antes tudo ia com "no-cache" e sem ETag, então cada visita baixava o site inteiro de novo
+//   (~800 kB) e o Caddy comprimia tudo de novo no processador da VPS.
+// - O resto (index.html, ícones, worklets): ETag e 304 quando não mudou.
+// - Versões já comprimidas (.br/.gz, feitas no build): vão prontas; o Caddy não comprime de novo
+//   o que já chega com Content-Encoding.
+const HASHED = /-([A-Za-z0-9_-]{8})\.(?:js|css|woff2?|wasm)$/;
+function isHashed(name) {
+  const m = HASHED.exec(name);
+  // "studio-worklets.js" não é hash: hash do esbuild tem maiúscula ou número.
+  return m !== null && /[A-Z0-9]/.test(m[1]);
+}
+
+/** Caminho da URL (/main-X.js) -> arquivo e o que mandar no cabeçalho. */
+function indexStatic(root) {
+  const out = new Map();
+  if (root === '' || !existsSync(root)) return out;
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const file = join(dir, entry.name);
+      if (entry.isDirectory()) {
+        walk(file);
+        continue;
+      }
+      if (entry.name.endsWith('.br') || entry.name.endsWith('.gz')) continue;
+      const st = statSync(file);
+      const variant = (ext) => (existsSync(file + ext) ? { file: file + ext, size: statSync(file + ext).size } : null);
+      out.set('/' + relative(root, file).split(sep).join('/'), {
+        file,
+        size: st.size,
+        type: MIME[extname(file)] ?? 'application/octet-stream',
+        etag: `W/"${st.size.toString(36)}-${Math.floor(st.mtimeMs).toString(36)}"`,
+        cache: isHashed(entry.name) ? 'public, max-age=31536000, immutable' : 'no-cache',
+        br: variant('.br'),
+        gz: variant('.gz'),
+      });
+    }
+  };
+  walk(root);
+  return out;
+}
+const staticFiles = indexStatic(STATIC_DIR);
+
+function serveStatic(req, res, path) {
+  let name = path;
+  try {
+    name = decodeURIComponent(path);
+  } catch {
+    /* caminho torto: cai no index.html */
+  }
+  // Rotas do site (/room/..., /call): o Angular resolve no navegador.
+  const f = staticFiles.get(name) ?? staticFiles.get('/index.html');
+  if (f === undefined) return send(res, 404, { error: 'Não encontrado.' });
+  const headers = { 'content-type': f.type, 'cache-control': f.cache, etag: f.etag };
+  if (f.br !== null || f.gz !== null) headers.vary = 'accept-encoding';
+  if (req.headers['if-none-match'] === f.etag) {
+    res.writeHead(304, headers);
+    return res.end();
+  }
+  const accepts = String(req.headers['accept-encoding'] ?? '');
+  const pick = f.br !== null && /\bbr\b/.test(accepts) ? ['br', f.br] : f.gz !== null && /\bgzip\b/.test(accepts) ? ['gzip', f.gz] : null;
+  const body = pick === null ? f : pick[1];
+  if (pick !== null) headers['content-encoding'] = pick[0];
+  headers['content-length'] = body.size;
+  res.writeHead(200, headers);
+  if (req.method === 'HEAD') return res.end();
+  createReadStream(body.file).pipe(res);
 }
 
 function readJson(req) {
@@ -308,12 +374,25 @@ async function updateLiveStatus() {
   if (liveTick) return;
   liveTick = true;
   try {
-    for (const channelId of discord.channelsToWatch()) {
+    const channels = discord.channelsToWatch();
+    if (channels.length === 0) return;
+    // Uma pergunta só para saber quais dessas salas existem e têm gente no site. Quase sempre a
+    // maioria das calls do Discord não tem ninguém no site: essas nem perguntam quem está lá.
+    let open;
+    try {
+      open = new Set((await rooms.listRooms(channels.map((c) => discord.roomForChannel(c)))).filter((r) => r.numParticipants > 0).map((r) => r.name));
+    } catch {
+      return; // LiveKit fora: não mexe no status
+    }
+    for (const channelId of channels) {
+      const room = discord.roomForChannel(channelId);
       let names = [];
-      try {
-        names = liveNames(await rooms.listParticipants(discord.roomForChannel(channelId)));
-      } catch (e) {
-        if (!/not found|does not exist/i.test(e.message ?? '')) continue; // LiveKit fora: não mexe no status
+      if (open.has(room)) {
+        try {
+          names = liveNames(await rooms.listParticipants(room));
+        } catch (e) {
+          if (!/not found|does not exist/i.test(e.message ?? '')) continue; // LiveKit fora: não mexe no status
+        }
       }
       await discord.setLiveStatus(channelId, names);
     }
@@ -462,7 +541,7 @@ const server = createServer(async (req, res) => {
   if (redirectRoute !== undefined) return redirectRoute(req, res);
   const route = routes[`${req.method} ${path}`];
   if (route === undefined) {
-    if (STATIC_DIR !== '' && req.method === 'GET' && !path.startsWith('/api/')) return serveStatic(req, res);
+    if (STATIC_DIR !== '' && (req.method === 'GET' || req.method === 'HEAD') && !path.startsWith('/api/')) return serveStatic(req, res, path);
     return send(res, 404, { error: 'Não encontrado.' });
   }
   try {
@@ -490,7 +569,7 @@ daw.attachDaw(server, (token) => verifier.verify(token), {
 // HOST=127.0.0.1 em produção (rede do host): só o Caddy alcança a API.
 server.listen(PORT, process.env.HOST || undefined, () => {
   console.log(`API do Noveau em http://localhost:${PORT} (LiveKit: ${LIVEKIT_HTTP_URL})`);
-  if (STATIC_DIR !== '') console.log(`Servindo o site de ${STATIC_DIR}`);
+  if (STATIC_DIR !== '') console.log(`Servindo o site de ${STATIC_DIR} (${staticFiles.size} arquivos)`);
   console.log(`Endereço do LiveKit que o navegador recebe: ${LIVEKIT_PUBLIC_URL !== '' ? LIVEKIT_PUBLIC_URL : 'ws://<endereço da página>:7880 (LIVEKIT_PUBLIC_URL vazio)'}`);
   console.log(discord.discordEnabled ? 'Login com Discord: ligado' : 'Login com Discord: desligado (faltam DISCORD_* no .env)');
   console.log(clips.clipsEnabled ? 'Clipes: ligados (Cloudflare R2)' : 'Clipes: desligados (faltam R2_* no .env)');
