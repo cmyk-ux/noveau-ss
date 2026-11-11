@@ -20,6 +20,7 @@ import { IS_MOBILE } from './device';
 import { installStereoReceive } from './stereo';
 import { ACTIVITY_ATTR, Activity, parseActivity } from './activity';
 import { gpuEncodes, hardwareDecoders } from './stream';
+import { DirectMode, DirectTalk, DirectView } from './direct';
 
 // O som do OBS (WHIP) chega sem a marca de estéreo; veja stereo.ts.
 installStereoReceive();
@@ -102,6 +103,8 @@ export interface PersonView {
   phone: boolean;
   /** O que está transmitindo agora (null = não está transmitindo). */
   activity: Activity | null;
+  /** Em conversa direta: com quem (identidade) e se é segurando ou travada. */
+  direct: { to: string; mode: DirectMode } | null;
 }
 
 export interface RoomSnapshot {
@@ -114,6 +117,10 @@ export interface RoomSnapshot {
   /** Nomes de quem está vendo cada tela. */
   viewers: Map<string, string[]>;
   me: MyDevices;
+  /** Minha conversa direta (null = falando com todos). */
+  direct: DirectView | null;
+  /** Quem está falando só comigo agora (segurando o botão) ou querendo uma conversa a dois. */
+  whispers: string[];
 }
 
 interface LiveShare {
@@ -330,6 +337,9 @@ export class RoomSession {
     }, AWAY_AFTER_MS);
   };
 
+  /** Conversa direta (falar e ouvir só com uma pessoa). Veja direct.ts. */
+  private readonly direct: DirectTalk;
+
   constructor(
     private readonly audioContainer: HTMLElement,
     readonly room: Room = new Room({
@@ -341,7 +351,33 @@ export class RoomSession {
       disconnectOnPageLeave: false,
     }),
   ) {
+    this.direct = new DirectTalk(this.room, {
+      changed: () => this.emit(),
+      micLive: () => this.room.localParticipant.isMicrophoneEnabled || isLive(this.phones().get(this.room.localParticipant.identity)?.getTrackPublication(Track.Source.Microphone)),
+      setMic: (on) => this.setMicrophone(on),
+    });
     this.bindEvents();
+  }
+
+  /** Segurando o botão na pessoa: fala e ouve só com ela. */
+  directHold(identity: string) {
+    this.direct.hold(identity);
+    this.emit();
+  }
+  /** Soltou o botão. */
+  directRelease(identity: string) {
+    this.direct.release(identity);
+    this.emit();
+  }
+  /** Arrastou: trava a conversa a dois. */
+  directLock(identity: string) {
+    this.direct.lock(identity);
+    this.emit();
+  }
+  /** Volta a falar com todos. */
+  directEnd() {
+    this.direct.end();
+    this.emit();
   }
 
   onChange(fn: (s: RoomSnapshot) => void) {
@@ -1039,6 +1075,7 @@ export class RoomSession {
       this.live = [];
       return emptySnapshot();
     }
+    this.direct.sync();
     const shares = this.collectShares();
     this.live = shares;
     this.focusedShareId = keepFocus(this.stageIds(shares), this.focusedShareId);
@@ -1073,6 +1110,8 @@ export class RoomSession {
       focusedShareId: this.focusedShareId,
       needsAudioUnlock: !this.room.canPlaybackAudio,
       me: this.readMe(),
+      direct: this.direct.view(),
+      whispers: this.direct.whisperingToMe(),
       ...(() => {
         const viewers = viewersByShare(this.collectWatchers(), shares.map((s) => s.view.id));
         return { viewers, watchers: new Map([...viewers].map(([k, v]) => [k, v.length])) };
@@ -1194,13 +1233,14 @@ export class RoomSession {
       const of = phoneOf(p);
       if (of !== null) {
         const owner = this.room.remoteParticipants.get(of);
-        const audible = of !== me.identity && owner !== undefined && !this.isMyOtherDevice(owner);
+        const audible = of !== me.identity && owner !== undefined && !this.isMyOtherDevice(owner) && this.direct.audible(of);
         this.tune(p, Track.Source.Microphone, this.mixer.read('mic', of), audible);
         continue;
       }
       // O microfone do meu outro aparelho não toca aqui: eu me ouviria com atraso (e daria eco).
       // (No OBS o "microfone" é o som da tela, tratado logo abaixo.)
-      if (!isObs(p)) this.tune(p, Track.Source.Microphone, this.mixer.read('mic', id), !this.isMyOtherDevice(p));
+      // Conversa direta: só a voz da outra pessoa; e quem fala direto com outra pessoa não toca aqui.
+      if (!isObs(p)) this.tune(p, Track.Source.Microphone, this.mixer.read('mic', id), !this.isMyOtherDevice(p) && this.direct.audible(id));
       // Na grade, o som de todas as telas toca (cada uma com seu volume); em foco, só a dela.
       this.tune(
         p,
@@ -1223,11 +1263,13 @@ export class RoomSession {
     const phones = this.phones();
     return this.everyone().filter((p) => phoneOf(p) === null).map((p) => {
       const phone = phones.get(p.identity);
+      const isLocal = p === this.room.localParticipant;
       return {
         identity: p.identity,
         name: displayName(p),
-        isLocal: p === this.room.localParticipant,
-        isSpeaking: speaking.has(p.identity) || (phone !== undefined && speaking.has(phone.identity)),
+        isLocal,
+        // Falando direto com outra pessoa: aqui não se ouve, então também não acende "falando".
+        isSpeaking: (speaking.has(p.identity) || (phone !== undefined && speaking.has(phone.identity))) && (isLocal || this.direct.audible(p.identity)),
         micEnabled: p.getTrackPublication(Track.Source.Microphone)?.isMuted === false || isLive(phone?.getTrackPublication(Track.Source.Microphone)),
         isSharing:
           p.getTrackPublication(Track.Source.ScreenShare) !== undefined ||
@@ -1243,6 +1285,7 @@ export class RoomSession {
         invitedBy: p.attributes?.['invitedBy'] ?? null,
         phone: phone !== undefined,
         activity: activities.get(p.identity) ?? null,
+        direct: this.direct.aimOf(p),
       };
     });
   }
@@ -1258,6 +1301,8 @@ function emptySnapshot(): RoomSnapshot {
     watchers: new Map(),
     viewers: new Map(),
     me: { cam: false, mic: false, phone: null },
+    direct: null,
+    whispers: [],
   };
 }
 

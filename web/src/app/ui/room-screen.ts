@@ -172,6 +172,31 @@ function timecode(ms: number): string {
           }
         </div>
       }
+      @if (store.direct(); as d) {
+        <div class="banner direct">
+          <span class="flag mono">direto</span>
+          <span class="msg">
+            @if (d.mode === 'hold') {
+              Falando só com <strong>{{ personName(d.peer) }}</strong> enquanto segura. Solte para voltar a falar com todos.
+            } @else if (d.waiting) {
+              Você travou a conversa com <strong>{{ personName(d.peer) }}</strong>, que está em outra conversa direta agora.
+              Sua voz já vai só para essa pessoa, e a conversa a dois começa assim que ela acabar a outra.
+            } @else if (d.mine) {
+              Conversa a dois com <strong>{{ personName(d.peer) }}</strong>: vocês só se ouvem, e o resto da sala não ouve vocês.
+            } @else {
+              <strong>{{ personName(d.peer) }}</strong> abriu uma conversa a dois com você: vocês só se ouvem, e o resto da sala não ouve vocês.
+            }
+          </span>
+          @if (d.mode === 'lock') {
+            <button class="btn small primary" (click)="store.directEnd()">Voltar para todos</button>
+          }
+        </div>
+      } @else if (store.whispers().length > 0) {
+        <div class="banner direct">
+          <span class="flag mono">direto</span>
+          <span class="msg">{{ whisperLine() }}</span>
+        </div>
+      }
       @if (store.needsAudioUnlock()) {
         <div class="banner">
           <span class="flag mono">som</span>
@@ -519,6 +544,7 @@ function timecode(ms: number): string {
     .banner .msg { flex: 1; }
     .flag { font-size: 0.64rem; text-transform: uppercase; letter-spacing: 0.14em; color: #1a1408; background: var(--warn);
       padding: 1px 6px; border-radius: 3px; }
+    .banner.direct .flag { background: var(--accent); color: #fff; }
     .banner.danger { background: repeating-linear-gradient(-45deg, rgb(196 73 60 / 0.1) 0 10px, transparent 10px 20px), var(--surface); }
     .banner.danger .flag { background: var(--danger); color: #fff; }
 
@@ -703,6 +729,21 @@ export class RoomScreen {
   protected readonly store = inject(RoomStore);
   private readonly toast = inject(Toast);
   private readonly invites = inject(Invites);
+
+  protected personName(identity: string) {
+    return this.store.participants().find((p) => p.identity === identity)?.name ?? 'alguém';
+  }
+
+  /** Quem está falando só comigo (segurando) ou querendo uma conversa a dois enquanto estou em outra. */
+  protected readonly whisperLine = computed(() => {
+    const people = this.store.participants().filter((p) => this.store.whispers().includes(p.identity));
+    const holding = people.filter((p) => p.direct?.mode === 'hold').map((p) => p.name);
+    const asking = people.filter((p) => p.direct?.mode === 'lock').map((p) => p.name);
+    const parts: string[] = [];
+    if (holding.length > 0) parts.push(`${holding.join(' e ')} ${holding.length === 1 ? 'está falando' : 'estão falando'} só com você.`);
+    if (asking.length > 0) parts.push(`${asking.join(' e ')} ${asking.length === 1 ? 'quer' : 'querem'} uma conversa a dois com você (você recusou ou está em outra).`);
+    return parts.join(' ');
+  });
   protected readonly prefs = inject(Prefs);
   protected readonly canShare = typeof navigator.mediaDevices?.getDisplayMedia === 'function';
   protected readonly menu = signal<Menu | null>(null);
