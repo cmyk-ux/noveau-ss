@@ -1,4 +1,5 @@
 import { Injectable, signal } from '@angular/core';
+import { VOICE_MODES, VoiceMode } from './voice';
 import { BITRATE_LIMITS, CodecChoice, DEFAULT_STREAM, FRAME_RATES, RESOLUTIONS, StreamSettings } from './stream';
 
 function oneOf<T>(value: unknown, allowed: T[], fallback: T): T {
@@ -101,6 +102,13 @@ const store = {
   set studioLatency(v: number) {
     localStorage.setItem('cenaculum:studio-latency', String(v));
   },
+  // Tratamento do microfone: IA (RNNoise) por padrão.
+  get voiceMode(): VoiceMode {
+    return oneOf(localStorage.getItem('noveau:voice'), VOICE_MODES, 'ia');
+  },
+  set voiceMode(v: VoiceMode) {
+    localStorage.setItem('noveau:voice', v);
+  },
   get cursorOn(): boolean {
     return localStorage.getItem('cenaculum:cursor') === 'yes';
   },
@@ -156,6 +164,13 @@ export class Prefs {
   setAdaptToLoad(v: boolean) {
     store.adaptToLoad = v;
     this._adaptToLoad.set(v);
+  }
+  private readonly _voiceMode = signal(store.voiceMode);
+  /** Como o microfone é tratado antes de ir para a sala (veja voice.ts). */
+  readonly voiceMode = this._voiceMode.asReadonly();
+  setVoiceMode(v: VoiceMode) {
+    store.voiceMode = v;
+    this._voiceMode.set(v);
   }
   private readonly _cursorOn = signal(store.cursorOn);
   private readonly _studio = signal(store.studio);
