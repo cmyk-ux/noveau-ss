@@ -27,6 +27,14 @@ import { keep, keepList, keepMap } from './same';
 import type { Probe } from './diag';
 
 /** Uma leitura das estatísticas da tela em foco, com o que se sabe de quem transmite. */
+
+/**
+ * "Mudo" para o ganho do Web Audio: -100 dB, inaudível, mas não 0. O LiveKit refaz o nó de ganho de
+ * cada faixa (ao "Ativar áudio", ao trocar o elemento de áudio) e só reaplica o volume guardado
+ * `if (this.elementVolume)`, que é falso para 0: o ganho novo nascia em 100% e a voz ou tela mutada
+ * (e as telas que não deviam tocar: escondidas, fora de foco, conversa direta) voltava a tocar.
+ */
+const SILENT_GAIN = 1e-5;
 export type FocusedStats = Probe;
 
 // O som do OBS (WHIP) chega sem a marca de estéreo; veja stereo.ts.
@@ -375,6 +383,10 @@ export class RoomSession {
       disconnectOnPageLeave: false,
     }),
   ) {
+    // Só para os testes de ponta a ponta (tools/e2e): com noveau:e2e=1 o teste lê a sala por aqui.
+    try {
+      if (localStorage.getItem('noveau:e2e') === '1') (window as any).__noveau = { room: this.room, session: this };
+    } catch {}
     this.direct = new DirectTalk(this.room, {
       changed: () => this.emit(),
       micLive: () => this.room.localParticipant.isMicrophoneEnabled || isLive(this.phones().get(this.room.localParticipant.identity)?.getTrackPublication(Track.Source.Microphone)),
@@ -1458,12 +1470,15 @@ export class RoomSession {
     }
   }
 
-  /** Volume já aplicado em cada faixa: só mexe no ganho quando muda. */
+  /**
+   * Volume já aplicado em cada faixa: só mexe no ganho quando muda. Isso só vale porque o "mudo" não é
+   * 0 (veja SILENT_GAIN): o LiveKit reaplica sozinho o volume guardado quando refaz o ganho.
+   */
   private readonly tuned = new WeakMap<Track, number>();
   private tune(p: RemoteParticipant, source: Track.Source, v: Volume, audible: boolean) {
     const track = p.getTrackPublication(source)?.track;
     if (track === undefined || track.kind !== Track.Kind.Audio) return;
-    const level = !audible || isSilent(v) ? 0 : v.level;
+    const level = !audible || isSilent(v) ? SILENT_GAIN : v.level;
     if (this.tuned.get(track) === level) return;
     this.tuned.set(track, level);
     // Com webAudioMix o volume é um ganho do Web Audio, que passa de 100%.
