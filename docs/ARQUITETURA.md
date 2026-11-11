@@ -83,6 +83,10 @@ LiveKit (Room) ──eventos──► RoomSession ──RoomSnapshot──► Ro
     trilha, carrega a redução de ruído e publica; um segundo clique nesse meio-tempo corria junto e o
     microfone ficava ligado (ou publicado duas vezes). `RoomSession.setMicrophone`/`setVoiceMode`
     passam por `micQueue`, e o `RoomStore` inverte o que o último clique pediu, não o que a sala mostra.
+12. **Mudo no Web Audio não é 0.** O LiveKit refaz o nó de ganho de cada faixa (ao "Ativar áudio", ao
+    trocar o elemento) e só reaplica o volume guardado se ele não for 0. Com 0, quem estava mutado (ou
+    escondido, fora de foco, na conversa direta) voltava a tocar em 100%. `tune()` usa `SILENT_GAIN`
+    (-100 dB). Testes que precisam ler a sala usam `window.__noveau` (só com `noveau:e2e=1`).
 
 ## Atributos dos participantes
 
@@ -120,7 +124,8 @@ com o Chromium.
 
 - `BASE=http://127.0.0.1:3001 node tools/e2e/flows.mjs`: 3 navegadores; tela, grade, foco, esconder,
   câmera junto da tela, reiniciar a tela, painel de pessoas, conversa direta, mutar a tela (o botão
-  tem de mudar em até 1 s), dois cliques rápidos no microfone, erros no console.
+  tem de mudar em até 1 s), voz mutada continua muda depois de "Ativar áudio", dois cliques rápidos
+  no microfone, erros no console.
 - `BASE=http://127.0.0.1:3001 PANEL=1 node tools/e2e/measure.mjs rotulo`: custo por segundo em cada
   navegador (JavaScript, trabalho total, recálculo de estilo, mensagens de sinalização por tipo).
   `CAM=1` faz B ligar a câmera (grade com 2 telas).

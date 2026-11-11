@@ -13,7 +13,7 @@ const ok = (name, cond, extra = '') => { results.push(`${cond ? 'OK  ' : 'FALHOU
 const people = {};
 for (const name of ['A', 'B', 'C']) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, permissions: ['microphone', 'camera'] });
-  await ctx.addInitScript(() => { try { localStorage.setItem('noveau:voice', 'cru'); localStorage.setItem('cenaculum:volume-hint', 'yes'); } catch {} });
+  await ctx.addInitScript(() => { try { localStorage.setItem('noveau:voice', 'cru'); localStorage.setItem('cenaculum:volume-hint', 'yes'); localStorage.setItem('noveau:e2e', '1'); } catch {} });
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
@@ -54,6 +54,25 @@ await tileA.locator('button.mute').click({ timeout: 10000 });
 ok('C mutou a tela de A: o botão mostra "Ativar o som"', await until(C, () => document.querySelector('cen-share-tile button.mute.on[title="Ativar o som"]') !== null, undefined, 1000));
 await tileA.locator('button.mute').click({ timeout: 10000 });
 ok('C desmutou a tela de A: o botão volta a "Mutar"', await until(C, () => document.querySelector('cen-share-tile button.mute.on') === null, undefined, 1000));
+// O mudo tem de continuar mudo quando o LiveKit refaz o ganho (ex.: "Ativar áudio"). Antes o ganho
+// novo nascia em 100% e a voz mutada voltava a tocar.
+const micGain = () => C.page.evaluate(() => {
+  const a = [...window.__noveau.room.remoteParticipants.values()].find((p) => p.name === 'A' || p.identity.startsWith('A'));
+  return a?.getTrackPublication('microphone')?.track?.gainNode?.gain.value ?? null;
+});
+await C.page.locator('button.people-top').click();
+const rowMicA = C.page.locator('li.strip').filter({ has: C.page.locator('.name', { hasText: /^A$/ }) });
+await rowMicA.locator('cen-volume button.mute').click({ timeout: 10000 });
+await wait(1500);
+const mutedGain = await micGain();
+await C.page.evaluate(() => window.__noveau.room.startAudio());
+await wait(1500);
+const afterGain = await micGain();
+ok('C mutou a voz de A e ela continua muda depois de "Ativar áudio"', mutedGain !== null && mutedGain < 0.001 && afterGain !== null && afterGain < 0.001, `ganho ${mutedGain} -> ${afterGain}`);
+await rowMicA.locator('cen-volume button.mute').click();
+await wait(1500);
+ok('C desmutou a voz de A: ganho volta', ((await micGain()) ?? 0) > 0.5);
+await C.page.locator('button.people-top').click();
 // C foca A
 await C.page.locator('cen-share-tile').first().click();
 ok('C focou uma tela (palco)', await until(C, playing, 'cen-stage video'));
