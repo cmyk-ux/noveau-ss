@@ -6,6 +6,8 @@
 // a subida estiver perdendo de verdade, baixa o teto 15% por vez (no máximo até metade). Com a
 // rede limpa por 30 s, sobe 10% de volta, até o máximo de novo.
 
+import type { StatsFeed } from './stats';
+
 export interface UploadState {
   /** Teto atual e o original, em bps. */
   cap: number;
@@ -14,7 +16,6 @@ export interface UploadState {
   loss: number;
 }
 
-const TICK_MS = 2000;
 const BAD_LOSS = 0.005;
 const CLEAN_LOSS = 0.001;
 const STEP_DOWN = 0.85;
@@ -24,7 +25,7 @@ const DOWN_EVERY_MS = 6000;
 const UP_AFTER_MS = 30000;
 
 export class UploadGuard {
-  private timer?: number;
+  private off: (() => void) | null = null;
   private cap: number;
   private prev: { sent: number; lost: number } | null = null;
   private samples: number[] = [];
@@ -33,28 +34,38 @@ export class UploadGuard {
 
   constructor(
     private readonly sender: () => RTCRtpSender | undefined,
-    private readonly target: number,
+    private target: number,
     private readonly onChange: (s: UploadState) => void,
+    private readonly feed: StatsFeed,
   ) {
     this.cap = target;
   }
 
   start() {
-    if (this.target <= 0) return;
-    this.timer = window.setInterval(() => void this.tick(), TICK_MS);
+    if (this.target <= 0 || this.off !== null) return;
+    this.off = this.feed.add((r) => this.read(r));
+  }
+
+  /** Trocou de codec (outro teto de bitrate): recomeça do máximo novo. */
+  retarget(bitrate: number) {
+    this.target = bitrate;
+    this.cap = bitrate;
+    this.samples = [];
+    this.prev = null;
+    this.lastChange = performance.now();
   }
 
   stop() {
     this.stopped = true;
-    window.clearInterval(this.timer);
+    this.off?.();
+    this.off = null;
   }
 
-  private async tick() {
+  private async read(report: RTCStatsReport) {
     const sender = this.sender();
     if (sender === undefined || this.stopped) return;
     let sent = 0;
     let lost = 0;
-    const report = await sender.getStats();
     report.forEach((r: any) => {
       if (r.type === 'outbound-rtp' && r.kind === 'video') sent += r.packetsSent ?? 0;
       if (r.type === 'remote-inbound-rtp' && r.kind === 'video') lost += Math.max(0, r.packetsLost ?? 0);

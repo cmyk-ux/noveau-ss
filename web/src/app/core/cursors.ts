@@ -2,7 +2,7 @@
 //
 // Rede: cada pessoa manda a posição do mouse (normalizada 0..1 sobre a imagem da tela que
 // está vendo) pelo canal de dados do LiveKit, no modo "lossy" (como UDP: um pacote perdido
-// não atrasa os próximos), a no máximo ~30 por segundo.
+// não atrasa os próximos), a no máximo ~30 por segundo, só para quem está com a mesma tela em foco.
 //
 // Suavidade: quem recebe não pula para a última posição. Guarda as amostras com o horário de
 // quem mandou e desenha um pouco no passado (INTERP_DELAY_MS), interpolando com uma curva
@@ -181,8 +181,16 @@ export class CursorNet {
 
   private send(msg: Wire) {
     this.lastSent = performance.now();
+    // Só para quem está com esta tela em foco (atributo "watching"): o cursor só aparece no palco.
+    // Antes ia para a sala inteira, 30 vezes por segundo, e o servidor repassava a todos.
+    let to: string[] | undefined;
+    if (msg.k !== 'h') {
+      to = [];
+      for (const p of this.room.remoteParticipants.values()) if (p.attributes?.['watching'] === msg.s) to.push(p.identity);
+      if (to.length === 0) return;
+    }
     void this.room.localParticipant
-      .publishData(enc.encode(JSON.stringify(msg)), { reliable: msg.k !== 'm', topic: TOPIC })
+      .publishData(enc.encode(JSON.stringify(msg)), { reliable: msg.k !== 'm', topic: TOPIC, destinationIdentities: to })
       .catch(() => undefined);
   }
 

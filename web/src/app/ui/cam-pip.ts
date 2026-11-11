@@ -397,7 +397,8 @@ export class CamPip {
       const s = this.share();
       const big = this.big();
       const el = this.video()?.nativeElement;
-      if (el === undefined || s.cam === null) {
+      // Ainda não chegou (ou caiu): solta e espera o "pronto" da sala.
+      if (el === undefined || s.cam === null || !(big ? s.ready : s.cam.ready)) {
         this.release();
         return;
       }

@@ -211,7 +211,9 @@ export class StudioHub {
   private readonly unlock = () => {
     for (const pl of this.players.values()) if (pl.ctx.state === 'suspended') void pl.ctx.resume();
   };
-  private readonly sweep = setInterval(() => {
+  /** Só roda enquanto tem algum player (sem som de estúdio na sala, nada fica acordando a página). */
+  private sweep: ReturnType<typeof setInterval> | undefined;
+  private sweepPlayers() {
     // Quem parou de mandar há 3 s: libera o player. O plugin de DAW continua na lista (parado)
     // enquanto estiver conectado; só sai com o "off" do servidor.
     const now = performance.now();
@@ -225,7 +227,7 @@ export class StudioHub {
       }
     }
     if (changed) this.publish();
-  }, 250);
+  }
 
   constructor(private readonly room: Room) {
     room.on(RoomEvent.DataReceived, this.onData);
@@ -394,6 +396,7 @@ export class StudioHub {
       },
     };
     this.players.set(key, pl);
+    this.sweep ??= setInterval(() => this.sweepPlayers(), 250);
     this.applyAudible(pl);
     void ctx.audioWorklet.addModule(WORKLET_URL).then(() => {
       if (this.players.get(key) !== pl) return;
@@ -417,6 +420,10 @@ export class StudioHub {
     const pl = this.players.get(key);
     if (pl === undefined) return;
     this.players.delete(key);
+    if (this.players.size === 0) {
+      clearInterval(this.sweep);
+      this.sweep = undefined;
+    }
     void pl.ctx.close();
     this.publish();
   }

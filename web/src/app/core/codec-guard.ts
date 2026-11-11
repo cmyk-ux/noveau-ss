@@ -1,5 +1,6 @@
 import { LocalVideoTrack } from 'livekit-client';
 import { Codec, encoderProbes } from './stream';
+import type { StatsFeed } from './stats';
 
 // Vigia do codificador de quem transmite.
 //
@@ -16,9 +17,8 @@ import { Codec, encoderProbes } from './stream';
 // navegador conta depois que começou (getStats: powerEfficientEncoder e encoderImplementation)
 // e, se estiver no processador, trocamos para um codec que a placa codifique de verdade.
 
-const EVERY_MS = 3000;
-/** Duas leituras seguidas no processador (6 s) antes de trocar: evita trocar por um soluço. */
-const STRIKES = 2;
+/** Três leituras seguidas no processador (6 s, uma a cada 2 s) antes de trocar: evita trocar por um soluço. */
+const STRIKES = 3;
 const MAX_SWITCHES = 2;
 
 export interface CodecGuardEvent {
@@ -29,7 +29,7 @@ export interface CodecGuardEvent {
 }
 
 interface SenderInfo {
-  sender: RTCRtpSender;
+  report: () => Promise<RTCStatsReport>;
   codec: Codec;
 }
 
@@ -44,7 +44,7 @@ function codecOfMime(mime: string): Codec | null {
 }
 
 export class CodecGuard {
-  private timer?: number;
+  private off: (() => void) | null = null;
   private strikes = 0;
   private switches = 0;
   private frames = new Map<string, number>();
@@ -55,38 +55,38 @@ export class CodecGuard {
     private readonly codec: () => Codec,
     /** Troca o codec principal (republica a mesma captura). Devolve o codec novo, ou null. */
     private readonly fix: (e: CodecGuardEvent) => Promise<Codec | null>,
+    private readonly feed: StatsFeed,
   ) {}
 
   start() {
     this.stop();
-    this.timer = window.setInterval(() => void this.tick(), EVERY_MS);
+    this.off = this.feed.add((r) => this.read(r));
   }
 
   stop() {
-    window.clearInterval(this.timer);
-    this.timer = undefined;
+    this.off?.();
+    this.off = null;
   }
 
-  private senders(): SenderInfo[] {
-    const out: SenderInfo[] = [];
-    const main = this.track.sender;
-    if (main !== undefined) out.push({ sender: main, codec: this.codec() });
-    // Reservas (backupCodec) ficam num sender separado.
+  /** O principal usa a leitura que já veio; as reservas (backupCodec, raras) leem a sua. */
+  private senders(main: RTCStatsReport): SenderInfo[] {
+    const out: SenderInfo[] = [{ report: () => Promise.resolve(main), codec: this.codec() }];
     const extra = (this.track as unknown as { simulcastCodecs?: Map<string, { sender?: RTCRtpSender }> }).simulcastCodecs;
     for (const [name, info] of extra ?? []) {
       const c = codecOfMime(`video/${name}`);
-      if (info.sender !== undefined && c !== null) out.push({ sender: info.sender, codec: c });
+      const sender = info.sender;
+      if (sender !== undefined && c !== null) out.push({ report: () => sender.getStats(), codec: c });
     }
     return out;
   }
 
-  private async tick() {
+  private async read(main: RTCStatsReport) {
     if (this.busy || this.switches >= MAX_SWITCHES) return;
     let soft: CodecGuardEvent | null = null;
-    for (const { sender, codec } of this.senders()) {
+    for (const { report: get, codec } of this.senders(main)) {
       let report: RTCStatsReport;
       try {
-        report = await sender.getStats();
+        report = await get();
       } catch {
         continue;
       }
