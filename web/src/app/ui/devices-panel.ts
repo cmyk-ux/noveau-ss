@@ -1,7 +1,8 @@
-import { Component, effect, inject, input } from '@angular/core';
+import { Component, computed, effect, inject, input } from '@angular/core';
 import { Invites } from '../core/invites';
 import { IS_MOBILE } from '../core/device';
 import { RoomStore } from '../core/room-store';
+import type { VoiceMode } from '../core/voice';
 import { Icon } from './icon';
 import { PhoneLinkPanel } from './phone-link';
 
@@ -20,6 +21,22 @@ import { PhoneLinkPanel } from './phone-link';
           <span class="led" [class.accent]="store.microphones.isSelected(d.deviceId)"></span>
           <span class="dev">{{ d.label }}</span>
           @if (store.microphones.isSelected(d.deviceId)) { <cen-icon name="check" [size]="14" /> }
+        </button>
+      }
+    }
+    @if (section() !== 'camera' && !isPhoneDevice) {
+      <p class="label">tratamento da voz</p>
+      @for (m of voiceModes; track m.id) {
+        <button type="button" class="item" [class.selected]="store.voiceMode() === m.id" (click)="store.setVoiceMode(m.id)">
+          <span class="led" [class.accent]="store.voiceMode() === m.id"></span>
+          <span class="dev">{{ m.label }}</span>
+          @if (store.voiceMode() === m.id) { <cen-icon name="check" [size]="14" /> }
+        </button>
+      }
+      <p class="hint">{{ voiceHint() }}</p>
+      @if (store.ownMicOn()) {
+        <button class="btn wide" (click)="store.toggleMicMonitor()">
+          {{ store.micMonitor() ? 'Parar de me ouvir' : 'Ouvir meu microfone (use fone)' }}
         </button>
       }
     }
@@ -107,6 +124,13 @@ export class DevicesPanel {
       void this.store.webcams.refresh();
     });
   }
+
+  protected readonly voiceModes: { id: VoiceMode; label: string; hint: string }[] = [
+    { id: 'ia', label: 'Redução de ruído por IA', hint: 'Tira ventilador, teclado e chiado. Gasta menos de 1% do processador e atrasa uns 10 ms.' },
+    { id: 'navegador', label: 'Filtro do navegador', hint: 'O filtro clássico do Chrome: o mais leve, mas deixa passar mais ruído.' },
+    { id: 'cru', label: 'Sem tratamento', hint: 'Som puro e com mais qualidade, para instrumento ou microfone bom. Sem cancelar eco: use fone.' },
+  ];
+  protected readonly voiceHint = computed(() => this.voiceModes.find((m) => m.id === this.store.voiceMode())?.hint ?? '');
 
   pickMic(id: string) {
     void this.store.switchMicrophone(id).then(() => this.store.microphones.refresh());

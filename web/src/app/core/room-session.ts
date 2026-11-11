@@ -1,6 +1,7 @@
 // Tudo que fala direto com o Room do LiveKit: participantes, telas, áudio e dados.
 import {
   ConnectionState,
+  createLocalAudioTrack,
   Participant,
   ParticipantKind,
   RemoteParticipant,
@@ -20,6 +21,7 @@ import { IS_MOBILE } from './device';
 import { installStereoReceive } from './stereo';
 import { ACTIVITY_ATTR, Activity, parseActivity } from './activity';
 import { gpuEncodes, hardwareDecoders } from './stream';
+import { RnnoiseProcessor, rnnoiseSupported, voiceCapture, voicePublish, VoiceMode } from './voice';
 import { DirectMode, DirectTalk, DirectView } from './direct';
 
 // O som do OBS (WHIP) chega sem a marca de estéreo; veja stereo.ts.
@@ -707,6 +709,7 @@ export class RoomSession {
   }
 
   async disconnect() {
+    this.monitorMic(false);
     window.clearInterval(this.guardTimer);
     document.removeEventListener('visibilitychange', this.onVisibility);
     window.clearTimeout(this.awayTimer);
@@ -880,8 +883,18 @@ export class RoomSession {
     this.emit();
   }
 
-  async setMicrophone(on: boolean) {
-    await this.room.localParticipant.setMicrophoneEnabled(on);
+  /** Como o microfone é tratado (veja voice.ts). Vale na próxima vez que ele for publicado. */
+  private voiceMode: VoiceMode = 'ia';
+  private micMonitor: HTMLAudioElement | null = null;
+  /** A redução de ruído por IA não carregou e o microfone foi com o filtro do navegador. */
+  onVoiceFallback: (() => void) | null = null;
+
+  async setMicrophone(on: boolean, mode?: VoiceMode) {
+    if (mode !== undefined) this.voiceMode = mode;
+    const lp = this.room.localParticipant;
+    if (on && lp.getTrackPublication(Track.Source.Microphone)?.track === undefined) await this.publishMic();
+    else await lp.setMicrophoneEnabled(on);
+    if (!on) this.monitorMic(false);
     this.emit();
     // Mesma conta em dois aparelhos: o microfone "passa" para este, e o outro desliga o dele.
     if (on) {
@@ -891,6 +904,75 @@ export class RoomSession {
           .publishData(new TextEncoder().encode('{"t":"mic-moved"}'), { reliable: true, topic: DEVICE_TOPIC, destinationIdentities: others })
           .catch(() => undefined);
     }
+  }
+
+  /**
+   * Cria a trilha do microfone com o tratamento escolhido e publica. Não usa o setMicrophoneEnabled
+   * do LiveKit na primeira vez porque ele não aceita bitrate próprio nem processador de áudio
+   * antes de publicar (a voz sairia crua por um instante).
+   */
+  private async publishMic() {
+    const mode = this.voiceMode;
+    const lp = this.room.localParticipant;
+    const deviceId = this.room.getActiveDevice('audioinput');
+    const track = await createLocalAudioTrack({ ...voiceCapture(mode), ...(deviceId ? { deviceId } : {}) });
+    if (mode === 'ia') {
+      let proc: RnnoiseProcessor | null = null;
+      try {
+        if (!rnnoiseSupported()) throw new Error('sem AudioWorklet');
+        proc = new RnnoiseProcessor();
+        // O LiveKit exige um AudioContext na trilha antes do processador (ao publicar ele troca pelo da sala).
+        track.setAudioContext(proc.context);
+        await track.setProcessor(proc);
+      } catch {
+        await proc?.destroy();
+        await track.restartTrack(voiceCapture('navegador'));
+        this.onVoiceFallback?.();
+      }
+    }
+    try {
+      await lp.publishTrack(track, { ...voicePublish(mode), source: Track.Source.Microphone });
+    } catch (e) {
+      await track.stopProcessor().catch(() => undefined);
+      track.stop();
+      throw e;
+    }
+  }
+
+  /** Troca o tratamento do microfone; se ele estiver no ar, republica na hora. */
+  async setVoiceMode(mode: VoiceMode) {
+    if (mode === this.voiceMode) return;
+    this.voiceMode = mode;
+    const lp = this.room.localParticipant;
+    const pub = lp.getTrackPublication(Track.Source.Microphone);
+    if (pub?.track === undefined) return;
+    const wasOn = !pub.isMuted;
+    this.monitorMic(false);
+    await lp.unpublishTrack(pub.track, true);
+    if (wasOn) await this.publishMic();
+    this.emit();
+  }
+
+  /**
+   * Toca para você o som que está indo para a sala (já com a redução de ruído), para comparar os
+   * modos. Use fone: na caixa de som vira microfonia.
+   */
+  monitorMic(on: boolean): boolean {
+    if (this.micMonitor !== null) {
+      this.micMonitor.pause();
+      this.micMonitor.srcObject = null;
+      this.micMonitor = null;
+    }
+    if (!on) return false;
+    const track = this.room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track?.mediaStreamTrack;
+    if (track === undefined) return false;
+    const el = new Audio();
+    el.srcObject = new MediaStream([track]);
+    const sink = this.room.getActiveDevice('audiooutput');
+    if (sink && 'setSinkId' in el) void (el as any).setSinkId(sink).catch(() => undefined);
+    void el.play().catch(() => undefined);
+    this.micMonitor = el;
+    return true;
   }
 
   /** Chamado quando meu outro aparelho ligou o microfone e este desligou o seu. */

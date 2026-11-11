@@ -22,6 +22,7 @@ import { CamPrefs } from './cam-prefs';
 import { DeviceList, listMicrophones, listWebcams } from './devices';
 import { RoomLink } from './link';
 import { Prefs } from './prefs';
+import type { VoiceMode } from './voice';
 import {
   focusedShare,
   focusedWatchers,
@@ -153,6 +154,9 @@ export class RoomStore {
   readonly sharing = computed(() => isSharingScreen(this._snapshot()));
   readonly webcamOn = computed(() => isWebcamOn(this._snapshot()));
   readonly micOn = computed(() => isMicOn(this._snapshot()));
+  /** O microfone do próprio aparelho (não o do celular ligado por link) está no ar. */
+  readonly ownMicOn = computed(() => this._snapshot().me.mic);
+  readonly voiceMode = computed(() => this.prefs.voiceMode());
   readonly focused = computed(() => focusedShare(this._snapshot()));
   /** Meu celular ligado por link (câmera/microfone dele), ou null. */
   readonly myPhone = computed(() => this._snapshot().me.phone);
@@ -262,11 +266,15 @@ export class RoomStore {
   constructor() {
     // Espelhar o próprio retorno (PC ou celular) vale em todo lugar onde você se vê.
     effect(() => this.session.setMirrorSelf(this.camPrefs.mirror()));
+    void this.session.setVoiceMode(this.prefs.voiceMode());
+    this.session.onVoiceFallback = () =>
+      this.toast.show('A redução de ruído por IA não carregou; o microfone foi com o filtro do navegador.');
     this.session.onMicMoved = (toMobile) =>
       this.toast.show(`Seu microfone passou para o ${toMobile ? 'celular' : 'computador'}. Este aqui ficou mudo.`);
     const offChange = this.session.onChange((s) => {
       if (!s.shares.some((x) => x.isLocal && x.kind === 'screen')) this.forgetShare();
       this._snapshot.set(s);
+      if (!s.me.mic) this._micMonitor.set(false);
       this.hintVolume(s);
     });
     const leave = () => void this.session.disconnect();
@@ -554,10 +562,29 @@ export class RoomStore {
       return;
     }
     try {
-      await this.session.setMicrophone(!this._snapshot().me.mic);
+      await this.session.setMicrophone(!this._snapshot().me.mic, this.prefs.voiceMode());
     } catch {
       this.toast.show('Não foi possível acessar o microfone.');
     }
+  }
+
+  private readonly _micMonitor = signal(false);
+  /** Ouvindo o próprio microfone (como ele chega para os outros). */
+  readonly micMonitor = this._micMonitor.asReadonly();
+
+  async setVoiceMode(mode: VoiceMode) {
+    this.prefs.setVoiceMode(mode);
+    const monitoring = this._micMonitor();
+    try {
+      await this.session.setVoiceMode(mode);
+    } catch {
+      this.toast.show('Não foi possível religar o microfone com o novo ajuste.');
+    }
+    if (monitoring) this._micMonitor.set(this.session.monitorMic(true));
+  }
+
+  toggleMicMonitor() {
+    this._micMonitor.set(this.session.monitorMic(!this._micMonitor()));
   }
 
   async addCamera() {
