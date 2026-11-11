@@ -191,12 +191,13 @@ export class LiveStrip {
 
   /** Telas dos outros (inclusive as escondidas, apagadas). A minha tem a tecla "prévia". */
   protected readonly faces = computed<Face[]>(() => {
-    const people = new Map(this.store.participants().map((p) => [p.identity, p]));
+    // Só as fotos (não muda quando alguém começa a falar).
+    const avatars = this.store.avatars();
     const all = [...this.store.stageShares(), ...this.store.hiddenShares()].filter((s) => !s.isLocal);
     return all.map((s) => ({
       share: s,
       name: s.ownerName,
-      avatar: s.obs || s.isIngress ? null : (people.get(s.ownerIdentity)?.avatar ?? null),
+      avatar: s.obs || s.isIngress ? null : (avatars.get(s.ownerIdentity) ?? null),
       icon: iconFor(s),
       line: activityLine(s.activity),
     }));
@@ -247,7 +248,8 @@ export class LiveStrip {
     effect(() => {
       const p = this.preview();
       const el = this.pv()?.nativeElement;
-      const want = p === null || el === undefined || !this.live() ? null : { id: p.face.share.id, el, track: p.face.share.trackSid };
+      const want =
+        p === null || el === undefined || !this.live() || !p.face.share.ready ? null : { id: p.face.share.id, el, track: p.face.share.trackSid };
       const cur = this.attached;
       if (cur !== null && want !== null && cur.id === want.id && cur.el === want.el && cur.track === want.track) return;
       if (cur !== null) this.store.stopPreview(cur.id, cur.el);

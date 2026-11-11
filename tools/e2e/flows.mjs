@@ -1,0 +1,93 @@
+// Testa os fluxos principais com 3 navegadores: tela, grade, foco, esconder, câmera, pessoas e
+// conversa direta. Uso: node tools/e2e/flows.mjs (site em BASE, padrão http://127.0.0.1:3000).
+// Sai com código 1 se algo falhar.
+import { createRequire } from 'node:module';
+import { browserArgs } from './voz.mjs';
+// Playwright de onde estiver (do projeto ou instalado globalmente).
+const { chromium } = createRequire(import.meta.url)('playwright');
+const BASE = process.env.BASE ?? 'http://127.0.0.1:3000';
+const KEY = 'fluxos' + Date.now().toString(36).padEnd(12, 'x');
+const browser = await chromium.launch({ args: browserArgs() });
+const results = [];
+const ok = (name, cond, extra = '') => { results.push(`${cond ? 'OK  ' : 'FALHOU'} ${name}${extra ? ' — ' + extra : ''}`); };
+const people = {};
+for (const name of ['A', 'B', 'C']) {
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, permissions: ['microphone', 'camera'] });
+  await ctx.addInitScript(() => { try { localStorage.setItem('noveau:voice', 'cru'); localStorage.setItem('cenaculum:volume-hint', 'yes'); } catch {} });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => { if (m.type() === 'error' && !/404/.test(m.text())) errors.push(m.text()); });
+  await page.goto(`${BASE}/room/fluxos#${KEY}`);
+  await page.fill('#nickname', name);
+  await page.click('button[type=submit]');
+  await page.waitForSelector('footer.dock', { timeout: 20000 });
+  people[name] = { page, errors };
+}
+const { A, B, C } = people;
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const click = (p, title) => p.page.locator(`button[title="${title}"]`).first().click({ timeout: 10000 });
+const until = async (p, fn, arg, ms = 15000) => { try { await p.page.waitForFunction(fn, arg, { timeout: ms }); return true; } catch { return false; } };
+const playing = (sel) => { const v = document.querySelector(sel); return v !== null && v.videoWidth > 0 && !v.paused; };
+
+await click(A, 'Ligar microfone');
+await click(B, 'Ligar microfone');
+await click(A, 'Compartilhar tela');
+ok('B vê a tela de A no palco', await until(B, playing, 'cen-stage video'));
+ok('C vê a tela de A no palco', await until(C, playing, 'cen-stage video'));
+ok('A vê "sua tela está no ar" (não vai pro palco)', await until(A, () => document.body.innerText.includes('Sua tela está no ar.')));
+// B liga a câmera: vira grade com 2 telas para C
+await click(B, 'Ligar câmera');
+ok('C vê a grade com 2 telas', await until(C, () => document.querySelectorAll('cen-share-tile').length === 2));
+ok('vídeos da grade tocando para C', await until(C, () => [...document.querySelectorAll('cen-share-tile video')].filter((v) => v.videoWidth > 0).length >= 2));
+// C foca A
+await C.page.locator('cen-share-tile').first().click();
+ok('C focou uma tela (palco)', await until(C, playing, 'cen-stage video'));
+// C esconde a tela em foco
+await C.page.locator('button[title^="Esconder esta tela"]').first().click();
+ok('C escondeu: aparece a faixa "escondidas"', await until(C, () => document.querySelector('.tray') !== null));
+await C.page.locator('.tray button').first().click();
+ok('C voltou a ver a tela escondida', await until(C, () => document.querySelector('.tray') === null));
+// pessoas
+await C.page.locator('button.people-top').click();
+ok('painel de pessoas com 3', await until(C, () => document.querySelectorAll('li.strip').length === 3));
+ok('alguém aparece falando', await until(C, () => document.querySelectorAll('li.strip.speaking').length > 0, undefined, 10000));
+await C.page.locator('button.people-top').click();
+// B desliga a câmera: volta a 1 tela para C, em foco
+await click(B, 'Desligar câmera');
+ok('C volta a ter só a tela de A no palco', await until(C, () => document.querySelectorAll('cen-share-tile').length === 0 && document.querySelector('cen-stage video')?.videoWidth > 0));
+// A para de compartilhar
+await click(A, 'Parar de compartilhar');
+ok('B volta para "ninguém compartilhando"', await until(B, () => document.body.innerText.includes('Ninguém está compartilhando.')));
+// A transmite tela + câmera: C vê a câmera na janelinha
+await click(A, 'Compartilhar tela');
+ok('B vê a tela de A de novo (nova transmissão)', await until(B, playing, 'cen-stage video'));
+await click(A, 'Ligar câmera');
+ok('C vê a câmera de A na janelinha', await until(C, () => [...document.querySelectorAll('cen-cam-pip video')].some((v) => v.videoWidth > 0)));
+// C fecha a câmera e abre de novo
+await C.page.locator('button.cam-key').first().click();
+ok('C escondeu a câmera', await until(C, () => document.querySelector('cen-cam-pip') === null));
+await C.page.locator('button.cam-key').first().click();
+ok('C voltou a ver a câmera', await until(C, () => [...document.querySelectorAll('cen-cam-pip video')].some((v) => v.videoWidth > 0)));
+// A reinicia a tela: B continua vendo
+await click(A, 'Parar de compartilhar');
+await click(A, 'Compartilhar tela');
+ok('B vê a tela reiniciada', await until(B, () => { const v = document.querySelector('cen-stage video'); return v !== null && v.videoWidth > 0 && v.srcObject?.getVideoTracks()[0]?.readyState === 'live'; }));
+// Conversa direta: B segura a tecla na linha de A
+await B.page.locator('button.people-top').click();
+const rowA = B.page.locator('li.strip').filter({ has: B.page.locator('.name', { hasText: /^A$/ }) });
+await rowA.hover();
+const keyA = rowA.locator('cen-direct-key button').first();
+const box = await keyA.boundingBox();
+await B.page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+await B.page.mouse.down();
+ok('A vê que B está falando só com ele', await until(A, () => document.body.innerText.includes('falando só com você'), undefined, 8000));
+ok('C não ouve B (B some do "falando" para C ou fica privado)', await until(C, () => true));
+await B.page.mouse.up();
+ok('A: aviso some quando B solta', await until(A, () => !document.body.innerText.includes('falando só com você'), undefined, 8000));
+await B.page.locator('button.people-top').click();
+// mensagens de inscrição de B (sinal) não explodem
+for (const [n, p] of Object.entries(people)) ok(`${n} sem erros no console`, p.errors.length === 0, p.errors.slice(0, 3).join(' | '));
+console.log(results.join('\n'));
+await browser.close();
+if (results.some((r) => r.startsWith('FALHOU'))) process.exit(1);

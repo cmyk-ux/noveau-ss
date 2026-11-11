@@ -52,7 +52,7 @@ export interface Probe {
   tx: string | null;
   theirQuality: string;
   myQuality: string;
-  report: Promise<RTCStatsReport | null>;
+  report: RTCStatsReport;
 }
 
 interface Sample {
@@ -222,24 +222,20 @@ export class Diagnostics {
   private outbox: DiagEvent[] = [];
   /** Travadas de cada registro que já foram para o servidor (manda só a diferença). */
   private sent = new Map<number, number>();
-  private timer?: number;
   private sender?: number;
 
-  constructor(
-    private readonly probe: () => Probe | null,
-    private readonly token: () => string,
-  ) {}
+  constructor(private readonly token: () => string) {}
 
+  /** Começa a mandar os registros ao servidor. As leituras chegam por feed(), a cada ~2 s. */
   start() {
-    if (this.timer !== undefined) return;
-    this.timer = window.setInterval(() => void this.tick(), TICK_MS);
+    if (this.sender !== undefined) return;
     this.sender = window.setInterval(() => void this.flush(), SEND_EVERY_MS);
   }
 
   stop() {
-    window.clearInterval(this.timer);
     window.clearInterval(this.sender);
-    this.timer = undefined;
+    this.sender = undefined;
+    this.prev = null;
     void this.flush();
   }
 
@@ -252,14 +248,17 @@ export class Diagnostics {
     this._unseen.set(0);
   }
 
-  private async tick() {
-    const p = this.probe();
+  /**
+   * Uma leitura da tela em foco (a sala lê uma vez para a proteção contra travadas e para cá).
+   * null = nada em foco (ou a janela está escondida).
+   */
+  feed(p: Probe | null) {
+    if (this.sender === undefined) return;
     if (p === null) {
       this.prev = null;
       return;
     }
-    const report = await p.report;
-    const s = report === null ? null : read(report);
+    const s = read(p.report);
     if (s === null) return;
     const prev = this.prev?.shareId === p.shareId ? this.prev.s : null;
     if (prev === null) this.history = [];

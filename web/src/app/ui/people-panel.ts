@@ -1,6 +1,7 @@
 import { Component, DestroyRef, computed, inject, signal } from '@angular/core';
 import { Router } from '@angular/router';
-import { DiscordUser, callMembers, createGuestInvite, inviteToRoom, kickGuest, pingCall } from '../core/api';
+import { ApiError, DiscordUser, callMembers, createGuestInvite, inviteToRoom, kickGuest, pingCall } from '../core/api';
+import { same } from '../core/same';
 import { encodeLink, isCallRoom, newKey, randomRoomName } from '../core/link';
 import { IS_MOBILE } from '../core/device';
 import { Prefs } from '../core/prefs';
@@ -193,11 +194,12 @@ import { Activity, Surface, activityLine } from '../core/activity';
     .strip { padding: 7px 2px 8px; border-bottom: 1px solid var(--line); box-shadow: 0 1px 0 rgb(255 255 255 / 0.035); }
     .row { display: flex; align-items: center; gap: 0.55rem; min-height: 30px; }
 
-    /* Foto num rebaixo quadrado; quem fala ganha o contorno verde, sem brilho. */
+    /* Foto num rebaixo quadrado; quem fala ganha o contorno verde, sem brilho. Acende na hora, como
+       LED: com transição, cada "começou/parou de falar" redesenhava o painel por vários quadros. */
     .avatar { flex-shrink: 0; width: 32px; height: 32px; padding: 2px; border-radius: 2px; background: var(--well);
       box-shadow: var(--inset); display: grid; place-items: center; color: var(--muted); }
     .avatar img, .avatar b { width: 28px; height: 28px; border-radius: 1px; object-fit: cover; display: grid; place-items: center;
-      outline: 1px solid transparent; outline-offset: 1px; transition: outline-color 120ms; }
+      outline: 1px solid transparent; outline-offset: 1px; }
     .avatar b { font: 500 0.8rem/1 var(--mono); text-transform: uppercase; color: var(--muted); background: var(--surface-2); }
     .speaking .avatar img, .speaking .avatar b { outline-color: var(--ok); }
 
@@ -330,12 +332,12 @@ export class PeoplePanel {
     return !p.isLocal && p.direct !== null && p.direct.to !== this.me()?.identity;
   }
   nameOf(identity: string): string {
-    return this.store.participants().find((x) => x.identity === identity)?.name ?? 'alguém';
+    return this.store.names().get(identity) ?? 'alguém';
   }
-    directLine(p: PersonView): string | null {
+  directLine(p: PersonView): string | null {
     if (p.direct === null) return null;
     const me = this.me()?.identity;
-    const other = this.store.participants().find((x) => x.identity === p.direct?.to)?.name ?? 'alguém';
+    const other = this.nameOf(p.direct.to);
     if (p.isLocal) {
       const d = this.store.direct();
       if (d?.waiting) return `você · esperando ${other}`;
@@ -451,16 +453,25 @@ export class PeoplePanel {
   constructor() {
     // Em qualquer sala, se a pessoa está logada e numa call, mostra quem está na call
     // (na sala da call para ver quem falta; numa sala privada para convidar).
-    const load = () =>
-      // Convidado (sem Discord) não tem call para olhar.
-      this.store.participants().some((p) => p.isLocal && p.guest)
-        ? Promise.resolve()
-        : callMembers()
-        .then((r) => this.members.set(r.people))
-        .catch(() => this.members.set([]));
+    // Vem do cache do bot (não chama a API do Discord). Para de perguntar quando não tem como dar
+    // certo (Discord desligado no servidor, sem login, convidado) e não pergunta com a aba escondida.
+    let gaveUp = false;
+    const load = async () => {
+      if (gaveUp || document.hidden) return;
+      if (this.store.participants().some((p) => p.isLocal && p.guest)) {
+        gaveUp = true;
+        return;
+      }
+      try {
+        const people = (await callMembers()).people;
+        if (!same(people, this.members())) this.members.set(people);
+      } catch (e) {
+        if (this.members().length > 0) this.members.set([]);
+        if (e instanceof ApiError && (e.status === 404 || e.status === 401)) gaveUp = true;
+      }
+    };
     void load();
-    // Vem do cache do bot (não chama a API do Discord), então dá para olhar a cada 2 s.
-    const timer = setInterval(load, 2000);
+    const timer = setInterval(() => void load(), 3000);
     inject(DestroyRef).onDestroy(() => clearInterval(timer));
   }
 

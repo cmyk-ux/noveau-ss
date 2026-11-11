@@ -35,7 +35,6 @@ import {
   RoomSession,
   RoomSnapshot,
   watchersOf,
-  viewersOf,
 } from './room-session';
 import { ScreenShareCancelledError } from './share';
 import { StudioHub } from './studio';
@@ -47,6 +46,18 @@ import { Channel } from './volume';
 import { ClipRecorder, ClipServer, clipServer, clipsSupported } from './clips';
 import { ShareWatch } from './stats';
 import { Activity, Surface, encodeActivity } from './activity';
+import { same, sameItems } from './same';
+
+const NO_VIEWERS: string[] = [];
+
+const LOSS_STEPS = [0, 0.5, 1, 2, 3, 5, 10, 20];
+/** Perda (0-1) na faixa de baixo, em %. */
+function lossStep(loss: number): number {
+  const pct = loss * 100;
+  let out = 0;
+  for (const s of LOSS_STEPS) if (pct >= s) out = s;
+  return out;
+}
 
 function toggled(set: ReadonlySet<string>, id: string, on: boolean): ReadonlySet<string> {
   if (set.has(id) === on) return set;
@@ -106,7 +117,7 @@ export class RoomStore {
   private codecGuard: CodecGuard | null = null;
   private readonly _upload = signal<UploadState | null>(null);
   /** Diário de problemas da tela que estou assistindo. */
-  readonly diag = new Diagnostics(() => this.session.focusedProbe(), () => this.token);
+  readonly diag = new Diagnostics(() => this.token);
   /** Teto de bitrate por perda na subida (null = sem transmitir). */
   readonly upload = this._upload.asReadonly();
   private readonly _load = signal<LoadState | null>(null);
@@ -128,14 +139,22 @@ export class RoomStore {
   readonly liveSignature = this._liveSignature.asReadonly();
   readonly status = computed(() => this._snapshot().status);
   readonly participants = computed(() => this._snapshot().participants);
+  /** Quantas pessoas (não muda quando alguém começa a falar). */
+  readonly peopleCount = computed(() => this.participants().length);
+  /** Nome de cada pessoa pela identidade (só muda quando alguém entra, sai ou troca de nome). */
+  readonly names = computed(() => new Map(this.participants().map((p) => [p.identity, p.name])), { equal: same });
+  /** Foto do Discord de cada pessoa pela identidade. */
+  readonly avatars = computed(() => new Map(this.participants().map((p) => [p.identity, p.avatar])), { equal: same });
+  /** Quem está vendo cada tela (nomes). */
+  private readonly viewers = computed(() => this._snapshot().viewers);
   /** Minha conversa direta (null = falando com todos). */
   readonly direct = computed(() => this._snapshot().direct);
   /** Quem está falando só comigo agora. */
   readonly whispers = computed(() => this._snapshot().whispers);
   /** Telas à mostra (sem as que você escondeu). */
-  readonly shares = computed(() => this._snapshot().shares.filter((s) => !s.hidden));
+  readonly shares = computed(() => this._snapshot().shares.filter((s) => !s.hidden), { equal: sameItems });
   /** Telas que vão para o palco e a grade: as dos outros. A minha só aparece na prévia da barra de baixo. */
-  readonly stageShares = computed(() => this.shares().filter((s) => !s.isLocal || this._myOnStage()));
+  readonly stageShares = computed(() => this.shares().filter((s) => !s.isLocal || this._myOnStage()), { equal: sameItems });
   /**
    * Minha tela no palco, como era antes. Desligado por padrão (custa processamento para quem
    * transmite); volta a desligar ao recarregar a página.
@@ -149,7 +168,7 @@ export class RoomStore {
   /** A minha tela ou câmera saindo agora (para a prévia da barra de baixo). */
   readonly myShare = computed(() => this._snapshot().shares.find((s) => s.isLocal) ?? null);
   /** Telas que você escondeu, para a faixa de "voltar a ver". */
-  readonly hiddenShares = computed(() => this._snapshot().shares.filter((s) => s.hidden));
+  readonly hiddenShares = computed(() => this._snapshot().shares.filter((s) => s.hidden), { equal: sameItems });
   readonly needsAudioUnlock = computed(() => this._snapshot().needsAudioUnlock);
   readonly sharing = computed(() => isSharingScreen(this._snapshot()));
   readonly webcamOn = computed(() => isWebcamOn(this._snapshot()));
@@ -257,10 +276,11 @@ export class RoomStore {
       this.toast.show(e instanceof Error ? e.message : 'O celular não respondeu.');
     }
   }
-  focusedSender() {
-    return this.session.focusedSender();
-  }
   readonly focusedWatchers = computed(() => focusedWatchers(this._snapshot()));
+  /** O que o gravador de clipes precisa saber para refazer a lista de telas. */
+  private readonly clipKey = computed(
+    () => this.shares().map((s) => `${s.id}:${s.trackSid}:${s.ready}:${s.hasAudio}`).join('|') + '>' + (this.focused()?.id ?? ''),
+  );
   readonly waitingForCamera = computed(() => isWaitingForCamera(this._snapshot(), this._camera() !== null));
 
   constructor() {
@@ -271,6 +291,7 @@ export class RoomStore {
       this.toast.show('A redução de ruído por IA não carregou; o microfone foi com o filtro do navegador.');
     this.session.onMicMoved = (toMobile) =>
       this.toast.show(`Seu microfone passou para o ${toMobile ? 'celular' : 'computador'}. Este aqui ficou mudo.`);
+    this.session.onFocusedStats = (p) => this.diag.feed(p);
     const offChange = this.session.onChange((s) => {
       if (!s.shares.some((x) => x.isLocal && x.kind === 'screen')) this.forgetShare();
       this._snapshot.set(s);
@@ -299,8 +320,9 @@ export class RoomStore {
       const round = (n: number) => Math.round(n * 10) / 10;
       this.session.publishSendHealth(
         encodeSendHealth({
-          // Em degraus de 0,25%, para não reescrever o atributo a cada leitura.
-          l: Math.round(u.loss * 400) / 4,
+          // Em degraus (0; 0,5; 1; 2; 3; 5; 10; 20%): o atributo vai para todo mundo da sala, então só
+          // muda quando a perda muda de faixa, não a cada leitura.
+          l: lossStep(u.loss),
           cap: round(u.cap / 1e6),
           max: round(u.target / 1e6),
           cpu: l?.pressure ?? '',
@@ -319,8 +341,8 @@ export class RoomStore {
     // com ou sem foco. Desligada, os gravadores são encerrados e a memória é solta.
     effect(() => {
       const on = this.clipsOn() && this._join() === 'joined';
-      for (const s of this.shares()) void [s.trackSid, s.hasAudio];
-      void this.focused()?.id;
+      // Só refaz a lista quando muda o que se grava (não a cada mudança da sala).
+      void this.clipKey();
       if (!on) {
         this.clips.stop();
         return;
@@ -328,15 +350,18 @@ export class RoomStore {
       this.clips.watch(() => this.session.clipSources());
     });
     this.studio.setLatency(this.prefs.studioLatency());
-    // Som de estúdio segue a mesma regra do som da tela: na grade todas, em foco só a dela.
+    // Som de estúdio segue a mesma regra do som da tela: na grade todas, em foco só a dela, e
+    // nunca a de uma tela que você escondeu (antes o estúdio de uma tela escondida continuava tocando).
     effect(() => {
       const focus = this.focused()?.id ?? null;
-      this.studio.setAudible((id) => focus === null || focus === id);
+      const hidden = new Set(this.hiddenShares().map((s) => s.id));
+      this.studio.setAudible((id) => !hidden.has(id) && (focus === null || focus === id));
     });
   }
 
-  viewersOf(id: string) {
-    return viewersOf(this._snapshot(), id);
+  /** Nomes de quem está vendo uma tela. A lista só muda quando muda quem assiste. */
+  viewersOf(id: string): string[] {
+    return this.viewers().get(id) ?? NO_VIEWERS;
   }
   watchersOf(id: string) {
     return watchersOf(this._snapshot(), id);
@@ -430,8 +455,8 @@ export class RoomStore {
   toggleMute(channel: Channel, identity: string) {
     this.session.toggleMute(channel, identity);
     if (channel === 'share') {
-      const v = this.session.read().shares.find((s) => s.id === identity)?.volume;
-      if (v !== undefined) this.studio.setVolumeFor(identity, v.muted ? 0 : v.level);
+      const v = this.session.volumeOf('share', identity);
+      this.studio.setVolumeFor(identity, v.muted ? 0 : v.level);
     }
   }
 

@@ -128,7 +128,8 @@ export class ShareTile {
     effect(() => {
       const el = this.camEl()?.nativeElement;
       const s = this.share();
-      const sid = s.cam?.trackSid;
+      // Só com o vídeo da câmera já aqui (a sala avisa quando chega).
+      const sid = s.cam?.ready ? s.cam.trackSid : undefined;
       const cur = this.camAttached;
       if (cur !== null && cur.el === el && cur.sid === sid) return;
       if (cur !== null) this.store.detachCam(s.id, cur.el);
@@ -139,9 +140,13 @@ export class ShareTile {
     });
     effect(() => {
       const s = this.share();
+      // O vídeo ainda não chegou (ou caiu): liga quando a sala avisar que está pronto.
+      if (!s.ready) {
+        this.attached = null;
+        return;
+      }
       // Quando a pessoa reinicia a transmissão, o track muda: liga o novo.
       if (this.attached === s.trackSid) return;
-      // A grade liga o track depois que a sessão habilita o vídeo; tenta de novo se ainda não chegou.
       const el = this.video().nativeElement;
       if (this.store.attachShare(s.id, el)) {
         el.muted = true;

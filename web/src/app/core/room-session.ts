@@ -23,6 +23,11 @@ import { ACTIVITY_ATTR, Activity, parseActivity } from './activity';
 import { gpuEncodes, hardwareDecoders } from './stream';
 import { RnnoiseProcessor, rnnoiseSupported, voiceCapture, voicePublish, VoiceMode } from './voice';
 import { DirectMode, DirectTalk, DirectView } from './direct';
+import { keep, keepList, keepMap } from './same';
+import type { Probe } from './diag';
+
+/** Uma leitura das estatísticas da tela em foco, com o que se sabe de quem transmite. */
+export type FocusedStats = Probe;
 
 // O som do OBS (WHIP) chega sem a marca de estéreo; veja stereo.ts.
 installStereoReceive();
@@ -33,6 +38,8 @@ const GUARD_FREEZES = 3;
 const GUARD_WINDOW_MS = 60_000;
 const GUARD_HOLD_MS = 60_000;
 const GUARD_MAX_MS = 8 * 60_000;
+/** Intervalo mínimo entre duas atualizações do atributo "tx" (saúde do envio). */
+const TX_EVERY_MS = 5000;
 
 export type RoomStatus = 'connecting' | 'connected' | 'reconnecting' | 'disconnected';
 
@@ -49,6 +56,13 @@ export interface ShareView {
   obs: boolean;
   hasAudio: boolean;
   trackSid: string;
+  /**
+   * O vídeo já está aqui para ligar num elemento (inscrito, ou a captura local). A grade e o palco
+   * esperam isso virar true para ligar o vídeo, em vez de tentar a cada mudança da sala.
+   */
+  ready: boolean;
+  /** O que quem transmite conta sobre o envio (atributo "tx"); null = nada (ou é a sua). */
+  senderTx: string | null;
   volume: Volume;
   /** Escondida por você: não recebe o vídeo nem toca o som dela. */
   hidden?: boolean;
@@ -64,6 +78,8 @@ export interface ShareView {
 
 export interface CamView {
   trackSid: string;
+  /** O vídeo da câmera já está aqui para ligar num elemento. */
+  ready: boolean;
   /** Sua própria câmera do PC: espelhada só para você. */
   mirror: boolean;
   /** Vem do celular da pessoa (link de celular como câmera). */
@@ -254,6 +270,12 @@ function isLive(pub: TrackPublication | undefined): pub is TrackPublication {
   return pub !== undefined && !pub.isMuted;
 }
 
+/** O vídeo já chegou (inscrito) ou a captura local está viva: dá para ligar num elemento. */
+function hasVideo(pub: TrackPublication | undefined): boolean {
+  const t = pub?.track?.mediaStreamTrack;
+  return t !== undefined && t.readyState !== 'ended';
+}
+
 function phoneState(pub: TrackPublication | undefined): PhoneTrackState {
   return pub === undefined ? 'none' : pub.isMuted ? 'off' : 'on';
 }
@@ -395,11 +417,59 @@ export class RoomSession {
     this.emit();
   }
 
+  /** Último estado entregue à interface. */
+  private last: RoomSnapshot = emptySnapshot();
+  /** Atualização já marcada para o fim deste instante: 'full' acerta tudo, 'view' só o que aparece. */
+  private queued: 'none' | 'view' | 'full' = 'none';
+
+  /** Algo mudou na sala: acerta tudo (foco, o que baixar, volumes) e avisa a interface. */
   private emit() {
-    this.announce(this.settle());
+    this.update('full');
   }
 
-  private announce(s = this.read()) {
+  /**
+   * Junta as mudanças do mesmo instante numa só: ao entrar alguém ou ligar uma tela o LiveKit dispara
+   * vários eventos seguidos, e antes cada um refazia a sala inteira. 'view' só refaz o que aparece na
+   * tela (ex.: quem está falando), sem mexer em inscrições, volumes ou atributos.
+   */
+  private update(kind: 'view' | 'full') {
+    if (this.queued !== 'none') {
+      if (kind === 'full') this.queued = 'full';
+      return;
+    }
+    this.queued = kind;
+    queueMicrotask(() => {
+      const k = this.queued;
+      this.queued = 'none';
+      this.publish(k === 'full' ? this.settle() : this.describeNow());
+    });
+  }
+
+  private describeNow(): RoomSnapshot {
+    return statusOf(this.room.state) === 'disconnected' ? emptySnapshot() : this.describe(this.live);
+  }
+
+  /**
+   * Entrega o estado novo reaproveitando tudo o que não mudou (mesmos objetos). Assim "fulano
+   * começou a falar" só troca a linha dessa pessoa, e o resto da tela nem é recalculado. Se nada
+   * mudou, ninguém é avisado.
+   */
+  private publish(next: RoomSnapshot) {
+    const prev = this.last;
+    const s: RoomSnapshot = {
+      status: next.status,
+      participants: keepList(prev.participants, next.participants, (p) => p.identity),
+      shares: keepList(prev.shares, next.shares, (x) => x.id),
+      focusedShareId: next.focusedShareId,
+      needsAudioUnlock: next.needsAudioUnlock,
+      viewers: keepMap(prev.viewers, next.viewers),
+      watchers: keepMap(prev.watchers, next.watchers),
+      me: keep(prev.me, next.me),
+      direct: keep(prev.direct, next.direct),
+      whispers: keep(prev.whispers, next.whispers),
+    };
+    if ((Object.keys(s) as (keyof RoomSnapshot)[]).every((k) => s[k] === prev[k])) return;
+    this.last = s;
     for (const fn of this.listeners) fn(s);
   }
 
@@ -413,12 +483,16 @@ export class RoomSession {
       .on(RoomEvent.DataReceived, this.onDeviceData)
       .on(RoomEvent.ConnectionStateChanged, (state) => {
         if (state !== ConnectionState.Connected) {
+          // Ao voltar, os atributos podem ter se perdido (reconexão completa): manda de novo.
           this.publishedWatching = undefined;
           this.refusedWatching = undefined;
+          this.publishedTx = '';
+          this.publishedAct = '';
         }
         changed();
       })
-      .on(RoomEvent.ActiveSpeakersChanged, changed)
+      // Quem fala muda várias vezes por segundo: só refaz o que aparece.
+      .on(RoomEvent.ActiveSpeakersChanged, () => this.update('view'))
       .on(RoomEvent.TrackMuted, changed)
       .on(RoomEvent.TrackUnmuted, (pub, p) => {
         this.micMovedToPhone(pub, p);
@@ -443,7 +517,7 @@ export class RoomSession {
         if (track.kind === Track.Kind.Audio) for (const el of track.detach()) el.remove();
         changed();
       })
-      .on(RoomEvent.AudioPlaybackStatusChanged, changed)
+      .on(RoomEvent.AudioPlaybackStatusChanged, () => this.update('view'))
       .on(RoomEvent.Disconnected, changed);
   }
 
@@ -465,15 +539,45 @@ export class RoomSession {
   // Aí, se a tela tem a cópia menor (simulcast), recebe ela por um tempo e tenta voltar. Travou
   // de novo logo depois de voltar? Segura o dobro do tempo (até 8 min). Só afeta quem trava.
   private readonly guards = new Map<string, { freezes: number; times: number[]; until: number; hold: number; lastEnd: number; width: number; height: number; during: number; useless: number }>();
-  private guardTimer = window.setInterval(() => void this.watchFreezes(), GUARD_TICK_MS);
+  /**
+   * Uma leitura só das estatísticas da tela em foco a cada 2 s, para a proteção contra travadas e
+   * para o diagnóstico. Antes cada um lia a sua (o dobro de getStats).
+   */
+  private statsTimer = window.setInterval(() => void this.readFocused(), GUARD_TICK_MS);
+  /** Quem recebe as leituras da tela em foco (o diagnóstico); null = nada em foco para ler. */
+  onFocusedStats: ((p: FocusedStats | null) => void) | null = null;
 
   private shielded(id: string) {
     const g = this.guards.get(id);
     return g !== undefined && g.until > Date.now();
   }
 
-  private async watchFreezes() {
+  private async readFocused() {
+    this.expireGuards();
     const f = this.focusedLive();
+    if (f === undefined || f.view.isLocal || this.away) {
+      this.onFocusedStats?.(null);
+      return;
+    }
+    const track = f.publication.track as { getRTCStatsReport?: () => Promise<RTCStatsReport | undefined> } | undefined;
+    const report = (await track?.getRTCStatsReport?.().catch(() => undefined)) ?? null;
+    // Sem leitura (ainda chegando) ou o foco mudou no meio: espera a próxima.
+    if (report === null || this.focusedLive()?.view.id !== f.view.id) return;
+    this.watchFreezes(f, report);
+    const owner = this.room.remoteParticipants.get(f.view.ownerIdentity);
+    this.onFocusedStats?.({
+      shareId: f.view.id,
+      owner: f.view.ownerName,
+      tx: owner?.attributes?.['tx'] ?? null,
+      theirQuality: String(owner?.connectionQuality ?? 'unknown'),
+      myQuality: String(this.room.localParticipant.connectionQuality ?? 'unknown'),
+      report,
+    });
+  }
+
+  /** A proteção acabou o tempo: volta ao máximo. Telas que saíram do foco esquecem o histórico. */
+  private expireGuards() {
+    const focused = this.focusedShareId;
     const now = Date.now();
     for (const [id, g] of this.guards) {
       if (g.until !== 0 && g.until <= now) {
@@ -481,18 +585,19 @@ export class RoomSession {
         g.lastEnd = now;
         g.times = [];
         this.followFocus(this.live);
-        this.announce();
+        this.update('view');
       }
       // Muito tempo sem travar: esquece o histórico (próxima proteção volta a ser curta).
       if (g.until === 0 && g.lastEnd !== 0 && now - g.lastEnd > 10 * 60_000) g.hold = GUARD_HOLD_MS;
-      if (f?.view.id !== id && g.until === 0) this.guards.delete(id);
+      if (focused !== id && g.until === 0) this.guards.delete(id);
     }
-    if (f === undefined || f.view.isLocal || this.away) return;
+  }
+
+  private watchFreezes(f: LiveShare, report: RTCStatsReport) {
+    const now = Date.now();
     const pub = f.publication as any;
     const layers: { width?: number; height?: number }[] = pub.trackInfo?.layers ?? [];
     if (!pub.simulcasted || layers.length < 2) return;
-    const report: RTCStatsReport | null = (await pub.track?.getRTCStatsReport?.()) ?? null;
-    if (report === null) return;
     let freezes = -1;
     report.forEach((r: any) => {
       if (r.type === 'inbound-rtp' && r.kind === 'video' && typeof r.freezeCount === 'number') freezes = Math.max(freezes, r.freezeCount);
@@ -529,14 +634,30 @@ export class RoomSession {
     g.times = [];
     g.during = 0;
     this.followFocus(this.live);
-    this.announce();
+    this.update('view');
   }
 
-  /** Quem transmite conta aos outros como está o envio (atributo "tx"), para o diagnóstico deles. */
+  /**
+   * Quem transmite conta aos outros como está o envio (atributo "tx"), para o diagnóstico deles.
+   * O atributo vai para todo mundo da sala e faz cada um refazer a sala: no máximo 1 a cada 5 s
+   * (o último valor sempre chega).
+   */
   private publishedTx = '';
+  private pendingTx: string | null = null;
+  private txTimer?: number;
+  private txAt = 0;
   publishSendHealth(tx: string) {
-    if (tx === this.publishedTx || this.room.state !== ConnectionState.Connected) return;
+    this.pendingTx = tx;
+    if (this.txTimer !== undefined) return;
+    this.txTimer = window.setTimeout(() => this.flushTx(), Math.max(0, this.txAt + TX_EVERY_MS - Date.now()));
+  }
+  private flushTx() {
+    this.txTimer = undefined;
+    const tx = this.pendingTx;
+    this.pendingTx = null;
+    if (tx === null || tx === this.publishedTx || this.room.state !== ConnectionState.Connected) return;
     this.publishedTx = tx;
+    this.txAt = Date.now();
     this.room.localParticipant.setAttributes({ tx }).catch(() => (this.publishedTx = ''));
   }
 
@@ -652,36 +773,6 @@ export class RoomSession {
     this.followFocus(this.live);
   }
 
-  /** Para o diagnóstico: quem transmite a tela em foco, como está a rede dele e a minha. */
-  focusedProbe(): {
-    shareId: string;
-    owner: string;
-    tx: string | null;
-    theirQuality: string;
-    myQuality: string;
-    report: Promise<RTCStatsReport | null>;
-  } | null {
-    const f = this.focusedLive();
-    if (f === undefined || f.view.isLocal || this.away) return null;
-    const owner = this.room.remoteParticipants.get(f.view.ownerIdentity);
-    return {
-      shareId: f.view.id,
-      owner: f.view.ownerName,
-      tx: owner?.attributes?.['tx'] ?? null,
-      theirQuality: String(owner?.connectionQuality ?? 'unknown'),
-      myQuality: String(this.room.localParticipant.connectionQuality ?? 'unknown'),
-      report: Promise.resolve((f.publication.track as any)?.getRTCStatsReport?.() ?? null).catch(() => null),
-    };
-  }
-
-  /** Quem transmite a tela em foco e o que ele conta sobre o envio (atributo "tx"). */
-  focusedSender(): { name: string; tx: string | null } | null {
-    const f = this.focusedLive();
-    if (f === undefined || f.view.isLocal) return null;
-    const owner = this.room.remoteParticipants.get(f.view.ownerIdentity);
-    return { name: f.view.ownerName, tx: owner?.attributes?.['tx'] ?? null };
-  }
-
   /** Para as estatísticas: a proteção contra travadas está disponível/ligada para a tela em foco? */
   shieldStatus(): string {
     const f = this.focusedLive();
@@ -705,12 +796,13 @@ export class RoomSession {
     g.lastEnd = Date.now();
     g.times = [];
     this.followFocus(this.live);
-    this.announce();
+    this.update('view');
   }
 
   async disconnect() {
     this.monitorMic(false);
-    window.clearInterval(this.guardTimer);
+    window.clearInterval(this.statsTimer);
+    window.clearTimeout(this.txTimer);
     document.removeEventListener('visibilitychange', this.onVisibility);
     window.clearTimeout(this.awayTimer);
     await this.room.disconnect();
@@ -804,13 +896,18 @@ export class RoomSession {
   setVolume(channel: Channel, identity: string, level: number) {
     this.mixer.turnTo(channel, identity, level);
     this.mix();
-    this.announce();
+    this.update('view');
   }
 
   toggleMute(channel: Channel, identity: string) {
     this.mixer.toggleMute(channel, identity);
     this.mix();
-    this.announce();
+    this.update('view');
+  }
+
+  /** Volume de alguém (voz ou tela) só para você. */
+  volumeOf(channel: Channel, identity: string): Volume {
+    return this.mixer.read(channel, identity);
   }
 
   async startShare(req: ShareRequest, cb: ShareCallbacks): Promise<ShareResult> {
@@ -1128,12 +1225,14 @@ export class RoomSession {
           obs,
           hasAudio: audio !== undefined && !audio.isMuted,
           trackSid: visual.publication.trackSid,
+          ready: hasVideo(visual.publication),
+          senderTx: isLocal ? null : (p.attributes?.['tx'] ?? null),
           volume: this.mixer.read('share', p.identity),
           mirror: isLocal && this.mirrorSelf && visual.publication === camPub && visual.kind === 'camera',
           cam:
             cam === undefined
               ? null
-              : { trackSid: cam.trackSid, mirror: isLocal && this.mirrorSelf, fromPhone: cam !== ownCam },
+              : { trackSid: cam.trackSid, ready: hasVideo(cam), mirror: isLocal && this.mirrorSelf, fromPhone: cam !== ownCam },
           activity: obs
             ? { surface: 'obs' }
             : visual.kind === 'camera' && !isIngress
@@ -1147,8 +1246,9 @@ export class RoomSession {
     return out;
   }
 
+  /** O último estado entregue à interface. */
   read(): RoomSnapshot {
-    return statusOf(this.room.state) === 'disconnected' ? emptySnapshot() : this.describe(this.collectShares());
+    return this.last;
   }
 
   private settle(): RoomSnapshot {
@@ -1255,7 +1355,8 @@ export class RoomSession {
       if (s.cam instanceof RemoteTrackPublication) {
         const onStage = shown && !this.camClosed.has(s.view.id);
         const self = s.view.isLocal ? this.selfQuality() : null;
-        s.cam.setSubscribed(true);
+        // setSubscribed manda uma mensagem ao servidor toda vez, mesmo sem mudar nada: só se precisar.
+        if (!s.cam.isDesired) s.cam.setSubscribed(true);
         s.cam.setEnabled(onStage || self !== null);
         if (onStage)
           s.cam.setVideoQuality(grid ? VideoQuality.LOW : this.camBig.has(s.view.id) ? VideoQuality.HIGH : VideoQuality.MEDIUM);
@@ -1264,7 +1365,7 @@ export class RoomSession {
       // Minha própria câmera pelo celular também chega pela sala (as do PC são locais).
       if (!(s.publication instanceof RemoteTrackPublication)) continue;
       const pub = s.publication;
-      pub.setSubscribed(true);
+      if (!pub.isDesired) pub.setSubscribed(true);
       if (s.view.isLocal && !shown) {
         const self = this.away ? null : this.selfQuality();
         pub.setEnabled(self !== null);
@@ -1333,11 +1434,16 @@ export class RoomSession {
     }
   }
 
+  /** Volume já aplicado em cada faixa: só mexe no ganho quando muda. */
+  private readonly tuned = new WeakMap<Track, number>();
   private tune(p: RemoteParticipant, source: Track.Source, v: Volume, audible: boolean) {
     const track = p.getTrackPublication(source)?.track;
     if (track === undefined || track.kind !== Track.Kind.Audio) return;
+    const level = !audible || isSilent(v) ? 0 : v.level;
+    if (this.tuned.get(track) === level) return;
+    this.tuned.set(track, level);
     // Com webAudioMix o volume é um ganho do Web Audio, que passa de 100%.
-    (track as any).setVolume(!audible || isSilent(v) ? 0 : v.level);
+    (track as any).setVolume(level);
   }
 
   private collectParticipants(activities: Map<string, Activity>): PersonView[] {

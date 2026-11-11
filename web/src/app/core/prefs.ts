@@ -6,20 +6,52 @@ function oneOf<T>(value: unknown, allowed: T[], fallback: T): T {
   return allowed.includes(value as T) ? (value as T) : fallback;
 }
 
+/**
+ * localStorage que não quebra o site: com os dados do site bloqueados no navegador, só de tocar
+ * nele já dá erro (e o site inteiro parava de abrir). Aí as preferências valem só nesta aba.
+ */
+const ls = (() => {
+  const memory = new Map<string, string>();
+  const get = (k: string): string | null => {
+    try {
+      return localStorage.getItem(k);
+    } catch {
+      return memory.get(k) ?? null;
+    }
+  };
+  const set = (k: string, v: string) => {
+    memory.set(k, v);
+    try {
+      localStorage.setItem(k, v);
+    } catch {
+      /* fica só na memória */
+    }
+  };
+  const remove = (k: string) => {
+    memory.delete(k);
+    try {
+      localStorage.removeItem(k);
+    } catch {
+      /* nada */
+    }
+  };
+  return { getItem: get, setItem: set, removeItem: remove };
+})();
+
 // Preferências guardadas no localStorage com o prefixo "cenaculum:".
 const store = {
   get name(): string {
-    return localStorage.getItem('cenaculum:name') ?? '';
+    return ls.getItem('cenaculum:name') ?? '';
   },
   set name(v: string) {
-    localStorage.setItem('cenaculum:name', v);
+    ls.setItem('cenaculum:name', v);
   },
   get stream(): StreamSettings {
     // Chave nova: os presets antigos (Games/Film/Code) saíram, todo mundo começa no Original a 60fps.
     // stream3: entrou a resolução Auto. Quem vinha do stream2 com "Original" (o único padrão
     // que existia) passa para o Auto; quem tinha escolhido um teto mantém.
-    const fresh = localStorage.getItem('cenaculum:stream3');
-    const raw = fresh ?? localStorage.getItem('cenaculum:stream2');
+    const fresh = ls.getItem('cenaculum:stream3');
+    const raw = fresh ?? ls.getItem('cenaculum:stream2');
     if (raw === null) return DEFAULT_STREAM;
     try {
       const s = JSON.parse(raw);
@@ -34,96 +66,96 @@ const store = {
     }
   },
   set stream(v: StreamSettings) {
-    localStorage.setItem('cenaculum:stream3', JSON.stringify(v));
+    ls.setItem('cenaculum:stream3', JSON.stringify(v));
   },
   get codec(): CodecChoice {
-    return (localStorage.getItem('cenaculum:codec') as CodecChoice) ?? 'auto';
+    return (ls.getItem('cenaculum:codec') as CodecChoice) ?? 'auto';
   },
   set codec(v: CodecChoice) {
-    localStorage.setItem('cenaculum:codec', v);
+    ls.setItem('cenaculum:codec', v);
   },
   get shareAudio(): boolean {
-    return localStorage.getItem('cenaculum:audio') !== 'no';
+    return ls.getItem('cenaculum:audio') !== 'no';
   },
   set shareAudio(v: boolean) {
-    localStorage.setItem('cenaculum:audio', v ? 'yes' : 'no');
+    ls.setItem('cenaculum:audio', v ? 'yes' : 'no');
   },
   // Clipes: desligado por padrão (gravar sempre custava processador e placa de vídeo). Liga na
   // tecla da tesoura na barra de baixo e vale só para você. Chave nova: quem tinha ligado no
   // padrão antigo começa desligado.
   get clips(): boolean {
-    return localStorage.getItem('noveau:clips-on') === 'yes';
+    return ls.getItem('noveau:clips-on') === 'yes';
   },
   set clips(v: boolean) {
-    localStorage.setItem('noveau:clips-on', v ? 'yes' : 'no');
+    ls.setItem('noveau:clips-on', v ? 'yes' : 'no');
   },
   get showStats(): boolean {
-    return localStorage.getItem('cenaculum:stats') === 'yes';
+    return ls.getItem('cenaculum:stats') === 'yes';
   },
   set showStats(v: boolean) {
-    localStorage.setItem('cenaculum:stats', v ? 'yes' : 'no');
+    ls.setItem('cenaculum:stats', v ? 'yes' : 'no');
   },
   // Diagnóstico de travadas: desligado por padrão, para quem não precisa não ver os avisos na tela.
   get diagOn(): boolean {
-    return localStorage.getItem('noveau:diag') === 'on';
+    return ls.getItem('noveau:diag') === 'on';
   },
   set diagOn(v: boolean) {
-    localStorage.setItem('noveau:diag', v ? 'on' : 'off');
+    ls.setItem('noveau:diag', v ? 'on' : 'off');
   },
   get volumeHinted(): boolean {
-    return localStorage.getItem('cenaculum:volume-hint') === 'yes';
+    return ls.getItem('cenaculum:volume-hint') === 'yes';
   },
   set volumeHinted(v: boolean) {
-    localStorage.setItem('cenaculum:volume-hint', v ? 'yes' : 'no');
+    ls.setItem('cenaculum:volume-hint', v ? 'yes' : 'no');
   },
   get adaptToLoad(): boolean {
-    return localStorage.getItem('cenaculum:adapt-load') !== 'no';
+    return ls.getItem('cenaculum:adapt-load') !== 'no';
   },
   set adaptToLoad(v: boolean) {
-    localStorage.setItem('cenaculum:adapt-load', v ? 'yes' : 'no');
+    ls.setItem('cenaculum:adapt-load', v ? 'yes' : 'no');
   },
   get maxCompatibility(): boolean {
-    return localStorage.getItem('cenaculum:compat') !== 'no';
+    return ls.getItem('cenaculum:compat') !== 'no';
   },
   set maxCompatibility(v: boolean) {
-    localStorage.setItem('cenaculum:compat', v ? 'yes' : 'no');
+    ls.setItem('cenaculum:compat', v ? 'yes' : 'no');
   },
   get studio(): 'off' | '16' | '24' {
-    const v = localStorage.getItem('cenaculum:studio');
+    const v = ls.getItem('cenaculum:studio');
     return v === '16' || v === '24' ? v : 'off';
   },
   set studio(v: 'off' | '16' | '24') {
-    localStorage.setItem('cenaculum:studio', v);
+    ls.setItem('cenaculum:studio', v);
   },
   get studioLatency(): number {
-    const v = Number(localStorage.getItem('cenaculum:studio-latency'));
+    const v = Number(ls.getItem('cenaculum:studio-latency'));
     return v >= 0.05 && v <= 2 ? v : 0.25;
   },
   set studioLatency(v: number) {
-    localStorage.setItem('cenaculum:studio-latency', String(v));
+    ls.setItem('cenaculum:studio-latency', String(v));
   },
   // Tratamento do microfone: IA (RNNoise) por padrão.
   get voiceMode(): VoiceMode {
-    return oneOf(localStorage.getItem('noveau:voice'), VOICE_MODES, 'ia');
+    return oneOf(ls.getItem('noveau:voice'), VOICE_MODES, 'ia');
   },
   set voiceMode(v: VoiceMode) {
-    localStorage.setItem('noveau:voice', v);
+    ls.setItem('noveau:voice', v);
   },
   get cursorOn(): boolean {
-    return localStorage.getItem('cenaculum:cursor') === 'yes';
+    return ls.getItem('cenaculum:cursor') === 'yes';
   },
   set cursorOn(v: boolean) {
-    localStorage.setItem('cenaculum:cursor', v ? 'yes' : 'no');
+    ls.setItem('cenaculum:cursor', v ? 'yes' : 'no');
   },
   get cursorColor(): string {
-    const saved = localStorage.getItem('cenaculum:cursor-color');
+    const saved = ls.getItem('cenaculum:cursor-color');
     if (saved !== null && /^#[0-9a-f]{6}$/i.test(saved)) return saved;
     const color = randomCursorColor();
-    localStorage.setItem('cenaculum:cursor-color', color);
+    ls.setItem('cenaculum:cursor-color', color);
     return color;
   },
   set cursorColor(v: string) {
-    localStorage.setItem('cenaculum:cursor-color', v);
+    ls.setItem('cenaculum:cursor-color', v);
   },
 };
 

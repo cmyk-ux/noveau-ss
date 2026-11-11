@@ -1,6 +1,5 @@
 // Leitura de getStats(): o que está sendo enviado/recebido e se o navegador
 // está segurando a qualidade por causa de CPU ou rede.
-import type { LocalTrack } from 'livekit-client';
 
 export type Limitation = 'none' | 'cpu' | 'bandwidth' | 'other';
 
@@ -51,7 +50,8 @@ export function lackOf(l: Limitation): string {
   }
 }
 
-const HEALTH_EVERY_MS = 2500;
+/** Uma leitura de getStats a cada 2 s, repartida por todos os vigias de quem transmite. */
+const FEED_EVERY_MS = 2000;
 const SUSTAINED_SHARE = 0.6;
 const IDLE: ShareHealth = { reason: 'none', width: 0, height: 0, fps: 0, sustained: false };
 type Durations = Record<Limitation, number>;
@@ -96,42 +96,82 @@ function dominant(before: Durations, after: Durations): Limitation {
   return delta[top] / total >= SUSTAINED_SHARE ? top : 'none';
 }
 
+type Reader = (report: RTCStatsReport) => void | Promise<void>;
+
+/**
+ * Lê o getStats de quem transmite uma vez a cada 2 s e entrega a mesma leitura a todos os vigias
+ * (saúde do envio, perda na subida, codificador na placa). Antes cada um tinha o seu relógio e a
+ * sua leitura: três getStats onde uma basta. Para sozinho quando ninguém mais quer leituras.
+ */
+export class StatsFeed {
+  private timer?: number;
+  private busy = false;
+  private readonly readers = new Set<Reader>();
+
+  constructor(private readonly sender: () => RTCRtpSender | undefined) {}
+
+  /** Passa a receber as leituras. Devolve como parar. */
+  add(fn: Reader): () => void {
+    this.readers.add(fn);
+    this.timer ??= window.setInterval(() => void this.tick(), FEED_EVERY_MS);
+    return () => {
+      this.readers.delete(fn);
+      if (this.readers.size > 0) return;
+      window.clearInterval(this.timer);
+      this.timer = undefined;
+    };
+  }
+
+  private async tick() {
+    const sender = this.sender();
+    if (this.busy || sender === undefined) return;
+    this.busy = true;
+    try {
+      const report = await sender.getStats();
+      for (const fn of [...this.readers]) {
+        try {
+          await fn(report);
+        } catch {
+          /* um vigia com problema não derruba os outros */
+        }
+      }
+    } catch {
+      /* conexão fechando */
+    } finally {
+      this.busy = false;
+    }
+  }
+}
+
 /** Vigia o encoder da tela e avisa quando ele passa a reduzir a qualidade de forma sustentada. */
 export class ShareWatch {
-  private readonly track: LocalTrack;
   private readonly onChange: (h: ShareHealth) => void;
-  private timer?: number;
+  private off: (() => void) | null = null;
   private durations: Durations | null = null;
   private last = IDLE;
 
-  constructor(opts: { track: LocalTrack; onChange: (h: ShareHealth) => void }) {
-    this.track = opts.track;
+  constructor(
+    opts: { onChange: (h: ShareHealth) => void },
+    private readonly feed: StatsFeed,
+  ) {
     this.onChange = opts.onChange;
   }
 
   start() {
     this.stop();
-    this.timer = window.setInterval(() => void this.tick(), HEALTH_EVERY_MS);
+    this.off = this.feed.add((r) => this.read(r));
   }
 
   stop() {
-    window.clearInterval(this.timer);
-    this.timer = undefined;
+    this.off?.();
+    this.off = null;
   }
 
   health() {
     return this.last;
   }
 
-  private async tick() {
-    const sender = this.track.sender;
-    if (sender === undefined) return;
-    let report: RTCStatsReport;
-    try {
-      report = await sender.getStats();
-    } catch {
-      return;
-    }
+  private read(report: RTCStatsReport) {
     const s = largestOutboundVideo(report);
     if (s === null) return;
     const now = durationsOf(s);

@@ -75,13 +75,13 @@ import {
     @if (prefs.shareAudio()) {
       <p class="label">qualidade do som</p>
       <div class="chips">
-        <button type="button" class="chip" [class.lit]="prefs.studio() === 'off'" (click)="prefs.setStudio('off')">Opus (leve)</button>
+        <button type="button" class="chip" [class.lit]="prefs.studio() === 'off'" (click)="prefs.setStudio('off')">Opus 192k</button>
         <button type="button" class="chip" [class.lit]="prefs.studio() === '16'" (click)="prefs.setStudio('16')">Estúdio 16-bit</button>
         <button type="button" class="chip" [class.lit]="prefs.studio() === '24'" (click)="prefs.setStudio('24')">Estúdio 24-bit</button>
       </div>
       <p class="hint">
         @if (prefs.studio() === 'off') {
-          Opus comprime o som (bom para voz, jogo e vídeo).
+          Opus estéreo a 192 kbps: praticamente igual ao original em jogo, vídeo e música, com pouco upload.
         } @else {
           Sem compressão nenhuma: o som sai exatamente como o navegador está tocando, a 48 kHz.
           Gasta {{ prefs.studio() === '16' ? '1,5' : '2,3' }} Mbps de upload por pessoa assistindo e chega com

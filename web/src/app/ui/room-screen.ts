@@ -1,4 +1,4 @@
-import { parseSendHealth } from '../core/diag';
+import { DiagEvent, parseSendHealth } from '../core/diag';
 import { Component, DestroyRef, ElementRef, computed, effect, inject, input, output, signal, viewChild } from '@angular/core';
 import { IS_IOS, IS_MOBILE } from '../core/device';
 import { Prefs } from '../core/prefs';
@@ -22,19 +22,14 @@ import { CamPip } from './cam-pip';
 import { SelfCam } from './self-cam';
 import { ClipItem } from '../core/clips';
 import { LiveStrip } from './live-strip';
+import { Countdown, Timecode } from './ticking';
+import { same } from '../core/same';
 
 type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
 
-/** Tempo desde que entrou, como o contador de uma fita: 00:12:34. */
-function timecode(ms: number): string {
-  const t = Math.max(0, Math.floor(ms / 1000));
-  const two = (n: number) => String(n).padStart(2, '0');
-  return `${two(Math.floor(t / 3600))}:${two(Math.floor((t % 3600) / 60))}:${two(t % 60)}`;
-}
-
 @Component({
   selector: 'cen-room-screen',
-  imports: [Icon, Stage, ShareTile, VolumeSlider, StatsPanel, PeoplePanel, StreamPanel, DevicesPanel, DawPanel, ObsPanel, CamPip, SelfCam, LiveStrip],
+  imports: [Icon, Stage, ShareTile, VolumeSlider, StatsPanel, PeoplePanel, StreamPanel, DevicesPanel, DawPanel, ObsPanel, CamPip, SelfCam, LiveStrip, Timecode, Countdown],
   host: {
     '(document:fullscreenchange)': 'isFullscreen.set(fullscreenActive())',
     '(document:keydown.escape)': 'closeAll()',
@@ -53,7 +48,7 @@ function timecode(ms: number): string {
               <span class="roomname">{{ label() }}</span>
               <span class="kind">{{ callRoom ? 'sala da call' : 'sala privada · clique p/ convidar' }}</span>
             </span>
-            <span class="lcd" [title]="statusText()"><span class="led" [class]="ledClass()"></span>{{ clock() }}</span>
+            <span class="lcd" [title]="statusText()"><span class="led" [class]="ledClass()"></span><cen-timecode [since]="joinedAt" /></span>
           </div>
         </div>
 
@@ -64,8 +59,8 @@ function timecode(ms: number): string {
             @if (stage()?.measured(); as m) { <span class="tag mono">{{ m }}</span> }
             @if (senderNote(); as n) { <span class="tag warn sender-note" [title]="n.title">{{ n.text }}</span> }
             @if (f.hasAudio) { <span class="tag">com som</span> }
-            @for (st of store.studio.streams(); track st.key) {
-              <span class="tag accent" title="Som sem compressão, abra 'pessoas' para ajustar">{{ st.source === 'daw' ? 'DAW de ' + st.name : 'estúdio ' + st.bits + '-bit' }}</span>
+            @for (t of studioTags(); track t.key) {
+              <span class="tag accent" title="Som sem compressão, abra 'pessoas' para ajustar">{{ t.text }}</span>
             }
             @if (adaptedBadge(); as a) { <span class="tag warn" [title]="a.title">{{ a.text }}</span> }
             @if (f.isLocal && store.upload(); as u) {
@@ -80,7 +75,7 @@ function timecode(ms: number): string {
                 {{ sh.height ? sh.height + 'p' : 'menor' }} por travadas · voltar ao máximo
               </button>
             }
-            <span class="eye mono" [title]="viewersTitle(f.id)"><cen-icon name="eye" [size]="14" /> {{ store.viewersOf(f.id).length }}</span>
+            <span class="eye mono" [title]="focusedViewersTitle()"><cen-icon name="eye" [size]="14" /> {{ focusedViewers().length }}</span>
           </div>
         }
         <span class="spacer"></span>
@@ -144,7 +139,7 @@ function timecode(ms: number): string {
           }
         </div>
         <button type="button" class="btn small people-top" [class.on]="peopleOpen()" title="Pessoas e volumes" (click)="togglePeople()">
-          <cen-icon name="people" [size]="15" /> <span class="mono">{{ store.participants().length }}</span>
+          <cen-icon name="people" [size]="15" /> <span class="mono">{{ store.peopleCount() }}</span>
         </button>
         @if (!callRoom) {
           <button type="button" class="btn small invite-top" title="Copiar o convite" (click)="copyInvite()"><cen-icon name="link" [size]="15" /> <span class="wide-only">convidar</span></button>
@@ -369,7 +364,7 @@ function timecode(ms: number): string {
                     <a class="btn small" [class.primary]="!c.downloaded" [class.got]="c.downloaded" [href]="c.url" rel="noopener"
                       [title]="c.downloaded ? 'Você já baixou este clipe. Clique para baixar de novo.' : 'Baixar o MP4'"
                       (click)="store.clips.markDownloaded(c)"><cen-icon [name]="c.downloaded ? 'check' : 'download'" [size]="15" /> {{ c.downloaded ? 'baixado' : 'baixar' }}</a>
-                    <span class="mono countdown" title="Depois disso o clipe é apagado">{{ left(c.expiresAt) }}</span>
+                    @if (c.expiresAt !== undefined) { <span class="mono countdown" title="Depois disso o clipe é apagado"><cen-countdown [until]="c.expiresAt" /></span> }
                     <button class="btn small" title="Apagar agora do servidor" (click)="deleteClip(c)"><cen-icon name="trash" [size]="14" /> apagar</button>
                   </div>
                 }
@@ -467,7 +462,7 @@ function timecode(ms: number): string {
           <div class="people-head">
             <img class="pixel" src="logo.svg" alt="" width="20" height="20" />
             <h2>Pessoas</h2>
-            <span class="tag" title="Na sala">{{ store.participants().length }}</span>
+            <span class="tag" title="Na sala">{{ store.peopleCount() }}</span>
             <button class="close" title="Fechar" (click)="peopleOpen.set(false)"><cen-icon name="close" [size]="16" /></button>
           </div>
           <div class="ribbon" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></div>
@@ -731,7 +726,7 @@ export class RoomScreen {
   private readonly invites = inject(Invites);
 
   protected personName(identity: string) {
-    return this.store.participants().find((p) => p.identity === identity)?.name ?? 'alguém';
+    return this.store.names().get(identity) ?? 'alguém';
   }
 
   /** Quem está falando só comigo (segurando) ou querendo uma conversa a dois enquanto estou em outra. */
@@ -749,22 +744,23 @@ export class RoomScreen {
   protected readonly menu = signal<Menu | null>(null);
   /** Algum plugin de DAW tocando na sala: a tecla do plugin fica acesa. */
   protected readonly dawPlaying = computed(() => this.store.studio.streams().some((s) => s.source === 'daw'));
+  /** Só o nome de cada som de estúdio (o buffer dele muda 2x por segundo e não aparece aqui). */
+  protected readonly studioTags = computed(
+    () => this.store.studio.streams().map((st) => ({ key: st.key, text: st.source === 'daw' ? `DAW de ${st.name}` : `estúdio ${st.bits}-bit` })),
+    { equal: same },
+  );
   protected readonly obsLive = computed(() => this.store.shares().some((s) => s.obs));
   protected readonly diagOpen = signal(false);
   /** A travada mais recente, por 8 s, numa faixa sobre a tela. Só com a chave do diagnóstico ligada. */
-  protected readonly freshIssue = computed(() => {
-    if (!this.prefs.diagOn()) return null;
-    const e = this.store.diag.events()[0];
-    return e !== undefined && this.now() - e.at < 8000 ? e : null;
-  });
+  protected readonly freshIssue = computed(() => (this.prefs.diagOn() ? this.issue() : null));
+  /** A travada mais recente, enquanto for recente (some sozinha em 8 s). */
+  private readonly issue = signal<DiagEvent | null>(null);
   protected readonly isMobile = IS_MOBILE;
   protected readonly isIOS = IS_IOS;
   protected readonly controls = signal(false);
   protected readonly portrait = signal(window.innerHeight > window.innerWidth);
   protected readonly peopleOpen = signal(false);
-  private readonly joinedAt = Date.now();
-  private readonly now = signal(Date.now());
-  protected readonly clock = computed(() => timecode(this.now() - this.joinedAt));
+  protected readonly joinedAt = Date.now();
   protected readonly ledClass = computed(() => {
     const s = this.store.status();
     return 'led ' + (s === 'connected' ? 'ok' : s === 'disconnected' ? 'bad' : 'warn');
@@ -785,10 +781,14 @@ export class RoomScreen {
     return n <= 2 ? n : n <= 4 ? 2 : 3;
   });
 
-  viewersTitle(id: string) {
-    const names = this.store.viewersOf(id);
+  protected readonly focusedViewers = computed(() => {
+    const f = this.store.focused();
+    return f === null ? [] : this.store.viewersOf(f.id);
+  });
+  protected readonly focusedViewersTitle = computed(() => {
+    const names = this.focusedViewers();
     return names.length === 0 ? 'Ninguém assistindo' : `Assistindo: ${names.join(', ')}`;
-  }
+  });
 
   shareById(id: string) {
     return this.store.shares().find((s) => s.id === id) ?? null;
@@ -857,7 +857,15 @@ export class RoomScreen {
   );
 
   constructor() {
-    const t = window.setInterval(() => this.now.set(Date.now()), 1000);
+    // Travada nova: aparece na faixa por 8 s.
+    let issueTimer: number | undefined;
+    effect(() => {
+      const e = this.store.diag.events()[0];
+      window.clearTimeout(issueTimer);
+      const left = e === undefined ? 0 : e.at + 8000 - Date.now();
+      this.issue.set(left > 0 ? e : null);
+      if (left > 0) issueTimer = window.setTimeout(() => this.issue.set(null), left);
+    });
     const onResize = () => this.portrait.set(window.innerHeight > window.innerWidth);
     const onVisible = () => {
       if (!document.hidden && this.store.focused() !== null) void this.keepAwake();
@@ -873,7 +881,7 @@ export class RoomScreen {
       }
     });
     inject(DestroyRef).onDestroy(() => {
-      window.clearInterval(t);
+      window.clearTimeout(issueTimer);
       window.removeEventListener('resize', onResize);
       document.removeEventListener('visibilitychange', onVisible);
       void this.wakeLock?.release().catch(() => undefined);
@@ -901,11 +909,11 @@ export class RoomScreen {
    * e o navegador dele reduziu sozinho. Sem limitação (inclusive quando ele mesmo escolheu menos),
    * não aparece nada.
    */
-  senderNote(): { text: string; title: string } | null {
-    this.now();
-    const s = this.store.focusedSender();
-    const tx = s === null ? null : parseSendHealth(s.tx);
-    if (s === null || tx === null) return null;
+  protected readonly senderNote = computed((): { text: string; title: string } | null => {
+    const f = this.store.focused();
+    const tx = f === null || f.isLocal ? null : parseSendHealth(f.senderTx);
+    if (f === null || tx === null) return null;
+    const s = { name: f.ownerName };
     if (tx.lim === 'cpu' || tx.cpu === 'serious' || tx.cpu === 'critical') {
       return {
         text: `PC de ${s.name} no limite`,
@@ -919,7 +927,7 @@ export class RoomScreen {
       };
     }
     return null;
-  }
+  });
 
   causeLabel(c: string) {
     switch (c) {
@@ -1011,10 +1019,6 @@ export class RoomScreen {
   mmss(seconds: number) {
     const s = Math.max(0, Math.floor(seconds));
     return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
-  }
-
-  left(expiresAt: number | undefined) {
-    return expiresAt === undefined ? '' : this.mmss((expiresAt - this.now()) / 1000);
   }
 
   hiddenName(s: ShareView) {

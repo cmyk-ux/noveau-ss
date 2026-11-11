@@ -96,6 +96,11 @@ export class Stage {
         return;
       }
       const big = this.camBig() && f.cam !== null;
+      // O vídeo ainda não chegou (ou caiu): liga quando a sala avisar que está pronto.
+      if (!(big ? f.cam!.ready : f.ready)) {
+        this.attachedTrackSid = null;
+        return;
+      }
       const key = big ? `cam:${f.cam!.trackSid}` : f.trackSid;
       if (this.attachedTrackSid === key) return;
       // Mesma pessoa, só trocou câmera e tela de lugar: efeito de troca de canal.

@@ -1,6 +1,5 @@
 // Publicar a tela (e o som dela) no LiveKit com as configurações escolhidas.
 import {
-  AudioPresets,
   BackupCodecPolicy,
   LocalAudioTrack,
   LocalTrack,
@@ -13,7 +12,7 @@ import {
 import { Codec, CodecChoice, cappedBitrate, encoderProbes, hardwareOnly, parseDecoders, pickCodec, planSize, probeEncoders, StreamPlan, Size } from './stream';
 import { LoadGovernor, LoadState } from './load';
 import { UploadGuard, UploadState } from './upload-guard';
-import { ShareHealth, ShareWatch, sourceAudioLevel } from './stats';
+import { ShareHealth, ShareWatch, StatsFeed, sourceAudioLevel } from './stats';
 import { StudioBits, StudioSender } from './studio';
 import { CodecGuard } from './codec-guard';
 
@@ -180,10 +179,17 @@ function videoPublishOptions(req: ShareRequest, codec: Codec, maxBitrate: number
   } as TrackPublishOptions;
 }
 
-/** Som da tela: Opus estéreo, sem DTX, com RED. É aqui que entra o "modo estúdio" depois. */
+/**
+ * Som da tela: Opus estéreo a 192 kbps, sem DTX, com RED. Antes ia a 64 kbps (o "musicStereo" do
+ * LiveKit, 32 kbps por canal), abaixo do que o Opus precisa para música: a Xiph diz que 128 kbps em
+ * estéreo já é "praticamente transparente" (wiki.xiph.org/Opus_Recommended_Settings); 192 dá folga
+ * para música densa e jogo. Perto do vídeo da tela (muitos Mbps), é quase nada a mais de internet.
+ * O "modo estúdio" (sem compressão) continua para quem precisa do som exato.
+ */
+export const SCREEN_AUDIO_BITRATE = 192_000;
 export const SCREEN_AUDIO_PUBLISH: TrackPublishOptions = {
   source: Track.Source.ScreenShareAudio,
-  audioPreset: { ...AudioPresets.musicStereo, priority: 'high' },
+  audioPreset: { maxBitrate: SCREEN_AUDIO_BITRATE, priority: 'high' },
   dtx: false,
   red: true,
   forceStereo: true,
@@ -287,14 +293,17 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
       if (silent) cb.onSilentAudio();
     });
   }
-  const watch = new ShareWatch({ track: video, onChange: cb.onHealth });
+  // Uma leitura de estatísticas a cada 2 s para os três vigias (saúde, perda na subida, codificador).
+  // Depois de trocar de codec o sender muda: a leitura segue o atual.
+  const feed = new StatsFeed(() => video.sender);
+  const watch = new ShareWatch({ onChange: cb.onHealth }, feed);
   watch.start();
   let governor: LoadGovernor | null = null;
   if (req.adaptToLoad) {
     governor = new LoadGovernor(video.mediaStreamTrack, resolution, req.plan.frameRate, cb.onLoad);
     governor.start();
   }
-  const upload = new UploadGuard(() => (video as any).sender as RTCRtpSender | undefined, bitrate, cb.onUpload);
+  const upload = new UploadGuard(() => video.sender, bitrate, cb.onUpload, feed);
   upload.start();
   // Vigia: se o navegador estiver codificando no processador (OpenH264, libvpx, libaom), republica a
   // mesma captura com um codec que a placa codifica. Quem assiste vê um piscar; o jogo volta a ter FPS.
@@ -318,9 +327,12 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
       await room.localParticipant.publishTrack(video, videoPublishOptions(req, next, br, resolution));
       if (next === 'vp8') await addTemporalLayers(video);
       current = next;
+      // O teto de perda na subida passa a contar do máximo do codec novo.
+      upload.retarget(br);
       cb.onCodecSwitch?.({ from: e.from, encoder: e.encoder, to: next, bitrate: br });
       return next;
     },
+    feed,
   );
   guard.start();
   return { codec, bitrate, resolution, audio: audioState, watch, surface, governor, upload, guard, gpu: probes[codec]?.gpu === true };

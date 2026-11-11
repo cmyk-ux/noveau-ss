@@ -80,10 +80,20 @@ export interface CallMembers {
   people: DiscordUser[];
 }
 
+/** Erro da API com o código HTTP (404 = recurso desligado no servidor, 401 = sem login). */
+export class ApiError extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+  }
+}
+
 export async function callMembers(): Promise<CallMembers> {
   const res = await fetch('/api/discord/members', { cache: 'no-store' });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error ?? 'Não foi possível ver quem está na call.');
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new ApiError(res.status, data.error ?? 'Não foi possível ver quem está na call.');
   return data;
 }
 

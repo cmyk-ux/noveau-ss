@@ -1,0 +1,119 @@
+# Arquitetura e regras para o app não pesar
+
+Revisão completa de 11/11/2026. Cada recurso novo (conversa direta, celular, OBS, clipes, plugin de DAW,
+diagnóstico) tinha entrado com o seu próprio relógio, a sua própria leitura de estatísticas e o seu
+próprio jeito de reagir à sala. Somados, eles se atropelavam: um "fulano começou a falar" fazia cada
+pessoa redesenhar a sala inteira e mandar mensagens ao servidor do LiveKit pedindo de novo as telas que
+já estava recebendo. Este documento descreve a base que ficou e as regras para ela continuar leve.
+
+## O caminho do estado (um só)
+
+```
+LiveKit (Room) ──eventos──► RoomSession ──RoomSnapshot──► RoomStore (signals) ──► telas (Angular)
+                              │  core/room-session.ts        core/room-store.ts      ui/*.ts
+                              │
+                              ├─ settle(): foco, o que baixar e em que qualidade, volumes, atributo "watching"
+                              └─ describe(): o que aparece (pessoas, telas, quem assiste, conversa direta)
+```
+
+- **Só a `RoomSession` fala com o `Room` do LiveKit.** A interface nunca lê o `Room` direto para
+  saber o estado; ela lê os signals do `RoomStore`. (Exceções contidas: cursores e som de estúdio, que
+  usam o canal de dados e têm o seu próprio estado.)
+- **Um estado por instante.** Os eventos do LiveKit chegam em rajadas (entrar alguém dispara 4-6
+  eventos seguidos). Cada evento só marca `update('full')` ou `update('view')`; o estado é montado
+  uma vez, no fim do instante (microtask).
+  - `'full'`: refaz tudo (foco, inscrições, volumes, atributos). Para entrar/sair, publicar, atributos.
+  - `'view'`: só o que aparece. Para o que muda muito e não mexe em mais nada: quem está falando,
+    volume, proteção contra travadas.
+- **O que não mudou continua sendo o mesmo objeto** (`core/same.ts`). Quando alguém começa a falar, só
+  o `PersonView` dessa pessoa é novo; a lista de telas, os nomes, quem assiste, tudo continua igual
+  (`===`), então nenhum `computed` nem nenhuma tela que dependa disso roda de novo. Se nada mudou,
+  ninguém é avisado.
+- Os `computed` de lista no `RoomStore` usam `{ equal: sameItems }`; mapas derivados (nomes, fotos)
+  usam `{ equal: same }`.
+
+## Regras
+
+1. **Nada de relógio para descobrir o que mudou na sala.** Se uma tela precisa reagir a algo da sala e
+   esse algo não está no estado, ponha no `RoomSnapshot`. Exemplos: `ShareView.ready` (o vídeo chegou
+   e dá para ligar no elemento) e `ShareView.senderTx` (o que quem transmite conta do envio). Antes o
+   palco e a grade "tentavam de novo" a cada mudança da sala, e uma barra relia o atributo a cada
+   segundo.
+2. **Vídeo só liga no elemento quando `ready` for true.** Caiu (`ready` false), solta e espera.
+3. **Chamadas do LiveKit que mandam mensagem para o servidor só quando algo muda de verdade.**
+   - `setSubscribed()` manda uma mensagem toda vez, mesmo sem mudar nada: só chame se `!pub.isDesired`.
+     (`setEnabled` e `setVideoQuality` já ignoram valor repetido.) Era a principal mensagem que cada
+     pessoa mandava ao servidor: ~2,5 por segundo por pessoa, uma a cada troca de quem fala.
+   - `setVolume()` de áudio: só quando o nível muda (`tuned` em `room-session.ts`).
+   - `setAttributes()` vai para a sala inteira e faz todo mundo refazer o estado. Valores em degraus
+     (ex.: perda em 0; 0,5; 1; 2; 3; 5; 10; 20%) e no máximo uma escrita a cada 5 s (`tx`).
+   - `publishData()` sem `destinationIdentities` vai para a sala inteira. Mande só para quem precisa
+     (os cursores vão só para quem está com a mesma tela em foco).
+4. **Uma leitura de estatísticas por lado.**
+   - Quem transmite: `StatsFeed` (`core/stats.ts`) lê o `getStats()` da tela uma vez a cada 2 s e
+     entrega a mesma leitura para a saúde do envio (`ShareWatch`), a perda na subida (`UploadGuard`) e o
+     vigia do codificador (`CodecGuard`). Vigia novo: `feed.add(...)`, nunca outro `setInterval` com
+     `getStats()`.
+   - Quem assiste: `RoomSession.readFocused()` lê a tela em foco a cada 2 s, usa para a proteção contra
+     travadas e entrega em `onFocusedStats` (o diagnóstico recebe por aí).
+   - O painel de números ao vivo (`stats-panel`) só lê enquanto está aberto.
+5. **Relógio de tela em componente próprio** (`ui/ticking.ts`: `cen-timecode`, `cen-countdown`). Um
+   componente grande que lê um relógio é conferido inteiro a cada tique.
+6. **Nada de `transition` em algo que muda várias vezes por segundo.** Medido: a transição de 120 ms
+   do contorno de "falando" fazia o painel de pessoas ser redesenhado por vários quadros a cada troca
+   e custava ~40% de todo o trabalho da página com o painel aberto. LED acende na hora.
+7. **Template sem busca por linha.** Nada de `participants().find(...)` dentro de `@for`; use os mapas
+   do store (`store.names()`, `store.avatars()`).
+8. **Pergunta ao servidor que não tem como dar certo, para.** A lista da call do Discord para de ser
+   pedida quando o servidor diz que o Discord está desligado (404) ou que não tem login (401), e não é
+   pedida com a aba escondida.
+9. **Timer que só faz sentido com algo ligado, só existe enquanto esse algo existe** (ex.: a varredura
+   do som de estúdio só roda enquanto tem player tocando).
+10. **Recursos que mexem na mesma coisa precisam saber um do outro.** Casos que estavam colidindo e
+    foram acertados:
+    - Som de estúdio de uma tela escondida continuava tocando (o som normal já parava). Agora segue a
+      mesma regra: escondida não toca.
+    - Depois que o vigia do codificador trocava de codec, a proteção de perda na subida continuava
+      contando do teto do codec antigo. Agora recomeça do teto novo (`UploadGuard.retarget`).
+
+## Atributos dos participantes
+
+Atributos vão para todo mundo da sala. Antes de criar um, veja se já não existe e quantas vezes ele
+vai mudar.
+
+| Atributo | Quem escreve | Quando muda |
+| --- | --- | --- |
+| `watching` | cada pessoa (`room-session.ts`) | troca de foco/grade |
+| `tx` | quem transmite (`room-store.ts` → `publishSendHealth`) | perda/teto/CPU mudam de faixa; no máximo 1 a cada 5 s |
+| `act` | quem transmite (`activity.ts`) | começa/para de transmitir, troca de janela |
+| `hwdec` | cada pessoa, ao entrar | uma vez |
+| `direct` | cada pessoa (`direct.ts`) | conversa direta começa/acaba |
+| `discordId`, `avatar`, `guest`, `invitedBy`, `device` | servidor, no token | nunca |
+| `phoneOf`, `phoneOfDiscord`, `ctl` | servidor (`phone.mjs`) | celular liga/desliga câmera ou microfone |
+| `obs`, `obsName`, `obsOf` | servidor (`obs.mjs`), no token | nunca |
+
+## Servidor (VPS de 1 núcleo e ~1 GB, dividida com outros serviços)
+
+- **Site compilado:** lido uma vez na partida (`indexStatic` em `server/server.mjs`). Arquivos com hash
+  no nome vão com `cache-control: immutable` por 1 ano; o resto com ETag e `304`. O build grava
+  versões `.br`/`.gz` ao lado de cada arquivo (`web/scripts/precompress.mjs`), e o servidor manda a
+  pronta; o Caddy não comprime de novo o que já chega com `Content-Encoding`. Antes cada visita baixava
+  ~800 kB e o Caddy comprimia tudo no processador da VPS.
+- **Memória do Node:** `--optimize-for-size --max-semi-space-size=2` no `CMD` do Dockerfile. Medido com
+  o Discord ligado: 118 MB → 87 MB.
+- **Status "ao vivo" do Discord:** a cada 5 s, uma consulta `ListRooms` diz quais calls têm alguém no
+  site; só essas consultam quem está transmitindo.
+
+## Como medir e testar
+
+Precisa do `livekit-server --dev --node-ip 127.0.0.1`, da API servindo o site compilado
+(`STATIC_DIR=web/dist/noveau-ss/browser node server/server.mjs`, porta 3001 por padrão) e do Playwright
+com o Chromium.
+
+- `BASE=http://127.0.0.1:3001 node tools/e2e/flows.mjs`: 3 navegadores; tela, grade, foco, esconder,
+  câmera junto da tela, reiniciar a tela, painel de pessoas, conversa direta, erros no console.
+- `BASE=http://127.0.0.1:3001 PANEL=1 node tools/e2e/measure.mjs rotulo`: custo por segundo em cada
+  navegador (JavaScript, trabalho total, recálculo de estilo, mensagens de sinalização por tipo).
+  `CAM=1` faz B ligar a câmera (grade com 2 telas).
+
+Os números desta revisão estão em `docs/DESEMPENHO.md` ("Terceira rodada").
