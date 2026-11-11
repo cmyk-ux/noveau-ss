@@ -17,6 +17,7 @@ const ICONS: Record<string, string> = {
   lock: `<rect x="4" y="10.5" width="16" height="10.5" rx="2.5"/><path d="M7.8 10.5V7.6a4.2 4.2 0 0 1 8.4 0v2.9"/><circle cx="12" cy="15.7" r="1.3"/>`,
   people: `<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16.5 5.2a3.5 3.5 0 0 1 0 6.6"/><path d="M18 14.5a6.5 6.5 0 0 1 3.5 5.5"/>`,
   phone: `<rect x="6.5" y="2.5" width="11" height="19" rx="2.2"/><line x1="10.5" y1="18" x2="13.5" y2="18"/>`,
+  mirror: `<path d="M12 3v18" stroke-dasharray="2 2"/><path d="M9 7 3.5 17H9z"/><path d="M15 7l5.5 10H15z"/>`,
   rotate: `<path d="M20 11a8 8 0 0 0-14.3-4.9L4 8"/><path d="M4 3.5V8h4.5"/><path d="M4 13a8 8 0 0 0 14.3 4.9L20 16"/><path d="M20 20.5V16h-4.5"/>`,
   pulse: `<path d="M2.5 12h4l2.5-6.5 5 13 2.5-6.5h5"/>`,
   caret: `<path d="m6 9 6 6 6-6"/>`,

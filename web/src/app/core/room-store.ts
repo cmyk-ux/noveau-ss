@@ -8,6 +8,7 @@ import {
   CameraAddress,
   JoinGrant,
   PhoneLink,
+  PhoneUse,
   controlPhone,
   createPhoneLink,
   disconnectPhone,
@@ -178,8 +179,9 @@ export class RoomStore {
    */
   readonly selfCam = computed<{ mirror: boolean; fromPhone: boolean } | null>(() => {
     const me = this._snapshot().me;
-    if (me.cam) return { mirror: true, fromPhone: false };
-    return me.phone?.cam === 'on' ? { mirror: false, fromPhone: true } : null;
+    const mirror = this.camPrefs.mirror();
+    if (me.cam) return { mirror, fromPhone: false };
+    return me.phone?.cam === 'on' ? { mirror, fromPhone: true } : null;
   });
   setCamBig(id: string, big: boolean) {
     this._camBig.update((s) => toggled(s, id, big));
@@ -217,11 +219,11 @@ export class RoomStore {
     }
   }
 
-  async makePhoneLink() {
+  async makePhoneLink(use: PhoneUse) {
     if (this._phoneBusy()) return;
     this._phoneBusy.set(true);
     try {
-      this._phoneLink.set(await createPhoneLink(this.token));
+      this._phoneLink.set(await createPhoneLink(this.token, use));
     } catch (e) {
       this.toast.show(e instanceof Error ? e.message : 'Não foi possível gerar o link do celular.');
     } finally {
@@ -258,6 +260,8 @@ export class RoomStore {
   readonly waitingForCamera = computed(() => isWaitingForCamera(this._snapshot(), this._camera() !== null));
 
   constructor() {
+    // Espelhar o próprio retorno (PC ou celular) vale em todo lugar onde você se vê.
+    effect(() => this.session.setMirrorSelf(this.camPrefs.mirror()));
     this.session.onVoiceFallback = () =>
       this.toast.show('A redução de ruído por IA não carregou; o microfone foi com o filtro do navegador.');
     this.session.onMicMoved = (toMobile) =>

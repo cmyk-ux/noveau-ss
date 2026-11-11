@@ -42,7 +42,7 @@ import { PhoneLinkPanel } from './phone-link';
     }
     @if (section() === 'mic' && store.canPublish()) {
       <p class="label">celular como microfone</p>
-      <cen-phone-link />
+      <cen-phone-link use="mic" />
     }
     }
 
@@ -68,7 +68,7 @@ import { PhoneLinkPanel } from './phone-link';
       }
       @if (!isPhoneDevice) {
         <p class="label">celular como câmera</p>
-        <cen-phone-link />
+        <cen-phone-link use="cam" />
       }
 
       @if (store.cameraOffered()) {

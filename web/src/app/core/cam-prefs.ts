@@ -41,6 +41,7 @@ export class CamPrefs {
   private readonly _pip = signal(read('noveau:cam-pip', parseBox, DEFAULT_PIP));
   private readonly _selfWidth = signal(read('noveau:cam-self-w', (r) => (Number.isFinite(+r) && +r >= 80 ? +r : null), 176));
   private readonly _selfView = signal(read('noveau:cam-self', (r) => r !== '0', true));
+  private readonly _mirror = signal(read('noveau:cam-mirror', (r) => r !== '0', true));
 
   /** Câmera do PC escolhida da última vez ('' = a padrão). */
   readonly device = this._device.asReadonly();
@@ -58,6 +59,16 @@ export class CamPrefs {
   setSelfWidth(w: number) {
     write('noveau:cam-self-w', String(Math.round(w)));
     this._selfWidth.set(w);
+  }
+
+  /**
+   * Você se vê espelhado, como num espelho (a do PC e a do celular). Só no seu retorno: quem
+   * assiste sempre vê a imagem do jeito certo (texto legível).
+   */
+  readonly mirror = this._mirror.asReadonly();
+  setMirror(on: boolean) {
+    write('noveau:cam-mirror', on ? '1' : '0');
+    this._mirror.set(on);
   }
 
   setSelfView(on: boolean) {
