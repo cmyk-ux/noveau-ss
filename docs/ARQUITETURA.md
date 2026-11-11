@@ -25,6 +25,10 @@ LiveKit (Room) ──eventos──► RoomSession ──RoomSnapshot──► Ro
   - `'full'`: refaz tudo (foco, inscrições, volumes, atributos). Para entrar/sair, publicar, atributos.
   - `'view'`: só o que aparece. Para o que muda muito e não mexe em mais nada: quem está falando,
     volume, proteção contra travadas.
+  - Cuidado: o `'view'` reaproveita as telas (`this.live`) montadas no último `'full'`. Tudo o que um
+    `'view'` deve mostrar diferente (volume, escondida, proteção) tem de ser lido de novo em
+    `describe()`, não guardado no `ShareView` de `collectShares()`. O volume da tela ficava parado ali
+    e o botão de mutar a tela não mudava (o segundo clique desfazia o primeiro sem aparecer).
 - **O que não mudou continua sendo o mesmo objeto** (`core/same.ts`). Quando alguém começa a falar, só
   o `PersonView` dessa pessoa é novo; a lista de telas, os nomes, quem assiste, tudo continua igual
   (`===`), então nenhum `computed` nem nenhuma tela que dependa disso roda de novo. Se nada mudou,
@@ -75,6 +79,10 @@ LiveKit (Room) ──eventos──► RoomSession ──RoomSnapshot──► Ro
       mesma regra: escondida não toca.
     - Depois que o vigia do codificador trocava de codec, a proteção de perda na subida continuava
       contando do teto do codec antigo. Agora recomeça do teto novo (`UploadGuard.retarget`).
+11. **Ação que demora (ligar microfone, trocar modo de voz) vai numa fila.** Ligar o microfone cria a
+    trilha, carrega a redução de ruído e publica; um segundo clique nesse meio-tempo corria junto e o
+    microfone ficava ligado (ou publicado duas vezes). `RoomSession.setMicrophone`/`setVoiceMode`
+    passam por `micQueue`, e o `RoomStore` inverte o que o último clique pediu, não o que a sala mostra.
 
 ## Atributos dos participantes
 
@@ -106,12 +114,13 @@ vai mudar.
 
 ## Como medir e testar
 
-Precisa do `livekit-server --dev --node-ip 127.0.0.1`, da API servindo o site compilado
+Precisa do `livekit-server --dev --bind 127.0.0.1 --node-ip 127.0.0.1`, da API servindo o site compilado
 (`STATIC_DIR=web/dist/noveau-ss/browser node server/server.mjs`, porta 3001 por padrão) e do Playwright
 com o Chromium.
 
 - `BASE=http://127.0.0.1:3001 node tools/e2e/flows.mjs`: 3 navegadores; tela, grade, foco, esconder,
-  câmera junto da tela, reiniciar a tela, painel de pessoas, conversa direta, erros no console.
+  câmera junto da tela, reiniciar a tela, painel de pessoas, conversa direta, mutar a tela (o botão
+  tem de mudar em até 1 s), dois cliques rápidos no microfone, erros no console.
 - `BASE=http://127.0.0.1:3001 PANEL=1 node tools/e2e/measure.mjs rotulo`: custo por segundo em cada
   navegador (JavaScript, trabalho total, recálculo de estilo, mensagens de sinalização por tipo).
   `CAM=1` faz B ligar a câmera (grade com 2 telas).

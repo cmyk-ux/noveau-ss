@@ -586,12 +586,20 @@ export class RoomStore {
       await this.controlPhone({ mic: phone.mic !== 'on' });
       return;
     }
+    // Cada clique inverte o que o clique anterior pediu, não o que a sala mostra agora: ligar leva
+    // um instante, e o segundo clique nesse meio-tempo é para desligar.
+    const on = !(this.micWanted ?? this._snapshot().me.mic);
+    this.micWanted = on;
     try {
-      await this.session.setMicrophone(!this._snapshot().me.mic, this.prefs.voiceMode());
+      await this.session.setMicrophone(on, this.prefs.voiceMode());
     } catch {
       this.toast.show('Não foi possível acessar o microfone.');
+    } finally {
+      if (this.micWanted === on) this.micWanted = null;
     }
   }
+  /** O que o último clique no microfone pediu, enquanto ainda não chegou na sala. */
+  private micWanted: boolean | null = null;
 
   private readonly _micMonitor = signal(false);
   /** Ouvindo o próprio microfone (como ele chega para os outros). */
