@@ -8,16 +8,21 @@ câmera (e, se quiser, o microfone) de quem está no PC.
 1. No PC, dentro da sala, abra a setinha da tecla da **câmera** (ou do microfone) e clique em
    **Usar o celular**.
 2. Aponte a câmera do celular para o QR, ou mande o link para ele.
-3. O celular entra na sala com a câmera traseira ligada. Lá dá para ligar o microfone, virar para a
+3. O celular liga **só o que você escolheu**: pelo menu da câmera, só a câmera (traseira); pelo menu
+   do microfone, só o microfone (a página nem pede a câmera). Lá dá para ligar o outro, virar para a
    câmera frontal e escolher entre **voz limpa** (tira eco e ruído) e **som cru** (para música).
-4. No PC, as teclas de câmera e microfone da barra passam a comandar o celular. O menu da câmera
-   mostra o que está ligado e tem o botão **Desconectar o celular**.
+4. No PC, as teclas de câmera e microfone da barra passam a comandar o celular, cada uma só a sua
+   parte: mutar o microfone não mexe na câmera, e vice-versa. O menu mostra o que está ligado e tem
+   o botão **Desconectar o celular**.
 
 Regras:
 
 - Um aparelho por link. Se outro celular abrir o mesmo link, ele é recusado. Para trocar de
   aparelho, clique em **Desconectar** no PC e gere outro link.
-- O mesmo celular pode recarregar a página: ele volta sozinho.
+- O mesmo celular pode recarregar a página: ele volta sozinho, com o que estava ligado.
+- Se o PC pedir algo que o celular ainda não liberou (ex.: link de microfone e o PC liga a câmera),
+  o celular mostra **O PC pediu a câmera: toque para ligar**. Sem um toque o navegador esconde o
+  pedido de permissão.
 - Link sem uso vence em 15 minutos.
 - Se o PC sair da sala, o celular pausa depois de 20 s e volta sozinho quando o PC entrar de novo.
 - Ligar o microfone do celular desliga o do PC (para a voz não sair dobrada).
@@ -58,6 +63,8 @@ janelinha em foco, clicar troca a câmera com a tela.
 **A sua câmera** aparece no monitorzinho **você**, no canto de cima à esquerda:
 
 - No formato real da câmera (4:3, 16:9, celular em pé), sem cortar.
+- Espelhada, como num espelho, venha do PC ou do celular. A tecla de espelho na plaqueta desliga
+  (fica guardado). Só você vê espelhado: quem assiste vê do jeito certo, com texto legível.
 - Puxe o canto com as listrinhas para aumentar. Clique para ver em tela cheia, e clique de novo (ou
   Esc) para voltar.
 - A cópia acompanha o tamanho: pequena em 360p a 15 fps, maior em 720p a 30 fps e, em tela cheia,

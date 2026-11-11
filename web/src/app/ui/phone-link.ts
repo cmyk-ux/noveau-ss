@@ -1,4 +1,5 @@
-import { Component, computed, effect, inject, signal } from '@angular/core';
+import { Component, computed, effect, inject, input, signal } from '@angular/core';
+import { PhoneUse } from '../core/api';
 import qrcode from 'qrcode-generator';
 import { Invites } from '../core/invites';
 import { RoomStore } from '../core/room-store';
@@ -122,10 +123,15 @@ function qrPath(text: string): { d: string; size: number } {
         }
         @default {
           <p class="hint">
-            Use a câmera e o microfone do celular aqui, sem instalar nada: o celular abre um link e
-            vira a câmera (e, se quiser, o microfone) deste PC na sala.
+            @if (use() === 'mic') {
+              Use o microfone do celular aqui, sem instalar nada: o celular abre um link e vira o
+              microfone deste PC na sala. A câmera dele fica desligada.
+            } @else {
+              Use a câmera do celular aqui, sem instalar nada: o celular abre um link e vira a
+              câmera deste PC na sala. O microfone dele fica desligado.
+            }
           </p>
-          <button class="btn wide" [disabled]="store.phoneBusy()" (click)="store.makePhoneLink()">
+          <button class="btn wide" [disabled]="store.phoneBusy()" (click)="store.makePhoneLink(use())">
             <cen-icon name="phone" [size]="16" />
             {{ store.phoneBusy() ? 'Gerando…' : 'Usar o celular' }}
           </button>
@@ -260,10 +266,13 @@ function qrPath(text: string): { d: string; size: number } {
 export class PhoneLinkPanel {
   protected readonly store = inject(RoomStore);
   protected readonly invites = inject(Invites);
+  /** De qual menu veio (câmera ou microfone): o celular começa ligando só isso. */
+  readonly use = input<PhoneUse>('cam');
   private readonly now = signal(Date.now());
   protected readonly url = computed(() => {
-    const code = this.store.phoneLink().code;
-    return code === undefined ? '' : `${location.origin}/celular#${code}`;
+    const { code, use } = this.store.phoneLink();
+    // "?mic": a página do celular pede só o microfone (sem abrir a câmera).
+    return code === undefined ? '' : `${location.origin}/celular${use === 'mic' ? '?mic' : ''}#${code}`;
   });
   protected readonly qr = computed(() => (this.url() === '' ? null : qrPath(this.url())));
   protected readonly left = computed(() => {

@@ -39,6 +39,11 @@ const MAX_W = 720;
                 <cen-icon name="fullscreenExit" [size]="12" />
               </button>
             }
+            <button type="button" class="key" [class.lit]="prefs.mirror()"
+              [title]="prefs.mirror() ? 'Espelhado, como num espelho. Clique para ver como os outros veem.' : 'Como os outros veem. Clique para espelhar.'"
+              [attr.aria-pressed]="prefs.mirror()" (click)="prefs.setMirror(!prefs.mirror())">
+              <cen-icon name="mirror" [size]="12" />
+            </button>
             <button type="button" class="key" title="Parar de ver a sua câmera (não pesa no PC; quem assiste continua vendo)"
               (click)="stop()">
               <cen-icon name="eyeOff" [size]="12" />
@@ -80,6 +85,7 @@ const MAX_W = 720;
     .key { width: 18px; height: 16px; display: none; place-items: center; padding: 0; border: 1px solid #0b0b0c; border-radius: 2px;
       background: var(--plate); color: var(--muted); box-shadow: var(--key-shadow); cursor: pointer; }
     .key:hover { background: var(--plate-hi); color: var(--text); }
+    .key.lit { color: var(--accent); }
     .key:active { transform: translateY(1px); box-shadow: var(--key-pressed); }
     .win:hover .key, .win:focus-within .key, :host(.full) .key { display: grid; }
     /* Canto de puxar do Windows 98, embaixo à direita (o de cima à esquerda fica parado). */

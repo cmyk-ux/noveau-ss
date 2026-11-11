@@ -29,6 +29,38 @@ import {
 import { Icon } from '../ui/icon';
 
 const HOLDER_KEY = 'noveau:phone-holder';
+/** O que está pedido (câmera/microfone) neste link, para voltar igual depois de recarregar a página. */
+const WANT_KEY = 'noveau:phone-want:';
+
+type Want = { cam: boolean; mic: boolean };
+
+function readWant(code: string): Want | null {
+  try {
+    const w = JSON.parse(sessionStorage.getItem(WANT_KEY + code) ?? 'null');
+    return typeof w?.cam === 'boolean' && typeof w?.mic === 'boolean' ? { cam: w.cam, mic: w.mic } : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveWant(code: string, w: Want) {
+  try {
+    sessionStorage.setItem(WANT_KEY + code, JSON.stringify(w));
+  } catch {
+    /* sem sessionStorage: depois de recarregar, volta ao que o PC pediu */
+  }
+}
+
+/** Atributo JSON do participante (start, ctl); estranho ou ausente = null. */
+function attrJson(raw: string | undefined): Record<string, unknown> | null {
+  if (raw === undefined) return null;
+  try {
+    const v = JSON.parse(raw);
+    return v !== null && typeof v === 'object' ? v : null;
+  } catch {
+    return null;
+  }
+}
 /** O PC saiu da sala: espera um pouco (recarregar a página) antes de pausar câmera e microfone. */
 const OWNER_GRACE_MS = 20_000;
 
@@ -81,9 +113,9 @@ function holderId(): string {
       <header class="masthead">
         <img class="logo pixel" src="logo.svg" alt="" width="36" height="36" />
         <div class="titles">
-          <h1>Câmera do PC</h1>
+          <h1>{{ micOnly ? 'Microfone do PC' : 'Câmera do PC' }}</h1>
           <p class="label sub">
-            {{ owner() ? 'celular de ' + owner() : 'celular como câmera e microfone' }}
+            {{ owner() ? 'celular de ' + owner() : micOnly ? 'celular como microfone' : 'celular como câmera' }}
           </p>
         </div>
       </header>
@@ -123,13 +155,22 @@ function holderId(): string {
         @case ('ask') {
           <div class="card note ask">
             <p class="flag mono">passo 1 de 1</p>
-            <p class="lead">O celular vai pedir para usar a câmera e o microfone.</p>
+            @if (micOnly) {
+              <p class="lead">O celular vai pedir para usar o microfone.</p>
+            } @else {
+              <p class="lead">O celular vai pedir para usar a câmera e o microfone.</p>
+            }
             <p class="hint">
               Toque no botão e, na janela que abrir, escolha <strong>Permitir</strong>
               @if (os === 'android') {
                 (ou "Ao usar o app")
               }
-              . O microfone só liga se você ou o PC ligarem depois.
+              .
+              {{
+                micOnly
+                  ? 'Só o microfone liga; a câmera fica desligada.'
+                  : 'Só a câmera liga; o microfone fica desligado até você ou o PC ligarem.'
+              }}
             </p>
             @if (askNote(); as n) {
               <p class="warn-note">{{ n }}</p>
@@ -140,15 +181,23 @@ function holderId(): string {
               [disabled]="asking()"
               (click)="ask()"
             >
-              <cen-icon name="camera" [size]="20" />
-              {{ asking() ? 'Esperando você permitir…' : 'Permitir câmera e microfone' }}
+              <cen-icon [name]="micOnly ? 'mic' : 'camera'" [size]="20" />
+              {{
+                asking()
+                  ? 'Esperando você permitir…'
+                  : micOnly
+                    ? 'Permitir o microfone'
+                    : 'Permitir câmera e microfone'
+              }}
             </button>
           </div>
         }
         @case ('denied') {
           <div class="card note ask">
-            <p class="flag mono danger">câmera bloqueada</p>
-            <p class="lead">O navegador está bloqueando a câmera deste site.</p>
+            <p class="flag mono danger">{{ micOnly ? 'microfone bloqueado' : 'câmera bloqueada' }}</p>
+            <p class="lead">
+              O navegador está bloqueando {{ micOnly ? 'o microfone' : 'a câmera' }} deste site.
+            </p>
             <p class="hint">
               Depois de negar uma vez, ele não pergunta mais sozinho. Libere assim:
             </p>
@@ -239,6 +288,13 @@ function holderId(): string {
               <span class="led" [class.on]="sending()"></span>{{ readout() }}
             </span>
           </div>
+
+          @if (needTap(); as what) {
+            <button type="button" class="btn primary wide big" [disabled]="busy()" (click)="tapToAllow()">
+              <cen-icon [name]="what === 'mic' ? 'mic' : 'camera'" [size]="20" />
+              O PC pediu {{ what === 'mic' ? 'o microfone' : 'a câmera' }}: toque para ligar
+            </button>
+          }
 
           @if (paused()) {
             <p class="banner mono">o PC saiu da sala · volta sozinho quando ele entrar de novo</p>
@@ -588,6 +644,10 @@ export class PhonePage {
   protected readonly askNote = signal('');
   protected readonly error = signal('');
   protected readonly owner = signal('');
+  /** Link gerado no menu do microfone: pede e liga só o microfone. */
+  protected readonly micOnly = new URLSearchParams(location.search).has('mic');
+  /** O PC pediu algo que este site ainda não pode usar sem um toque (a permissão nunca foi dada). */
+  protected readonly needTap = signal<'cam' | 'mic' | null>(null);
   protected readonly camOn = signal(false);
   protected readonly micOn = signal(false);
   protected readonly busy = signal(false);
@@ -607,7 +667,7 @@ export class PhonePage {
 
   private room: Room | null = null;
   /** O que o PC (ou você aqui) quer ligado; a pausa (PC fora da sala) não muda isso. */
-  private want = { cam: true, mic: false };
+  private want: Want = { cam: !this.micOnly, mic: this.micOnly };
   private ctlSeen = -1;
   private sawOwner = false;
   private ownerTimer?: number;
@@ -648,8 +708,9 @@ export class PhonePage {
       );
     }
     const p = await mediaPermission();
-    if (p.camera === 'granted') return void this.connect();
-    if (p.camera === 'denied') return this.step.set('denied');
+    const perm = this.micOnly ? p.mic : p.camera;
+    if (perm === 'granted') return void this.connect();
+    if (perm === 'denied') return this.step.set('denied');
     this.step.set(app !== null ? 'inapp' : 'ask');
   }
 
@@ -657,10 +718,10 @@ export class PhonePage {
   async ask() {
     this.asking.set(true);
     this.askNote.set('');
-    const r: AskResult = await askCameraAndMic();
+    const r: AskResult = await askCameraAndMic(this.micOnly);
     this.asking.set(false);
     if (r.ok) {
-      if (!r.video) this.want = { cam: false, mic: true };
+      if (!r.video && !this.micOnly) this.setWant({ cam: false, mic: true });
       // Já estava na sala (o bloqueio veio depois): só religa o que estava pedido.
       if (this.room?.state === 'connected') {
         this.step.set('live');
@@ -735,6 +796,15 @@ export class PhonePage {
       await room.connect(grant.url, grant.token, { autoSubscribe: false });
       this.step.set('live');
       void this.keepAwake();
+      // Onde começar: o que estava ligado antes de recarregar a página; senão, o que o PC pediu
+      // (o uso do link + os pedidos desde então). O último pedido já está nesse começo.
+      const attrs = room.localParticipant.attributes ?? {};
+      const start = attrJson(attrs['start']);
+      const saved = readWant(this.code);
+      if (saved !== null) this.want = saved;
+      else if (start !== null) this.setWant({ cam: start['cam'] === true, mic: start['mic'] === true });
+      const ctl = attrJson(attrs['ctl']);
+      if (typeof ctl?.['n'] === 'number') this.ctlSeen = ctl['n'];
       this.readAttributes();
       this.checkOwner();
       await this.apply();
@@ -759,19 +829,31 @@ export class PhonePage {
     this.step.set('error');
   }
 
-  /** O PC mandou ligar/desligar algo (atributo "ctl", com um contador para cada pedido). */
+  /**
+   * O PC mandou ligar/desligar algo (atributo "ctl", com um contador para cada pedido). Cada
+   * pedido traz só o que mudou: mutar o microfone pelo PC não mexe na câmera (antes o pedido levava
+   * os dois, e a câmera desligada aqui no celular voltava a abrir).
+   */
   private readAttributes() {
-    const raw = this.room?.localParticipant.attributes?.['ctl'];
-    if (raw === undefined) return;
-    try {
-      const c = JSON.parse(raw);
-      if (typeof c.n !== 'number' || c.n === this.ctlSeen) return;
-      this.ctlSeen = c.n;
-      this.want = { cam: c.cam === true, mic: c.mic === true };
-      void this.apply();
-    } catch {
-      /* atributo estranho: ignora */
-    }
+    const c = attrJson(this.room?.localParticipant.attributes?.['ctl']);
+    if (c === null || typeof c['n'] !== 'number' || c['n'] === this.ctlSeen) return;
+    this.ctlSeen = c['n'];
+    const next = { ...this.want };
+    if (typeof c['cam'] === 'boolean') next.cam = c['cam'];
+    if (typeof c['mic'] === 'boolean') next.mic = c['mic'];
+    this.setWant(next);
+    void this.apply();
+  }
+
+  private setWant(w: Want) {
+    this.want = w;
+    saveWant(this.code, w);
+  }
+
+  /** O toque no aviso "O PC pediu…": agora o pedido de permissão sai de dentro de um toque. */
+  tapToAllow() {
+    this.needTap.set(null);
+    void this.apply(true);
   }
 
   /** O PC dono deste celular está na sala? Se sair (e não voltar logo), pausa tudo. */
@@ -798,23 +880,35 @@ export class PhonePage {
   }
 
   setCam(on: boolean) {
-    this.want = { ...this.want, cam: on };
-    void this.apply();
+    this.setWant({ ...this.want, cam: on });
+    void this.apply(true);
   }
 
   setMic(on: boolean) {
-    this.want = { ...this.want, mic: on };
-    void this.apply();
+    this.setWant({ ...this.want, mic: on });
+    void this.apply(true);
   }
 
   /** Liga/desliga de verdade conforme o pedido e a pausa. Câmera desligada solta o sensor (sem luz). */
-  private async apply() {
+  private async apply(fromTap = false) {
     const room = this.room;
     if (room === null || this.step() !== 'live') return;
-    const cam = this.want.cam && !this.paused();
-    const mic = this.want.mic && !this.paused();
+    let cam = this.want.cam && !this.paused();
+    let mic = this.want.mic && !this.paused();
     this.busy.set(true);
     try {
+      // Pedido do PC para algo que ainda não foi liberado aqui (ex.: link de microfone e o PC liga
+      // a câmera): sem um toque o navegador esconde a janela de permissão. Pede o toque antes.
+      if (!fromTap) {
+        const turningOn = (cam && !this.camOn()) || (mic && !this.micOn());
+        const p = turningOn ? await mediaPermission() : null;
+        if (p !== null && cam && !this.camOn() && p.camera === 'prompt') cam = false;
+        if (p !== null && mic && !this.micOn() && p.mic === 'prompt') mic = false;
+        const live = !this.paused();
+        this.needTap.set(live && this.want.cam && !cam ? 'cam' : live && this.want.mic && !mic ? 'mic' : null);
+      } else {
+        this.needTap.set(null);
+      }
       if (cam !== this.camOn()) {
         await room.localParticipant.setCameraEnabled(
           cam,
