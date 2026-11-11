@@ -80,22 +80,23 @@ function stop(s: MediaStream) {
  * Pede câmera e microfone juntos (uma janela só). Tem que ser chamado direto do toque, sem nada
  * esperando antes: é o toque que faz o navegador abrir a janela de permissão.
  * A captura é solta logo depois; a sala liga a câmera de novo sem perguntar (já está liberada).
+ * Com micOnly (celular como microfone), pede só o microfone: a câmera nem acende.
  */
-export async function askCameraAndMic(): Promise<AskResult> {
+export async function askCameraAndMic(micOnly = false): Promise<AskResult> {
   if (navigator.mediaDevices?.getUserMedia === undefined)
     return { ok: false, reason: 'unsupported', detail: '' };
   try {
     stop(
-      await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' },
-        audio: true,
-      }),
+      await navigator.mediaDevices.getUserMedia(
+        micOnly ? { audio: true } : { video: { facingMode: 'environment' }, audio: true },
+      ),
     );
-    return { ok: true, video: true, audio: true };
+    return { ok: true, video: !micOnly, audio: true };
   } catch (e) {
     const name = e instanceof DOMException ? e.name : '';
     // Aparelho sem microfone (ou sem câmera): tenta só o que tem.
-    if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+    if (micOnly && name === 'NotFoundError') return { ok: false, reason: 'none', detail: name };
+    if (!micOnly && (name === 'NotFoundError' || name === 'OverconstrainedError')) {
       for (const c of [{ video: true }, { audio: true }] as MediaStreamConstraints[]) {
         try {
           stop(await navigator.mediaDevices.getUserMedia(c));
@@ -111,7 +112,7 @@ export async function askCameraAndMic(): Promise<AskResult> {
     if (name === 'NotAllowedError' || name === 'SecurityError') {
       // Fechou a janela sem escolher (continua "perguntar") ou negou de vez?
       const p = await mediaPermission();
-      const dismissed = p.camera === 'prompt' || p.mic === 'prompt';
+      const dismissed = micOnly ? p.mic === 'prompt' : p.camera === 'prompt' || p.mic === 'prompt';
       return { ok: false, reason: dismissed ? 'dismissed' : 'denied', detail: name };
     }
     return {

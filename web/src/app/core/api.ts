@@ -130,7 +130,12 @@ export interface PhoneLink {
   code?: string;
   expiresAt?: number;
   phoneIdentity?: string | null;
+  /** Para que o link foi gerado: o celular começa ligando só isso. */
+  use?: PhoneUse;
 }
+
+/** Celular como câmera ou como microfone: um não liga o outro. */
+export type PhoneUse = 'cam' | 'mic';
 
 async function withRoomToken<T>(method: 'GET' | 'POST', path: string, roomToken: string, body: unknown, fallback: string): Promise<T> {
   const res = await fetch(path, {
@@ -148,8 +153,8 @@ export function phoneLinkStatus(roomToken: string): Promise<PhoneLink> {
   return withRoomToken('GET', '/api/phone/link', roomToken, undefined, 'Não foi possível ver o celular.');
 }
 
-export function createPhoneLink(roomToken: string): Promise<PhoneLink> {
-  return withRoomToken('POST', '/api/phone/link', roomToken, {}, 'Não foi possível gerar o link do celular.');
+export function createPhoneLink(roomToken: string, use: PhoneUse): Promise<PhoneLink> {
+  return withRoomToken('POST', '/api/phone/link', roomToken, { use }, 'Não foi possível gerar o link do celular.');
 }
 
 export function disconnectPhone(roomToken: string): Promise<{ ok: boolean }> {

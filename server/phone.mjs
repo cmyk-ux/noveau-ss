@@ -11,7 +11,11 @@
 // - "Desconectar" no PC tira o celular da sala e apaga o link; aí dá para gerar outro.
 // - Link sem uso vence em 15 min. Em uso, vale enquanto o token do celular valer (12 h).
 // - O celular não recebe nada da sala (canSubscribe: false): não gasta a internet dele nem faz eco.
-// - O PC liga/desliga a câmera e o microfone do celular pelo atributo "ctl" do celular.
+// - O link sai do menu da câmera ou do microfone e o celular começa ligando só aquilo (um não
+//   puxa o outro).
+// - O PC liga/desliga a câmera e o microfone do celular pelo atributo "ctl" do celular. Cada pedido
+//   leva só o que mudou (ex.: {n, mic: false}): mutar o microfone não mexe na câmera, mesmo que no
+//   celular ela tenha sido desligada por lá (o servidor não sabe disso).
 //
 // Tudo fica na memória do servidor: reiniciar o servidor apaga os links (o celular que já estava
 // na sala continua até sair, e o PC consegue desconectá-lo pelo botão).
@@ -30,7 +34,7 @@ const CLAIMED_TTL_MS = 12 * 3600_000;
 const PHONE_TOKEN_TTL = '12h';
 
 export function createPhone({ AccessToken, TrackSource, apiKey, apiSecret, rooms, verifyRoomToken, publicUrl }) {
-  /** ownerKey -> { code, room, ownerKey, ownerIdentity, ownerName, discordId, holder, phoneIdentity, expiresAt, ctl } */
+  /** ownerKey -> { code, room, ownerKey, ownerIdentity, ownerName, discordId, holder, phoneIdentity, expiresAt, use, start, ctl } */
   const links = new Map();
   /** code -> ownerKey */
   const codes = new Map();
@@ -68,6 +72,7 @@ export function createPhone({ AccessToken, TrackSource, apiKey, apiSecret, rooms
       code: l.code,
       expiresAt: l.expiresAt,
       phoneIdentity: l.phoneIdentity,
+      use: l.use,
     };
   }
 
@@ -89,8 +94,9 @@ export function createPhone({ AccessToken, TrackSource, apiKey, apiSecret, rooms
     return status(l);
   }
 
-  async function createLink(req) {
+  async function createLink(req, body) {
     prune();
+    const use = body?.use === 'mic' ? 'mic' : 'cam';
     const who = await owner(req);
     const existing = links.get(who.ownerKey);
     if (existing !== undefined) {
@@ -108,8 +114,12 @@ export function createPhone({ AccessToken, TrackSource, apiKey, apiSecret, rooms
       holder: null,
       phoneIdentity: null,
       expiresAt: Date.now() + UNCLAIMED_TTL_MS,
-      // Começa só com a câmera (estilo Iriun); o microfone liga no celular ou pelo PC.
-      ctl: { cam: true, mic: false, n: 0 },
+      // Para que o link foi gerado: o celular começa ligando só isso (câmera OU microfone).
+      use,
+      // O que ligar quando o celular entra (ou volta): o começo + os pedidos do PC desde então.
+      start: { cam: use === 'cam', mic: use === 'mic' },
+      // Último pedido do PC, só com o que mudou.
+      ctl: { n: 0 },
     };
     links.set(who.ownerKey, l);
     codes.set(code, who.ownerKey);
@@ -146,9 +156,13 @@ export function createPhone({ AccessToken, TrackSource, apiKey, apiSecret, rooms
     const who = await owner(req);
     const l = links.get(who.ownerKey);
     if (l === undefined || l.phoneIdentity === null) throw new PhoneError(404, 'Nenhum celular conectado.');
-    if (typeof body.cam === 'boolean') l.ctl.cam = body.cam;
-    if (typeof body.mic === 'boolean') l.ctl.mic = body.mic;
-    l.ctl.n += 1;
+    const ctl = { n: l.ctl.n + 1 };
+    for (const k of ['cam', 'mic']) {
+      if (typeof body?.[k] !== 'boolean') continue;
+      ctl[k] = body[k];
+      l.start[k] = body[k];
+    }
+    l.ctl = ctl;
     try {
       await rooms.updateParticipant(l.room, l.phoneIdentity, { attributes: { ctl: JSON.stringify(l.ctl) } });
     } catch (e) {
@@ -178,6 +192,7 @@ export function createPhone({ AccessToken, TrackSource, apiKey, apiSecret, rooms
     const attributes = {
       phoneOf: l.ownerIdentity,
       device: 'phone-companion',
+      start: JSON.stringify(l.start),
       ctl: JSON.stringify(l.ctl),
       ...(l.discordId !== '' ? { phoneOfDiscord: l.discordId } : {}),
     };
@@ -199,7 +214,7 @@ export function createPhone({ AccessToken, TrackSource, apiKey, apiSecret, rooms
   return {
     routes: {
       'GET /api/phone/link': (req) => getLink(req),
-      'POST /api/phone/link': (req) => createLink(req),
+      'POST /api/phone/link': (req, body) => createLink(req, body),
       'POST /api/phone/disconnect': (req) => disconnect(req),
       'POST /api/phone/control': (req, body) => control(req, body),
       'POST /api/phone/token': (req, body) => phoneToken(req, body),

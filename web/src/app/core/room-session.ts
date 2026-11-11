@@ -349,6 +349,14 @@ export class RoomSession {
     return () => this.listeners.delete(fn);
   }
 
+  /** Espelhar a própria câmera (do PC ou do celular) onde você se vê. Quem assiste não é afetado. */
+  private mirrorSelf = true;
+  setMirrorSelf(on: boolean) {
+    if (this.mirrorSelf === on) return;
+    this.mirrorSelf = on;
+    this.emit();
+  }
+
   private emit() {
     this.announce(this.settle());
   }
@@ -1003,11 +1011,11 @@ export class RoomSession {
           hasAudio: audio !== undefined && !audio.isMuted,
           trackSid: visual.publication.trackSid,
           volume: this.mixer.read('share', p.identity),
-          mirror: isLocal && visual.publication === ownCam && visual.kind === 'camera',
+          mirror: isLocal && this.mirrorSelf && visual.publication === camPub && visual.kind === 'camera',
           cam:
             cam === undefined
               ? null
-              : { trackSid: cam.trackSid, mirror: isLocal && cam === ownCam, fromPhone: cam !== ownCam },
+              : { trackSid: cam.trackSid, mirror: isLocal && this.mirrorSelf, fromPhone: cam !== ownCam },
           activity: obs
             ? { surface: 'obs' }
             : visual.kind === 'camera' && !isIngress
