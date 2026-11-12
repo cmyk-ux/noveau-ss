@@ -776,6 +776,8 @@ await part('reconexao', async () => {
   // 2.22.0 às vezes perde a negociação começada durante a queda e refaz a conexão inteira; as
   // conferências abaixo garantem que tudo volta.
   C.expected.push(/^\[reconexao\] .*(ERR_INTERNET_DISCONNECTED|ERR_NETWORK_CHANGED|Failed to fetch|could not establish signal connection|websocket closed|negotiation timed out)/i);
+  // A identidade fica, o SID muda só numa reconexão completa: diz qual dos dois caminhos o LiveKit tomou.
+  const sid0 = await C.page.evaluate(() => window.__noveau.room.localParticipant.sid);
   const cdp = await C.ctx.newCDPSession(C.page);
   await cdp.send('Network.enable');
   await cdp.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
@@ -783,6 +785,9 @@ await part('reconexao', async () => {
   await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
   ok('internet de volta: C reconecta', await until(C, () => document.querySelector('.plate .led.ok') !== null, undefined, 30000));
   ok('C volta a ver a tela de A', await until(C, playing, 'cen-stage video', 20000));
+  await wait(16000); // o prazo de uma negociação perdida (15 s) passa: se ela refizer a conexão, aparece aqui
+  const sid1 = await C.page.evaluate(() => window.__noveau.room.localParticipant.sid);
+  console.log(`INFO   [reconexao] caminho do LiveKit: ${sid1 === sid0 ? 'retomada (mesma sessão)' : 'reconexão completa (sessão nova)'}`);
   ok('C volta a ouvir a voz de A', (await eventually(async () => ({ ok: await flowing(C, 'A', 'microphone') }), 15000)).ok);
 });
 
