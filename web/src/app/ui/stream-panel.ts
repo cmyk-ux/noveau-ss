@@ -48,8 +48,8 @@ import {
     @if (settings().resolution === 'auto') {
       <p class="hint">
         @if (settings().frameRate > 60) {
-          Auto acima de 60fps: vai em <strong>1080p</strong>. Em 1440p o navegador não consegue copiar a tela tão rápido e a imagem engasga.
-          Para forçar mais resolução, escolha Original ou 1440p.
+          Auto acima de 60fps: sai em <strong>1080p</strong>, para cada quadro ter bits suficientes. A tela é capturada inteira e
+          reduzida só na hora de codificar. Para forçar mais resolução, escolha Original ou 1440p.
         } @else {
           Auto a até 60fps: vai a tela original, sem reduzir.
         }

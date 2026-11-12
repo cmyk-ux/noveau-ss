@@ -4,8 +4,11 @@
 // "fair", "serious" ou "critical". Pela especificação, uma página que está capturando a tela
 // continua recebendo esses avisos mesmo sem foco, então funciona com o jogo em primeiro plano.
 //
-// Ao apertar ("serious"), baixa só os quadros por segundo; a resolução só cai em "critical". Mexe na própria
-// captura (applyConstraints): menos quadros capturados = menos cópia e menos codificação.
+// Ao apertar ("serious"), baixa só os quadros por segundo; a resolução só cai em "critical".
+// Os quadros caem na própria captura (applyConstraints só com frameRate): menos quadros capturados =
+// menos cópia e menos codificação. A resolução cai no codificador (scaleResolutionDownBy), nunca na
+// captura: reduzir na captura faz o Chrome converter a tela inteira e depois reduzir, na mesma thread
+// que ele limita a meio núcleo (desktop_capture_device.cc), ou seja, a captura fica MAIS cara.
 // Quando o PC alivia por um tempo, sobe um degrau de volta até a qualidade total.
 
 export type Pressure = 'nominal' | 'fair' | 'serious' | 'critical';
@@ -21,8 +24,8 @@ export interface LoadState {
 }
 
 interface Step {
-  width: number;
-  height: number;
+  /** Quanto o codificador reduz a imagem (1 = tamanho que sai normalmente). */
+  scale: number;
   fps: number;
 }
 
@@ -31,17 +34,20 @@ const CRITICAL_AFTER_MS = 3000;
 const SERIOUS_AFTER_MS = 6000;
 const RECOVER_AFTER_MS = 20000;
 
-function stepsFor(width: number, height: number, fps: number): Step[] {
+function stepsFor(fps: number): Step[] {
   const raw: Step[] = [
-    { width, height, fps },
-    { width, height, fps: Math.min(fps, 60) },
-    { width, height, fps: Math.min(fps, 45) },
-    { width, height, fps: Math.min(fps, 30) },
-    { width: Math.round(width * 0.75), height: Math.round(height * 0.75), fps: Math.min(fps, 30) },
-    { width: Math.round(width * 0.5), height: Math.round(height * 0.5), fps: Math.min(fps, 30) },
+    { scale: 1, fps },
+    { scale: 1, fps: Math.min(fps, 60) },
+    { scale: 1, fps: Math.min(fps, 45) },
+    { scale: 1, fps: Math.min(fps, 30) },
+    { scale: 4 / 3, fps: Math.min(fps, 30) },
+    { scale: 2, fps: Math.min(fps, 30) },
   ];
-  return raw.filter((s, i) => i === 0 || s.fps !== raw[i - 1].fps || s.width !== raw[i - 1].width);
+  return raw.filter((s, i) => i === 0 || s.fps !== raw[i - 1].fps || s.scale !== raw[i - 1].scale);
 }
+
+/** Teto da captura: a tela no tamanho original, de qualquer monitor (ver share.ts). */
+export const CAPTURE_MAX = { width: 7680, height: 4320 };
 
 type Observer = { observe(source: 'cpu', opts?: { sampleInterval?: number }): Promise<void>; disconnect(): void };
 type ObserverCtor = new (cb: (records: { state: Pressure }[]) => void) => Observer;
@@ -55,14 +61,17 @@ export class LoadGovernor {
   private observer: Observer | null = null;
   private timer?: number;
   private stopped = false;
+  private applied = 0;
 
   constructor(
     private readonly track: MediaStreamTrack,
-    size: { width: number; height: number },
+    private readonly size: { width: number; height: number },
     fps: number,
     private readonly onChange: (s: LoadState) => void,
+    /** Reduz a imagem no codificador (1 = normal). */
+    private readonly scaleTo: (factor: number) => void,
   ) {
-    this.steps = stepsFor(size.width, size.height, fps);
+    this.steps = stepsFor(fps);
   }
 
   static supported(): boolean {
@@ -110,7 +119,7 @@ export class LoadGovernor {
 
   private fpsOnly(step: number): boolean {
     const s = this.steps[step];
-    return s !== undefined && s.width === this.steps[0].width;
+    return s !== undefined && s.scale === 1;
   }
 
   private move(delta: number) {
@@ -119,15 +128,20 @@ export class LoadGovernor {
     this.step = next;
     this.lastChange = performance.now();
     const s = this.steps[next];
-    void this.track
-      .applyConstraints({ width: { max: s.width }, height: { max: s.height }, frameRate: { max: s.fps } })
-      .catch(() => undefined);
+    if (s.fps !== this.applied) {
+      this.applied = s.fps;
+      void this.track
+        .applyConstraints({ width: { max: CAPTURE_MAX.width }, height: { max: CAPTURE_MAX.height }, frameRate: { max: s.fps } })
+        .catch(() => undefined);
+    }
+    this.scaleTo(s.scale);
     this.report(true);
   }
 
   private report(supported: boolean) {
     const s = this.steps[this.step];
-    this.onChange({ supported, pressure: this.pressure, step: this.step, width: s.width, height: s.height, fps: s.fps });
+    const even = (n: number) => Math.max(2, Math.round(n / s.scale / 2) * 2);
+    this.onChange({ supported, pressure: this.pressure, step: this.step, width: even(this.size.width), height: even(this.size.height), fps: s.fps });
   }
 }
 

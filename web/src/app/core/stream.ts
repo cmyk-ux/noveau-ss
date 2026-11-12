@@ -1,5 +1,6 @@
 // Presets de transmissão de tela: resolução, fps, codec e bitrate.
 // Recuperado do bundle deployado (chunk-CzevgFlM.js).
+import { h264ContentTypes, h264DecodeTypes } from './h264';
 
 export type Resolution = 'p720' | 'p1080' | 'p1440' | 'source' | 'auto';
 export type Codec = 'av1' | 'h265' | 'vp9' | 'h264' | 'vp8';
@@ -79,10 +80,10 @@ export const BITRATE_LIMITS: { bps: number; label: string }[] = [
 
 /**
  * Auto: a tela original até 60 fps; acima disso, 1080p.
- * O Chrome copia cada quadro da placa de vídeo para a memória e converte a cor numa thread só, e
- * limita essa cópia a meio núcleo (desktop_capture_device.cc: espera o dobro do tempo que a captura
- * levou). Em 1440p cada quadro tem 78% mais pixels que em 1080p e a 120 fps não sobra tempo:
- * a captura engasga. Em 1080p ela fecha.
+ * A captura é sempre no tamanho original (ver share.ts); o 1080p é aplicado no codificador. Acima de
+ * 60 fps cada quadro tem metade (ou menos) dos bits, e em 1440p isso já aparece como blocos em
+ * movimento rápido. Em 1080p o mesmo bitrate rende mais por pixel e quem assiste decodifica 120 fps
+ * com folga.
  */
 export const AUTO_HIGH_FPS = 60;
 export function autoResolution(frameRate: number): Resolution {
@@ -170,19 +171,47 @@ export function encoderProbes(): Partial<Record<Codec, EncoderProbe>> {
   return probed;
 }
 
+/**
+ * Como perguntar ao navegador por um codec. O H.264 precisa do perfil: sem ele o navegador responde
+ * pelo "Constrained Baseline" (42e01f), que no Windows e no Mac nunca vai para a placa. Perguntamos
+ * pelos perfis que de fato vão ser negociados (ver h264.ts).
+ */
+function contentTypes(codec: Codec): string[] {
+  return codec === 'h264' ? h264ContentTypes() : [MIME[codec]];
+}
+
+async function encodeInfo(mc: MediaCapabilities, codec: Codec, size: Size, fps: number, bitrate: number): Promise<EncoderProbe | null> {
+  let best: EncoderProbe | null = null;
+  for (const contentType of contentTypes(codec)) {
+    try {
+      const info = await mc.encodingInfo({
+        type: 'webrtc',
+        video: {
+          contentType,
+          width: size.width,
+          height: size.height,
+          framerate: fps,
+          bitrate,
+          // O livekit-client publica tela em AV1/VP9 com L1T3; o encoder de GPU precisa aceitar isso.
+          ...(isSvc(codec) ? { scalabilityMode: 'L1T3' } : {}),
+        },
+      } as MediaEncodingConfiguration);
+      if (!info.supported) continue;
+      const probe = { gpu: info.powerEfficient || hardwareOnly(codec), smooth: info.smooth };
+      if (probe.gpu) return probe;
+      best ??= probe;
+    } catch {
+      // tipo "webrtc" não suportado aqui: sem informação.
+    }
+  }
+  return best;
+}
+
 /** Uma pergunta só, sem mexer na sondagem da tela: este codec roda na placa neste tamanho e fps? */
 export async function gpuEncodes(codec: Codec, size: Size, fps: number): Promise<boolean> {
   const mc = navigator.mediaCapabilities as MediaCapabilities | undefined;
   if (mc === undefined || !supportedCodecs().includes(codec)) return false;
-  try {
-    const info = await mc.encodingInfo({
-      type: 'webrtc',
-      video: { contentType: MIME[codec], width: size.width, height: size.height, framerate: fps, bitrate: bitrateFor(size, fps, codec) },
-    } as MediaEncodingConfiguration);
-    return info.supported && info.powerEfficient;
-  } catch {
-    return false;
-  }
+  return (await encodeInfo(mc, codec, size, fps, bitrateFor(size, fps, codec)))?.gpu === true;
 }
 
 /**
@@ -197,23 +226,8 @@ export async function probeEncoders(size: Size, fps: number): Promise<Partial<Re
   await Promise.all(
     supportedCodecs().map(async (c) => {
       if (mc === undefined) return;
-      try {
-        const info = await mc.encodingInfo({
-          type: 'webrtc',
-          video: {
-            contentType: MIME[c],
-            width: size.width,
-            height: size.height,
-            framerate: fps,
-            bitrate,
-            // O livekit-client publica tela em AV1/VP9 com L1T3; o encoder de GPU precisa aceitar isso.
-            ...(isSvc(c) ? { scalabilityMode: 'L1T3' } : {}),
-          },
-        } as MediaEncodingConfiguration);
-        if (info.supported) out[c] = { gpu: info.powerEfficient || hardwareOnly(c), smooth: info.smooth };
-      } catch {
-        // tipo "webrtc" não suportado aqui: sem informação.
-      }
+      const probe = await encodeInfo(mc, c, size, fps, bitrate);
+      if (probe !== null) out[c] = probe;
     }),
   );
   probed = out;
@@ -221,43 +235,39 @@ export async function probeEncoders(size: Size, fps: number): Promise<Partial<Re
 }
 
 /**
- * Preferência entre os codecs de GPU. AV1 primeiro: melhor imagem por bit e camadas de tempo.
- * Depois H.264, que todo aparelho decodifica na placa (inclusive iPhone e Firefox), então nunca
- * aciona a reserva. H.265 por último: quem não tem decodificador dele (Firefox, iPhone, Linux,
- * placa antiga) fazia o LiveKit ligar a reserva para a sala inteira, e a reserva VP8 era codificada
- * no processador de quem transmite, em resolução cheia: o FPS do jogo despencava "do nada", na
- * hora que essa pessoa entrava.
+ * Automático, em ordem:
+ * 1. AV1 da placa, se todo mundo que está na sala decodifica AV1 na placa (atributo "hwdec"). No
+ *    Windows o Chrome não usa a placa para AV1 em chamada (kWebRtcAV1HWEncode vem desligado), então
+ *    lá isso não acontece.
+ * 2. H.264 da placa. Todo navegador decodifica (sem placa, no processador o H.264 é leve), sai com a
+ *    cópia menor para quem não aguenta (o H.265 sai sem), e nunca obriga a sala a trocar de codec
+ *    quando alguém entra. Com os bits que usamos (22 Mbps em 1080p60) a diferença de imagem para o
+ *    H.265 é pequena; quem quiser, escolhe H.265 no menu.
+ * 3. Outro codec da placa (H.265, VP9, AV1), com reserva em H.264 para quem não decodifica.
+ * 4. Sem placa de vídeo nenhuma: VP8 (vários núcleos; o H.264 por software usa um só).
+ *
+ * Antes o H.264 nunca era visto como "da placa" (o teste perguntava pelo perfil errado) e o LiveKit
+ * negociava o perfil que vai para o processador: num PC sem H.265, ou com alguém na sala sem
+ * decodificador de H.265 (a reserva era VP8), tudo caía no VP8 por software em resolução cheia
+ * (imagem ruim, fps baixo, travadas). Ver h264.ts.
  */
-const GPU_ORDER: Codec[] = ['av1', 'h264', 'vp9', 'h265'];
+const GPU_ORDER: Codec[] = ['h264', 'h265', 'vp9', 'av1'];
 
 /**
  * O que cada pessoa decodifica na placa de vídeo (atributo "hwdec", ver publishDecoders). Sem a
- * placa, o navegador de quem assiste decodifica no processador: AV1 em 1440p60 assim come 1 a 2
- * núcleos e trava o PC dela, mesmo com quem transmite tranquilo. No automático, um codec só entra
- * se todo mundo que já está na sala decodifica ele na placa; senão vai o próximo (H.264 quase todo
- * PC dos últimos 10 anos decodifica na placa).
+ * placa, o navegador de quem assiste decodifica no processador: AV1 ou H.265 em 1440p60 assim come
+ * 1 a 2 núcleos e trava o PC dela, mesmo com quem transmite tranquilo.
  */
 export function pickCodec(choice: CodecChoice, viewers: ReadonlySet<string>[] = [], exclude: ReadonlySet<Codec> = new Set()): Codec {
   // exclude: codecs que já vimos saindo no processador nesta transmissão (CodecGuard).
   const ok = supportedCodecs().filter((c) => !exclude.has(c));
   if (choice !== 'auto' && ok.includes(choice)) return choice;
+  const gpu = (c: Codec) => ok.includes(c) && (probed[c]?.gpu === true || hardwareOnly(c));
   const everyone = (c: Codec) => viewers.every((v) => v.has(c));
-  // Automático: o primeiro que a placa de vídeo codifica. Assim quem transmite quase não perde FPS.
-  // O H.265 só aparece no navegador quando existe encoder de hardware, então basta ele estar na
-  // lista: a sondagem às vezes diz "não" para ele (fps alto, tamanho grande). Ele fica por último
-  // porque precisa de reserva (ver GPU_ORDER).
-  for (const c of GPU_ORDER) {
-    if (!ok.includes(c) || !everyone(c)) continue;
-    if (probed[c]?.gpu === true || hardwareOnly(c)) return c;
-  }
-  // Nenhum codec da minha placa serve para todos: ainda assim prefere um da placa (o meu jogo não
-  // trava), o primeiro da ordem.
-  for (const c of GPU_ORDER) {
-    if (!ok.includes(c)) continue;
-    if (probed[c]?.gpu === true || hardwareOnly(c)) return c;
-  }
-  // Sem placa de vídeo: VP8. No Chrome do Windows o H.264 do LiveKit sai no OpenH264 (uma thread só)
-  // e o VP9 por software pesa muito; o VP8 usa vários núcleos e todo navegador toca.
+  if (gpu('av1') && everyone('av1')) return 'av1';
+  for (const c of GPU_ORDER) if (gpu(c)) return c;
+  // Sem placa de vídeo: VP8. O H.264 por software (OpenH264) usa uma thread só e o VP9 por
+  // software pesa muito; o VP8 usa vários núcleos e todo navegador toca.
   for (const c of ['vp8', 'vp9', 'h264'] as Codec[]) if (ok.includes(c)) return c;
   return ok[0] ?? 'vp8';
 }
@@ -311,14 +321,20 @@ export async function hardwareDecoders(): Promise<Codec[]> {
   const out: Codec[] = [];
   await Promise.all(
     (Object.keys(MIME) as Codec[]).map(async (c) => {
-      try {
-        const info = await mc.decodingInfo({
-          type: 'webrtc',
-          video: { contentType: MIME[c], width: 2560, height: 1440, framerate: 60, bitrate: 2e7 },
-        } as MediaDecodingConfiguration);
-        if (info.supported && info.powerEfficient) out.push(c);
-      } catch {
-        /* sem informação */
+      // H.264: os perfis que mandamos (High ou Baseline), não só o 42e01f.
+      for (const contentType of c === 'h264' ? h264DecodeTypes() : [MIME[c]]) {
+        try {
+          const info = await mc.decodingInfo({
+            type: 'webrtc',
+            video: { contentType, width: 2560, height: 1440, framerate: 60, bitrate: 2e7 },
+          } as MediaDecodingConfiguration);
+          if (info.supported && info.powerEfficient) {
+            out.push(c);
+            return;
+          }
+        } catch {
+          /* sem informação */
+        }
       }
     }),
   );
