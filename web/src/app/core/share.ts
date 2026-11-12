@@ -1,4 +1,5 @@
 // Publicar a tela (e o som dela) no LiveKit com as configurações escolhidas.
+import { captureRateFor } from './monitor';
 import {
   BackupCodecPolicy,
   LocalAudioTrack,
@@ -118,7 +119,9 @@ function displayMediaOptions(req: ShareRequest): DisplayMediaStreamOptions {
   return {
     // Só um teto bem alto: o Chrome entrega o tamanho original de qualquer monitor ou janela (sem
     // teto, ele usaria o tamanho da tela onde está o navegador e reduziria um monitor maior).
-    video: { width: { max: CAPTURE_MAX.width }, height: { max: CAPTURE_MAX.height }, frameRate: req.plan.frameRate },
+    // A captura pede o divisor do monitor logo acima do pedido (144 Hz: 72 para mandar 60; ver
+    // monitor.ts); o codificador continua com teto no pedido (maxFramerate em videoPublishOptions).
+    video: { width: { max: CAPTURE_MAX.width }, height: { max: CAPTURE_MAX.height }, frameRate: captureRateFor(req.plan.frameRate) },
     audio,
     selfBrowserSurface: 'include',
     surfaceSwitching: 'include',

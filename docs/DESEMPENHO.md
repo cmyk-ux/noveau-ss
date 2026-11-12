@@ -323,3 +323,27 @@ codificador, navegador encolhendo ou caminho (rede/servidor).
 Medido aqui (OpenH264 no processador, tela sintética 1920x1080 a 60): quem assiste recebe 1920x1080 a
 ~54 fps (o processador do sandbox é o limite), em todas as leituras. Com 2560x1440 (`qualidade.mjs`):
 1 camada, 2560x1440 do começo ao fim. Testes: `tools/e2e/autoteste.mjs`, `tools/e2e/captura.mjs`.
+
+## Oitava rodada (12/11/2026): 48 fps num monitor de 144 Hz
+
+Primeiro /teste do Pedro depois da sétima rodada:
+- Tamanho cheio: 1920x1080, H.265 na placa, 11 Mbps chegando, 0 travadas, "limitado por: nada".
+- Fps: a captura entregou **48** de 60 num monitor de **144 Hz**.
+- 48 = 144 / 3, ou seja, um quadro a cada 3 atualizações do monitor.
+
+O que o código do Chrome diz:
+- O timer da captura (`DesktopCaptureDevice::Core::ScheduleNextCaptureFrame`) usa o maior entre o período pedido e 2x o tempo da última captura (teto de meio núcleo).
+- O filtro de fps do `VideoTrackAdapter` tem 20% de tolerância e acumula a diferença; simulado, ele deixa passar 60 de uma fonte de 144.
+- Portanto a conta "144 / 3" sozinha não está provada pelo código. Ela pode vir do ritmo pedido batendo nas atualizações do monitor, ou do tempo de cada captura (cópia da placa) passando de ~10 ms.
+
+Mudanças:
+- A captura passa a pedir o divisor do monitor logo acima do pedido. Exemplos: 144 Hz e 60 pedidos → 72; 165 Hz → 82,5; 60/120/240 Hz → o próprio pedido. O codificador continua com teto no pedido (`maxFramerate`).
+- O monitor é medido pelos quadros de animação (`core/monitor.ts`).
+- O "Ceder" usa o mesmo ritmo na qualidade total; nos degraus, usa o fps do degrau.
+- O /teste agora faz uma varredura no fim: mede quantos quadros a captura entrega pedindo o fps escolhido, o divisor e a taxa do monitor (linhas "captura pedindo N").
+  - Se pedir mais dá mais quadros, o limite era o ritmo.
+  - Se todos dão o mesmo, é o teto da captura do navegador naquele PC, e o veredito diz isso.
+- O canvas da animação do /teste não é mais recriado a cada quadro, o que pesava na mesma placa que a captura usa.
+- Comparações de "codificador perdendo quadros" usam o menor entre captura e pedido, porque a captura agora pode passar do pedido.
+
+Teste: `tools/e2e/autoteste.mjs monitor144` (monitor de 144 Hz fingido nos quadros de animação: pede 72, varre 60/72/144, quem assiste recebe ~60).

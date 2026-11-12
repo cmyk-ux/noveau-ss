@@ -2,6 +2,7 @@ import { Component, DestroyRef, ElementRef, inject, signal, viewChild } from '@a
 import { RemoteTrack, RemoteTrackPublication, Room, RoomEvent, Track, VideoQuality } from 'livekit-client';
 import { requestToken, requiresSecret } from '../core/api';
 import { newKey, readLink } from '../core/link';
+import { captureRateFor, measureMonitor, monitorHz } from '../core/monitor';
 import { Prefs } from '../core/prefs';
 import { ScreenShareCancelledError, startShare, stopShare, type ShareResult } from '../core/share';
 import { StatsSampler, type Limitation } from '../core/stats';
@@ -44,6 +45,15 @@ interface Verdict {
   notes: string[];
 }
 
+/** Quanto a captura entrega pedindo um ritmo: uma linha da varredura. */
+interface Sweep {
+  asked: number;
+  got: number;
+}
+
+/** Segundos por ritmo na varredura da captura (mais ~1,5 s para assentar). */
+const SWEEP_SECONDS = 3;
+
 @Component({
   selector: 'cen-test-page',
   template: `
@@ -69,6 +79,7 @@ interface Verdict {
               tela ter movimento em todo quadro (o navegador só captura quando a tela muda).
             </p>
             <p class="hint mono">Ajustes da sala: {{ settingsText }}</p>
+            <p class="hint">No fim, confere quantos quadros a captura entrega pedindo outros ritmos (~15 s a mais).</p>
             @if (needsSecret()) {
               <div class="field">
                 <label class="label" for="secret">Senha da instância</label>
@@ -79,7 +90,7 @@ interface Verdict {
             <button class="btn primary wide" (click)="run()">Começar o teste</button>
           }
           @case ('running') {
-            <p class="lead">Medindo… {{ left() }} s</p>
+            <p class="lead">{{ sweeping() ? 'Conferindo a captura em outros ritmos…' : 'Medindo… ' + left() + ' s' }}</p>
             <p class="hint">Deixe esta janela à vista na tela compartilhada.</p>
           }
           @case ('error') {
@@ -99,7 +110,7 @@ interface Verdict {
             <button class="btn primary wide" (click)="run()">Testar de novo</button>
           }
         }
-        <video #view class="view" [class.on]="state() === 'running' || state() === 'done'" muted playsinline autoplay></video>
+        <video #view class="view" [class.on]="state() === 'running'" muted playsinline autoplay></video>
       </div>
     </div>
   `,
@@ -126,11 +137,11 @@ export class TestPage {
   protected readonly left = signal(SECONDS);
   protected readonly error = signal('');
   protected readonly verdict = signal<Verdict | null>(null);
+  protected readonly sweeping = signal(false);
   private readonly anim = viewChild.required<ElementRef<HTMLCanvasElement>>('anim');
   private readonly view = viewChild.required<ElementRef<HTMLVideoElement>>('view');
   private rooms: Room[] = [];
   private raf = 0;
-  private frameTimes: number[] = [];
   protected readonly settingsText = (() => {
     const s = this.prefs.stream();
     const res = s.resolution === 'auto' ? 'Auto' : s.resolution === 'source' ? 'Original' : s.resolution.replace('p', '') + 'p';
@@ -167,6 +178,7 @@ export class TestPage {
       });
       this.startAnimation();
       this.state.set('running');
+      await measureMonitor();
       share = await startShare(
         sender,
         {
@@ -180,7 +192,12 @@ export class TestPage {
         { onEndedByBrowser: () => undefined, onHealth: () => undefined, onSilentAudio: () => undefined, onLoad: () => undefined, onUpload: () => undefined },
       );
       const readings = await this.measure(sender, viewer);
-      this.verdict.set(judge(readings, plan.frameRate, planSize(plan).height, plan.resolution, this.monitorHz(), share));
+      // O "Ceder" mexe na captura: desligado antes da varredura, para não brigar com ela.
+      share.governor.stop();
+      this.sweeping.set(true);
+      const sweep = await this.sweepCapture(sender, plan.frameRate);
+      this.sweeping.set(false);
+      this.verdict.set(judge(readings, plan.frameRate, planSize(plan).height, plan.resolution, monitorHz(), share, sweep));
       this.state.set('done');
     } catch (e) {
       this.error.set(e instanceof ScreenShareCancelledError ? 'O compartilhamento foi cancelado.' : String((e as Error)?.message ?? e));
@@ -193,6 +210,32 @@ export class TestPage {
       share?.shrink.stop();
       await this.cleanup();
     }
+  }
+
+  /**
+   * Varredura da captura: quantos quadros o navegador entrega pedindo o fps escolhido, o divisor do
+   * monitor logo acima (o que a transmissão pede, monitor.ts) e a taxa do monitor. Mostra, em cada PC,
+   * se o limite é o ritmo pedido ou a própria captura.
+   */
+  private async sweepCapture(sender: Room, want: number): Promise<Sweep[]> {
+    const track = sender.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.track;
+    const media = track?.mediaStreamTrack;
+    const rtp = track?.sender;
+    if (media === undefined || rtp === undefined) return [];
+    const hz = monitorHz();
+    const asks = [...new Set([want, captureRateFor(want), ...(hz > want && hz <= 240 ? [hz] : [])])];
+    const base = media.getConstraints();
+    const out: Sweep[] = [];
+    for (const asked of asks) {
+      await media.applyConstraints({ ...base, frameRate: asked }).catch(() => undefined);
+      await new Promise((r) => setTimeout(r, 1500));
+      const a = await capturedFrames(rtp);
+      await new Promise((r) => setTimeout(r, SWEEP_SECONDS * 1000));
+      const b = await capturedFrames(rtp);
+      if (a !== null && b !== null && b.at > a.at) out.push({ asked, got: Math.round(((b.frames - a.frames) * 1000) / (b.at - a.at)) });
+    }
+    await media.applyConstraints(base).catch(() => undefined);
+    return out;
   }
 
   private async measure(sender: Room, viewer: Room): Promise<Reading[]> {
@@ -235,12 +278,16 @@ export class TestPage {
     const c = this.anim().nativeElement;
     const x = c.getContext('2d');
     if (x === null) return;
-    this.frameTimes = [];
     let n = 0;
-    const draw = (now: number) => {
-      this.frameTimes = [...this.frameTimes, now].slice(-120);
-      const w = (c.width = Math.round(window.innerWidth * (window.devicePixelRatio || 1)));
-      const h = (c.height = Math.round(window.innerHeight * (window.devicePixelRatio || 1)));
+    const draw = () => {
+      // Redimensiona só quando muda (trocar o tamanho do canvas todo quadro recria a imagem inteira e
+      // pesa na placa de vídeo, que é a mesma que a captura usa).
+      const w = Math.round(window.innerWidth * (window.devicePixelRatio || 1));
+      const h = Math.round(window.innerHeight * (window.devicePixelRatio || 1));
+      if (c.width !== w || c.height !== h) {
+        c.width = w;
+        c.height = h;
+      }
       n++;
       x.fillStyle = `hsl(${(n * 3) % 360},30%,14%)`;
       x.fillRect(0, 0, w, h);
@@ -254,14 +301,6 @@ export class TestPage {
       this.raf = requestAnimationFrame(draw);
     };
     this.raf = requestAnimationFrame(draw);
-  }
-
-  /** Taxa do monitor desta janela, medida pela animação (a captura de tela não passa disso). */
-  private monitorHz(): number {
-    const t = this.frameTimes;
-    if (t.length < 20) return 0;
-    const d = (t[t.length - 1] - t[0]) / (t.length - 1);
-    return d > 0 ? Math.round(1000 / d) : 0;
   }
 
   private async cleanup() {
@@ -286,7 +325,7 @@ function avg(xs: number[]): number {
   return xs.length === 0 ? 0 : Math.round(xs.reduce((a, b) => a + b, 0) / xs.length);
 }
 
-function judge(all: Reading[], wantFps: number, planHeight: number, resolution: string, hz: number, share: ShareResult | null): Verdict {
+function judge(all: Reading[], wantFps: number, planHeight: number, resolution: string, hz: number, share: ShareResult | null, sweep: Sweep[]): Verdict {
   const r = all.slice(-SETTLED);
   const last = r[r.length - 1] ?? all[all.length - 1];
   const capH = Number(last?.captureSize.split('x')[1] ?? 0);
@@ -311,9 +350,20 @@ function judge(all: Reading[], wantFps: number, planHeight: number, resolution: 
     notes.push(
       `A captura entregou só ${captureFps} fps. Com esta janela (e a animação) à vista na tela compartilhada isso é o navegador ou a placa de vídeo, não a rede.`,
     );
-  else if (!fpsOk && sentFps < captureFps * 0.85) notes.push(`A captura entrega ${captureFps} fps, mas saem ${sentFps}: o codificador perde quadros.`);
+  else if (!fpsOk && sentFps < Math.min(captureFps, fpsTarget) * 0.85) notes.push(`A captura entrega ${captureFps} fps, mas saem ${sentFps}: o codificador perde quadros.`);
   else if (!fpsOk) notes.push(`Saem ${sentFps} fps, mas chegam ${gotFps}: perda no caminho (rede ou servidor).`);
   if (hz > 0 && hz < wantFps) notes.push(`Este monitor roda a ${hz} Hz: a captura de tela não passa disso.`);
+  // Varredura: se pedir mais à captura dá mais quadros, o limite era o ritmo pedido; se todos os
+  // pedidos dão o mesmo, é a própria captura do navegador (cópia de cada quadro da placa).
+  const best = sweep.reduce<Sweep | null>((a, b) => (a === null || b.got > a.got ? b : a), null);
+  if (!fpsOk && best !== null && sweep.length > 1) {
+    const flat = sweep.every((x) => Math.abs(x.got - sweep[0].got) <= 3);
+    notes.push(
+      flat
+        ? `Pedindo ${sweep.map((x) => x.asked).join(', ')} fps a captura dá sempre ~${sweep[0].got}: é o teto da captura do navegador neste PC, não o ritmo pedido.`
+        : `Pedindo ${best.asked} fps a captura chega a ${best.got}: o ritmo pedido muda o resultado (veja as linhas "captura pedindo").`,
+    );
+  }
   return {
     ok: sizeOk && fpsOk,
     lines: [
@@ -327,7 +377,19 @@ function judge(all: Reading[], wantFps: number, planHeight: number, resolution: 
       { label: 'travadas', value: String(freezes), bad: freezes > 0 },
       { label: 'monitor', value: hz > 0 ? `${hz} Hz` : '?' },
       { label: 'teto do codificador', value: share === null ? '?' : formatBitrate(share.bitrate) },
+      { label: 'captura pedida', value: `${captureRateFor(wantFps, hz)} fps` },
+      ...sweep.map((x) => ({ label: `captura pedindo ${x.asked}`, value: `${x.got} fps`, bad: x.got < Math.min(x.asked, wantFps) * 0.85 })),
     ],
     notes,
   };
+}
+
+/** Quadros que a captura entregou até agora (media-source do sender), com o horário da leitura. */
+async function capturedFrames(sender: RTCRtpSender): Promise<{ frames: number; at: number } | null> {
+  const r = await sender.getStats().catch(() => null);
+  if (r === null) return null;
+  for (const s of r.values() as Iterable<any>) {
+    if (s.type === 'media-source' && s.kind === 'video' && typeof s.frames === 'number') return { frames: s.frames, at: s.timestamp };
+  }
+  return null;
 }
