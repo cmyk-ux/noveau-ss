@@ -6,5 +6,6 @@ export const routes: Routes = [
   { path: 'plugin', loadComponent: () => import('./pages/plugin-page').then((m) => m.PluginPage) },
   { path: 'celular', loadComponent: () => import('./pages/phone-page').then((m) => m.PhonePage) },
   { path: 'call', loadComponent: () => import('./pages/call-page').then((m) => m.CallPage) },
+  { path: 'teste', loadComponent: () => import('./pages/test-page').then((m) => m.TestPage) },
   { path: '**', redirectTo: '' },
 ];

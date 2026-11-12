@@ -288,3 +288,38 @@ Rhenan (H.264 na NVIDIA, 120 fps pedidos, "Ceder" desligado) mandava **320x180**
 - O mesmo print mostrava "captura de Rhenan7: ~60 de 120 fps" na área de trabalho: era o conteúdo
   (vídeo de 60). 50 e 60 entraram nos ritmos de conteúdo que não acusam (`CONTENT_RATES`).
 
+## Sétima rodada (12/11/2026): tela que não passa de 720p, sem jogo nenhum
+
+Pedro (R7 5800X, RTX 3070, nada aberto) não passava de 720p compartilhando a tela; antes da cópia menor
+e dos vigias, a tela dos amigos chegava "quase original" a 60 fps. Comparando o envio de hoje com o do
+começo (uma camada, sem adaptação), três coisas seguravam a imagem:
+
+- **A cópia menor (simulcast)**, desde 2e3b6d2 (09/11). Com duas camadas o servidor escolhe qual mandar
+  pela estimativa de banda de quem assiste. Medido aqui, em loopback e sem limite de rede, quem assistia
+  passava os primeiros ~10 s na cópia de 2/3 (1280x720 de uma tela 1080p); com a estimativa baixa (Wi-Fi,
+  servidor pequeno, começo de conexão) fica nela. A tela voltou a sair numa camada só (`share.ts`).
+  Quem precisa de cópia menor para rede ruim é exceção; a proteção contra travadas (que pulava para a
+  cópia menor) fica sem efeito e diz "sem cópia menor".
+- **`maintain-framerate`**. Com uma camada ativa o WebRTC liga o controle de qualidade do codificador: o
+  QualityScaler (QP) ou, com H.264 da placa sem QP confiável, o `BandwidthQualityScaler`, que tem
+  limites fixos por resolução para H.264 (1080p só com ~2,5 Mbps de estimativa, 720p com ~1,5). Com a
+  estimativa de banda ainda subindo, ele encolhe para 720p e demora a voltar (precisa de QP baixo por um
+  tempo). O `ShrinkGuard` da sexta rodada só agia abaixo da metade do tamanho, então 720p de 1080p
+  passava. Agora a tela já sai em `maintain-resolution` (`stream.ts`): o navegador nunca encolhe; faltando
+  banda de verdade ele corta quadros. O `ShrinkGuard` fica como rede de proteção.
+- **O aviso de "captura curta"** culpava um jogo que não existia. O Chrome só captura quando a tela muda:
+  área de trabalho, navegador e vídeo dão 30-40 fps num pedido de 60 sem nada de errado. O aviso saiu (o
+  número continua no painel de estatísticas); fica só o do codificador perdendo quadros.
+
+### Autoteste: `/teste`
+
+Uma página que qualquer pessoa roda sozinha (link "Testar minha transmissão" no menu da tela). Abre uma
+sala só dela no servidor de verdade, compartilha a tela com os ajustes da sala e, na mesma aba, uma
+segunda conexão assiste como qualquer pessoa. Uma animação cobre a página durante a medição, para a tela
+ter movimento em todo quadro. Em 20 s mostra o que chega a quem assiste (tamanho e fps) contra o que
+deveria chegar (a captura inteira, ou o teto escolhido; fps até a taxa do monitor), e onde caiu: captura,
+codificador, navegador encolhendo ou caminho (rede/servidor).
+
+Medido aqui (OpenH264 no processador, tela sintética 1920x1080 a 60): quem assiste recebe 1920x1080 a
+~54 fps (o processador do sandbox é o limite), em todas as leituras. Com 2560x1440 (`qualidade.mjs`):
+1 camada, 2560x1440 do começo ao fim. Testes: `tools/e2e/autoteste.mjs`, `tools/e2e/captura.mjs`.

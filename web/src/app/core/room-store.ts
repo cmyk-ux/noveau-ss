@@ -3,7 +3,7 @@ import { LoadGovernor, LoadState } from './load';
 import { UploadGuard, UploadState } from './upload-guard';
 import { CodecGuard } from './codec-guard';
 import { ShrinkGuard } from './shrink-guard';
-import { CAPTURE_FIX, Diagnostics, captureAdvice, encodeSendHealth, fpsStep } from './diag';
+import { Diagnostics, encodeSendHealth, fpsStep } from './diag';
 import { DestroyRef, Injectable, computed, effect, inject, signal } from '@angular/core';
 import {
   CameraAddress,
@@ -118,8 +118,6 @@ export class RoomStore {
   readonly microphones = new DeviceList(listMicrophones, () => this.session.activeDevice('audioinput'));
   private watch: ShareWatch | null = null;
   private governor: LoadGovernor | null = null;
-  /** A captura curta já foi avisada nesta transmissão (o aviso aparece uma vez; o selo fica). */
-  private captureWarned = false;
   private uploadGuard: UploadGuard | null = null;
   private codecGuard: CodecGuard | null = null;
   private shrinkGuard: ShrinkGuard | null = null;
@@ -386,7 +384,7 @@ export class RoomStore {
           // viram "" para o atributo não mudar a cada oscilação do processador.
           cpu: l?.pressure === 'serious' || l?.pressure === 'critical' ? l.pressure : '',
           lim: short !== null ? short : h?.sustained ? h.reason : 'none',
-          ...(short !== null && h !== null ? { cf: fpsStep(short === 'capture' ? h.captureFps : h.fps), wf: h.wantFps } : {}),
+          ...(short !== null && h !== null ? { cf: fpsStep(h.fps), wf: h.wantFps } : {}),
         }),
       );
     });
@@ -798,7 +796,6 @@ export class RoomStore {
         },
       },
     );
-    this.captureWarned = false;
     this.codecGuard?.stop();
     this.codecGuard = r.guard;
     this.shrinkGuard?.stop();
@@ -824,33 +821,6 @@ export class RoomStore {
     const wasLimited = before?.sustained ?? false;
     this._health.set(h);
     if (wasLimited && !h.sustained && h.short === null) this.toast.show('A transmissão voltou à qualidade total.');
-    if (h.short === 'capture' && before?.short !== 'capture') this.captureShort(h);
-  }
-
-  /**
-   * A captura do navegador ficou curta (jogo ocupando a placa de vídeo): avisa uma vez por transmissão
-   * com o motivo e o que fazer, e registra no diário (vai para o servidor) a cada episódio.
-   */
-  private captureShort(h: ShareHealth) {
-    const cpu = this._load()?.pressure ?? '';
-    const cf = fpsStep(h.captureFps);
-    const enc = this._encoder();
-    this.diag.noteCapture({
-      who: this.prefs.name() || 'você',
-      cf,
-      wf: h.wantFps,
-      cpu,
-      metrics: {
-        superficie: this._activity()?.surface ?? '',
-        tamanho: `${h.width}x${h.height}`,
-        fpsEnviados: h.fps,
-        codec: enc?.codec ?? '',
-        placa: enc?.gpu === true ? 'sim' : 'não',
-      },
-    });
-    if (this.captureWarned) return;
-    this.captureWarned = true;
-    this.toast.show(`Sua tela está saindo a ~${cf} de ${h.wantFps} fps. ${captureAdvice(cpu)} ${CAPTURE_FIX}`, { ms: 16000 });
   }
 
   /** Para de mandar o som da tela, mantendo a imagem. */

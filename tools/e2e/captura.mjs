@@ -1,19 +1,19 @@
-// Captura curta (jogo ocupando a placa de vídeo) e o "Ceder quando o PC apertar".
+// Captura com menos quadros que o pedido, o "Ceder quando o PC apertar" e a resolução travada.
 //
 // A fonte da tela é sintética (canvas que muda todo quadro) no lugar do getDisplayMedia, com o fps
 // que a "captura" entrega controlado aqui. Num PC de verdade, com o jogo usando a placa inteira, o
 // Chrome entrega bem menos quadros do que o pedido (ver docs/DESEMPENHO.md, "Quinta rodada").
 //
 // Partes (cada uma numa sala nova, A transmite e B assiste):
-//   curta   captura a 18 fps com 60 pedidos: A vê o aviso na tecla "prévia", B vê "captura de A".
+//   curta   captura a 18 fps com 60 pedidos: nenhum aviso (o navegador só captura o que muda), o
+//           número aparece no painel.
 //   cheia   captura a 60 fps: nenhum aviso.
 //   video   captura firme a 30 fps (vídeo, jogo travado em 30): nenhum aviso.
 //   sessenta 120 pedidos, conteúdo de 60 (área de trabalho com vídeo, ou monitor de 60 Hz): nenhum aviso.
 //   parada  tela parada (o navegador quase não manda nada): nenhum aviso.
 //   ceder   "Ceder" ligado; processador "serious" (75-90%) não mexe; "critical" baixa o fps; volta.
-//   encolhe o getStats de A finge o que o Chrome contou com H.264 na NVIDIA (320x180, "bandwidth", 7,3 Mbps
-//           de alvo) enquanto a tela estiver em "manter fluidez": o vigia (shrink-guard.ts) passa para
-//           "manter resolução". (O OpenH264 daqui não encolhe sozinho nem com 2 Mbps: não dá para provocar.)
+//   encolhe a tela começa em "manter resolução" (o controle de qualidade do navegador não liga) e o
+//           vigia (shrink-guard.ts) não precisa agir, mesmo com o getStats fingindo 320x180 em "manter fluidez".
 // Uso: BASE=http://127.0.0.1:3001 node tools/e2e/captura.mjs [partes separadas por vírgula]
 // Sai com 1 se alguma conferência falhar.
 import { createRequire } from 'node:module';
@@ -142,25 +142,19 @@ async function done(r) {
 }
 
 if (ONLY.includes('curta')) {
-  console.log('\n[curta] captura a 18 fps, 60 pedidos');
+  // Antes acusava "captura curta" e culpava um jogo; o navegador só captura quando a tela muda, então
+  // área de trabalho e navegador dão menos quadros que o pedido sem nada de errado. Agora o número só
+  // aparece no painel de estatísticas (e no /teste).
+  console.log('\n[curta] captura a 18 fps, 60 pedidos: sem aviso, o número fica no painel');
   const r = await room('curta', { fps: 18 });
-  // O registro vai para o servidor (a cada 15 s), com os números do envio: escuta desde já para não perder o envio.
-  const sending = r.A.page
-    .waitForRequest((q) => q.url().endsWith('/api/diag') && (q.postData() ?? '').includes('my-capture'), { timeout: 80000 })
-    .then((q) => JSON.parse(q.postData()).events.find((e) => e.cause === 'my-capture'))
-    .catch(() => null);
-  const key = await waitFor(() => keyText(r.A), 35000);
+  await new Promise((res) => setTimeout(res, 16000));
   const h = await health(r.A);
   console.log('  saúde de A:', JSON.stringify(h));
-  check(h?.short === 'capture', 'A acusa captura curta');
-  check(/^(15|20)\/60fps$/.test(key), `tecla "prévia" de A mostra os quadros (${key || 'nada'})`);
-  const note = await waitFor(() => noteText(r.B), 15000);
-  check(/captura de A: ~(15|20) de 60 fps/.test(note), `B vê o motivo na faixa de cima (${note || 'nada'})`);
-  const diary = await r.A.page.evaluate(() => window.__noveau.store.diag.events().map((e) => e.cause));
-  check(diary.includes('my-capture'), `diário de A registra a captura curta (${diary.join(',') || 'vazio'})`);
-  const sent = await sending;
-  console.log('  enviado ao servidor:', JSON.stringify(sent?.metrics ?? null));
-  check(sent?.metrics?.fpsPedidos === 60 && sent?.metrics?.fpsCapturados > 0, 'o registro chega ao servidor com os quadros');
+  check(h?.short !== 'capture', 'A não acusa captura curta');
+  check((await keyText(r.A)) === '', 'nenhum aviso na tecla "prévia" de A');
+  check(!/captura de A/.test(await noteText(r.B)), 'B não vê aviso de captura');
+  const st = await r.A.page.evaluate(async () => (await window.__noveau.store.sendingStats())?.captureFps ?? 0);
+  check(st >= 12 && st <= 24, `o painel de A mostra os quadros capturados (${st})`);
   await done(r);
 }
 
@@ -243,23 +237,22 @@ if (ONLY.includes('ceder')) {
 }
 
 if (ONLY.includes('encolhe')) {
-  console.log('\n[encolhe] o navegador encolhe a tela com bits de sobra');
+  // A tela já sai em "manter resolução": o controle de qualidade do navegador nem liga. O getStats falso
+  // só responde em "manter fluidez", então se algo voltar a pôr a tela nesse modo o vigia ainda age.
+  console.log('\n[encolhe] a tela sai com a resolução travada');
   const r = await room('encolhe', { fps: 60, fakeShrink: true });
   const pref = () =>
     r.A.page.evaluate(() => {
       const s = window.__noveau?.room?.localParticipant?.getTrackPublication('screen_share')?.track?.sender;
       return s ? (s.getParameters().degradationPreference ?? '(nenhum)') : null;
     });
-  console.log('  no começo:', await pref());
-  const fixed = await waitFor(async () => r.A.logs.find((l) => l.includes('encolheu a tela')) ?? null, 30000);
-  console.log('  vigia:', fixed ?? 'não agiu');
-  check(fixed !== null && /320x180/.test(fixed), 'o vigia percebe o encolhimento (320x180 com 7,3 Mbps de alvo)');
-  const now = await waitFor(async () => ((await pref()) === 'maintain-resolution' ? 'maintain-resolution' : null), 5000);
-  check(now === 'maintain-resolution', `a tela passa para "manter resolução" (${now ?? (await pref())})`);
-  const diary = await r.A.page.evaluate(() => window.__noveau.store.diag.events().map((e) => e.cause));
-  check(diary.includes('my-shrink'), `diário registra (${diary.join(',') || 'vazio'})`);
+  const start = await pref();
+  console.log('  no começo:', start);
+  check(start === 'maintain-resolution', `a tela começa em "manter resolução" (${start})`);
+  await new Promise((res) => setTimeout(res, 10000));
+  check(!r.A.logs.some((l) => l.includes('encolheu a tela')), 'o vigia não precisa agir');
   const panel = await r.A.page.evaluate(async () => (await window.__noveau.store.sendingStats())?.height ?? 0);
-  check(panel >= 700, `depois, o tamanho real volta a aparecer (${panel}p)`);
+  check(panel >= 700, `sai no tamanho da captura (${panel}p)`);
   await done(r);
 }
 

@@ -133,19 +133,19 @@ LiveKit (Room) ──eventos──► RoomSession ──RoomSnapshot──► Ro
 20. **O foco não é roubado.** Quem assiste uma tela continua nela quando chega outra tela ou câmera
     (`focusOnArrival`); aparece um aviso com "ver" (`onShareArrived`). Só uma câmera em foco automático
     dá lugar à grade. Voltar a ver uma tela escondida volta para a grade se o foco era automático.
-21. **Fps baixo em jogo tem nome.** Quando a captura do navegador entrega menos que o pedido (jogo usando a
-    placa de vídeo inteira; o Chrome espera a cópia de cada quadro e dobra o intervalo entre capturas),
-    quem transmite e quem assiste veem "captura em ~N de M fps" com o motivo e o que fazer
-    (`CaptureShortfall` em `core/stats.ts`, `captureAdvice`/`CAPTURE_FIX` em `core/diag.ts`). Nada de
-    baixar fps ou resolução "por precaução": o "Ceder" só age com o processador em `critical` (acima de
-    ~90%); `serious` (75-90%) é o normal de um jogo. Números em `docs/DESEMPENHO.md`, "Quinta rodada".
-    Teste: `tools/e2e/captura.mjs`.
-22. **O navegador não encolhe a tela com banda sobrando.** Em "manter fluidez" o controle de qualidade do
-    WebRTC (QualityScaler) pode reduzir a imagem até 320x180 olhando só o QP, e conta isso como "banda".
-    `ShrinkGuard` (`core/shrink-guard.ts`) vê camada bem menor que a planejada, com "bandwidth" e mais de
-    0,3 bit por pixel por quadro no alvo, por 6 s, e passa a tela para `maintain-resolution` (tira o limite
-    na hora). O painel mostra "controle de qualidade do navegador (não é a rede)". Teste: parte `encolhe`
-    de `tools/e2e/captura.mjs`.
+21. **Fps capturado é número, não aviso.** O Chrome só captura quando a tela muda, então menos quadros
+    que o pedido é o normal na área de trabalho. Não há aviso de "captura curta" (ele culpava um jogo que
+    não existia); o número fica no painel de estatísticas e no `/teste`. O único aviso é o do codificador
+    perdendo quadros (`CaptureShortfall` em `core/stats.ts`). Nada de baixar fps ou resolução "por
+    precaução": o "Ceder" só age com o processador em `critical` (acima de ~90%). Teste:
+    `tools/e2e/captura.mjs`.
+22. **A tela sai inteira, numa camada só, com a resolução travada.** `maintain-resolution` desde o começo
+    (`stream.ts`): o controle de qualidade do WebRTC nunca encolhe a imagem; faltando banda, ele corta
+    quadros. Sem simulcast (`share.ts`): com a cópia menor o servidor mandava 720p a quem a estimativa de
+    banda não alcançava a de cima. `ShrinkGuard` (`core/shrink-guard.ts`) continua como rede de proteção
+    se algo voltar a pôr a tela em "manter fluidez". Antes de mexer nisso, rode o `/teste`
+    (`pages/test-page.ts`, `tools/e2e/autoteste.mjs`) e `tools/e2e/qualidade.mjs`. Números em
+    `docs/DESEMPENHO.md`, "Sétima rodada".
 
 ## Atributos dos participantes
 
@@ -155,7 +155,7 @@ vai mudar.
 | Atributo | Quem escreve | Quando muda |
 | --- | --- | --- |
 | `watching` | cada pessoa (`room-session.ts`) | troca de foco/grade |
-| `tx` | quem transmite (`room-store.ts` → `publishSendHealth`) | perda/teto mudam de faixa, CPU entra ou sai de `serious`/`critical`, captura curta começa/acaba ou muda de degrau (`cf`/`wf`, de 5 em 5 fps); no máximo 1 a cada 5 s |
+| `tx` | quem transmite (`room-store.ts` → `publishSendHealth`) | perda/teto mudam de faixa, CPU entra ou sai de `serious`/`critical`, codificador perdendo quadros começa/acaba, fps capturado muda de degrau (`cf`/`wf`, de 5 em 5 fps); no máximo 1 a cada 5 s |
 | `act` | quem transmite (`activity.ts`) | começa/para de transmitir, troca de janela |
 | `hwdec` | cada pessoa, ao entrar | ao entrar e ao voltar de uma queda |
 | `direct` | cada pessoa (`direct.ts`) | conversa direta começa/acaba |

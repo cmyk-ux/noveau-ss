@@ -21,7 +21,12 @@ export interface ShareHealth {
   short: Shortfall;
 }
 
-export type Shortfall = 'capture' | 'encoder' | null;
+/**
+ * 'encoder' = a captura entrega e o codificador perde quadros. (Havia também 'capture', a captura
+ * abaixo do pedido, que culpava um jogo; mas a captura do navegador só entrega quando a tela muda, e
+ * numa área de trabalho comum ela fica em 30-40 fps sem nada de errado. Acusava à toa.)
+ */
+export type Shortfall = 'encoder' | null;
 
 export function asLimitation(v: unknown): Limitation {
   return v === 'cpu' || v === 'bandwidth' || v === 'none' ? v : 'other';
@@ -88,7 +93,8 @@ function layersOf(report: RTCStatsReport): string[] {
   const out: { h: number; text: string }[] = [];
   for (const s of report.values() as Iterable<any>) {
     if (s.type !== 'outbound-rtp' || s.kind !== 'video') continue;
-    const rid = typeof s.rid === 'string' ? s.rid : '-';
+    // Sem rid = uma camada só (a tela, sem simulcast).
+    const rid = typeof s.rid === 'string' ? s.rid : 'única';
     const h = num(s, 'frameHeight');
     const text =
       s.active === false
@@ -188,15 +194,6 @@ const SHORT_RATIO = 0.8;
  * 2 fps com um relógio mudando mandou ~3,4 Mbps por uns 8 s), por isso também o piso de quadros.
  */
 const MOVING_BPS = 1.5e6;
-/** Menos que isso é tela parada com um detalhe mudando (relógio, cursor), não jogo sem captura. */
-const MIN_SHORT_FPS = 8;
-/**
- * Ritmos de vídeo, de jogo travado e de monitor: captura firme num deles é o conteúdo (ou o monitor de
- * 60 Hz), não falta de captura. Visto em 12/11/2026: área de trabalho com vídeo de 60 fps e 120 pedidos
- * acusava "captura curta" com a dica de jogo pesando na placa.
- */
-const CONTENT_RATES = [24, 25, 30, 50, 60];
-
 interface ShortSample {
   capture: number;
   sent: number;
@@ -204,21 +201,14 @@ interface ShortSample {
   moving: boolean;
 }
 
-function contentPaced(samples: ShortSample[]): boolean {
-  return CONTENT_RATES.some((r) => samples.every((x) => Math.abs(x.capture - r) <= 1.5));
-}
-
 /**
- * Captura curta: a tela está mexendo (bits altos) e o navegador entrega bem menos quadros do que o
- * pedido, por ~10 s. Em jogo isso quase sempre é a placa de vídeo (ou o processador) ocupada pelo
- * jogo: o Chrome copia cada quadro da placa e espera a cópia terminar, e com o jogo usando a placa
- * inteira essa espera cresce; aí ele ainda dobra o intervalo entre capturas para a captura não passar
- * de meio núcleo (DesktopCaptureDevice::Core::ScheduleNextCaptureFrame). 27 ms de espera viram ~18 fps.
- * O Chrome não pede prioridade na placa (o OBS só consegue isso rodando como administrador).
+ * Codificador perdendo quadros: a tela está mexendo, a captura entrega o pedido e saem bem menos
+ * quadros do que ela entrega, por ~10 s (GPU ocupada por um jogo, por exemplo).
  *
- * Exceções que não são falta de captura: tela parada (o navegador só captura o que muda: poucos bits
- * ou poucos quadros) e conteúdo que tem menos quadros mesmo (vídeo de 24/25/30/50/60 fps, jogo travado em
- * 30): captura firme num desses ritmos não acusa. Precisa estar curta em todas as leituras de ~10 s.
+ * O aviso de "captura curta" (menos quadros capturados que o pedido) saiu em 12/11/2026: o navegador
+ * só captura quando a tela muda, então área de trabalho, navegador ou vídeo dão naturalmente 30-40 fps
+ * num pedido de 60, e o aviso culpava um jogo que nem estava aberto. O número capturado continua no
+ * painel de estatísticas e no /teste, que mede com uma animação na tela.
  */
 export class CaptureShortfall {
   private samples: ShortSample[] = [];
@@ -227,17 +217,11 @@ export class CaptureShortfall {
   /** Uma leitura. Devolve o estado depois dela. */
   push(x: ShortSample): Shortfall {
     this.samples = [...this.samples, x].slice(-SHORT_WINDOW);
-    const capture = this.samples.filter(
-      (s) => s.moving && s.want >= 30 && s.capture >= MIN_SHORT_FPS && s.capture < s.want * SHORT_RATIO,
-    );
     const encoder = this.samples.filter(
       (s) => s.moving && s.want >= 30 && s.capture >= s.want * SHORT_RATIO && s.sent < s.capture * SHORT_RATIO,
     );
-    const paced = this.samples.length === SHORT_WINDOW && contentPaced(this.samples);
-    if (!paced && capture.length >= SHORT_ON) this.state = 'capture';
-    else if (encoder.length >= SHORT_ON) this.state = 'encoder';
-    else if (paced || (this.state === 'capture' && capture.length <= SHORT_OFF) || (this.state === 'encoder' && encoder.length <= SHORT_OFF))
-      this.state = null;
+    if (encoder.length >= SHORT_ON) this.state = 'encoder';
+    else if (this.state === 'encoder' && encoder.length <= SHORT_OFF) this.state = null;
     return this.state;
   }
 
