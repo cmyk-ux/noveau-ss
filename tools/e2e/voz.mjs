@@ -73,6 +73,8 @@ export function fakeMonitor({ width, height }) {
   md.getDisplayMedia = async (c = {}) => {
     const s = await capture({ ...c, video: c.video === false ? false : sized(c.video) });
     for (const t of s.getVideoTracks()) screens.add(t);
+    // A última captura, para o teste simular o "Parar de compartilhar" do navegador.
+    window.__noveauDisplay = s;
     return s;
   };
   const T = MediaStreamTrack.prototype;

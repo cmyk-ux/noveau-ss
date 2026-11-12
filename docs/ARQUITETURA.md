@@ -77,6 +77,12 @@ LiveKit (Room) ──eventos──► RoomSession ──RoomSnapshot──► Ro
     foram acertados:
     - Som de estúdio de uma tela escondida continuava tocando (o som normal já parava). Agora segue a
       mesma regra: escondida não toca.
+    - O "Parar de compartilhar" do navegador não desligava o modo estúdio: o LiveKit ouve o mesmo
+      `ended` da faixa antes de nós e já tirou a publicação, então o nosso teste "a publicação ainda é
+      esta?" nunca passava e o PCM (silêncio) seguia indo para sempre, com o selo "estúdio 24-bit"
+      aceso em quem assistia. Agora o envio para sozinho quando a faixa acaba, manda um pacote de
+      0 frames ("acabou"), e quem recebe fecha o player quando a tela sai e ignora PCM de quem não
+      tem tela publicada. Para qualquer coisa presa à tela: confira o `ended` sem exigir a publicação.
     - Depois que o vigia do codificador trocava de codec, a proteção de perda na subida continuava
       contando do teto do codec antigo. Agora recomeça do teto novo (`UploadGuard.retarget`).
 11. **Ação que demora (ligar microfone, mudar a voz, republicar) vai numa fila.** Ligar o microfone cria a
