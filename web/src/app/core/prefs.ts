@@ -1,5 +1,5 @@
 import { Injectable, signal } from '@angular/core';
-import { VOICE_MODES, VoiceMode } from './voice';
+import { EqBand, EqPreset, VoiceSettings, cleanBands, cleanVoice } from './voice-dsp';
 import { BITRATE_LIMITS, CodecChoice, DEFAULT_STREAM, FRAME_RATES, RESOLUTIONS, StreamSettings } from './stream';
 
 function oneOf<T>(value: unknown, allowed: T[], fallback: T): T {
@@ -134,12 +134,40 @@ const store = {
   set studioLatency(v: number) {
     ls.setItem('cenaculum:studio-latency', String(v));
   },
-  // Tratamento do microfone: IA (RNNoise) por padrão.
-  get voiceMode(): VoiceMode {
-    return oneOf(ls.getItem('noveau:voice'), VOICE_MODES, 'ia');
+  // Tratamento do microfone (veja voice-dsp.ts). Chave nova; quem vinha dos 3 modos antigos
+  // ('ia', 'navegador', 'cru') começa no equivalente.
+  get voice(): VoiceSettings {
+    const raw = ls.getItem('noveau:voz2');
+    if (raw !== null) {
+      try {
+        return cleanVoice(JSON.parse(raw));
+      } catch {
+        /* cai no padrão */
+      }
+    }
+    const old = ls.getItem('noveau:voice');
+    const base = cleanVoice(null);
+    if (old === 'navegador') return { ...base, denoise: 'navegador' };
+    if (old === 'cru') return { ...base, echo: 'off', agc: false, denoise: 'off', eqOn: false };
+    return base;
   },
-  set voiceMode(v: VoiceMode) {
-    ls.setItem('noveau:voice', v);
+  set voice(v: VoiceSettings) {
+    ls.setItem('noveau:voz2', JSON.stringify(v));
+  },
+  get eqPresets(): EqPreset[] {
+    try {
+      const list = JSON.parse(ls.getItem('noveau:eq-presets') ?? '[]');
+      if (!Array.isArray(list)) return [];
+      return list
+        .filter((p) => typeof p?.name === 'string' && typeof p?.id === 'string')
+        .slice(0, 30)
+        .map((p) => ({ id: String(p.id), name: String(p.name).slice(0, 32), hint: 'Salvo por você.', bands: cleanBands(p.bands), mine: true }));
+    } catch {
+      return [];
+    }
+  },
+  set eqPresets(v: EqPreset[]) {
+    ls.setItem('noveau:eq-presets', JSON.stringify(v.map((p) => ({ id: p.id, name: p.name, bands: p.bands }))));
   },
   get cursorOn(): boolean {
     return ls.getItem('cenaculum:cursor') === 'yes';
@@ -197,12 +225,29 @@ export class Prefs {
     store.adaptToLoad = v;
     this._adaptToLoad.set(v);
   }
-  private readonly _voiceMode = signal(store.voiceMode);
-  /** Como o microfone é tratado antes de ir para a sala (veja voice.ts). */
-  readonly voiceMode = this._voiceMode.asReadonly();
-  setVoiceMode(v: VoiceMode) {
-    store.voiceMode = v;
-    this._voiceMode.set(v);
+  private readonly _voice = signal(store.voice);
+  /** Como o microfone é tratado antes de ir para a sala (veja voice-dsp.ts). */
+  readonly voice = this._voice.asReadonly();
+  setVoice(v: VoiceSettings) {
+    store.voice = v;
+    this._voice.set(v);
+  }
+  private readonly _eqPresets = signal(store.eqPresets);
+  /** Presets do equalizador salvos pela pessoa. */
+  readonly eqPresets = this._eqPresets.asReadonly();
+  saveEqPreset(name: string, bands: EqBand[]): EqPreset {
+    const clean = name.trim().slice(0, 32) || 'Meu preset';
+    const others = this._eqPresets().filter((p) => p.name !== clean);
+    const preset: EqPreset = { id: 'meu-' + Date.now().toString(36), name: clean, hint: 'Salvo por você.', bands: bands.map((b) => ({ ...b })), mine: true };
+    const next = [...others, preset];
+    store.eqPresets = next;
+    this._eqPresets.set(next);
+    return preset;
+  }
+  deleteEqPreset(id: string) {
+    const next = this._eqPresets().filter((p) => p.id !== id);
+    store.eqPresets = next;
+    this._eqPresets.set(next);
   }
   private readonly _cursorOn = signal(store.cursorOn);
   private readonly _studio = signal(store.studio);

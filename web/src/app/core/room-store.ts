@@ -17,12 +17,16 @@ import {
   requestObsKey,
   requestToken,
   revokeCamera,
+  setRoomAudio,
 } from './api';
 import { CamPrefs } from './cam-prefs';
 import { DeviceList, listMicrophones, listWebcams } from './devices';
 import { RoomLink } from './link';
 import { Prefs } from './prefs';
-import type { VoiceMode } from './voice';
+import type { CaptureFacts } from './voice';
+import { voiceWorkerSupported } from './voice';
+import { RoomAudio, ROOM_AUDIO, VoiceSettings } from './voice-dsp';
+import type { VoiceMeter } from './voice.worker';
 import {
   focusedShare,
   focusedWatchers,
@@ -175,7 +179,20 @@ export class RoomStore {
   readonly micOn = computed(() => isMicOn(this._snapshot()));
   /** O microfone do próprio aparelho (não o do celular ligado por link) está no ar. */
   readonly ownMicOn = computed(() => this._snapshot().me.mic);
-  readonly voiceMode = computed(() => this.prefs.voiceMode());
+  /** Tratamento da voz (pessoal) e a qualidade de áudio da sala (vale para todos). */
+  readonly voice = computed(() => this.prefs.voice());
+  readonly roomAudio = computed(() => this._snapshot().audio);
+  /** Janela da voz (equalizador, ruído, eco, sala) aberta. */
+  private readonly _voiceOpen = signal(false);
+  readonly voiceOpen = this._voiceOpen.asReadonly();
+  private readonly _voiceMeter = signal<VoiceMeter | null>(null);
+  /** Medidores do worker da voz (~15 por segundo, só com a janela aberta). */
+  readonly voiceMeter = this._voiceMeter.asReadonly();
+  private readonly _voiceFacts = signal<CaptureFacts | null>(null);
+  /** O que a captura entregou: se o eco do PC inteiro existe aqui, taxa do microfone. */
+  readonly voiceFacts = this._voiceFacts.asReadonly();
+  /** Este navegador tem o caminho rápido (Worker); sem ele, só o filtro do navegador. */
+  readonly voiceWorker = voiceWorkerSupported();
   readonly focused = computed(() => focusedShare(this._snapshot()));
   /** Meu celular ligado por link (câmera/microfone dele), ou null. */
   readonly myPhone = computed(() => this._snapshot().me.phone);
@@ -286,14 +303,32 @@ export class RoomStore {
   constructor() {
     // Espelhar o próprio retorno (PC ou celular) vale em todo lugar onde você se vê.
     effect(() => this.session.setMirrorSelf(this.camPrefs.mirror()));
-    void this.session.setVoiceMode(this.prefs.voiceMode());
-    this.session.onVoiceFallback = () =>
-      this.toast.show('A redução de ruído por IA não carregou; o microfone foi com o filtro do navegador.');
+    void this.session.setVoice(this.prefs.voice());
+    this.session.onVoiceMeter = (m) => this._voiceMeter.set(m);
+    this.session.onVoiceFacts = (f) => this._voiceFacts.set(f);
+    this.session.onVoiceEvent = (m) => {
+      if (m.type === 'overload') {
+        this.toast.show('O PC não está dando conta da IA forte: voltei para a IA leve.');
+        void this.setVoice({ denoise: 'leve' });
+      } else if (m.engine === 'forte') {
+        this.toast.show('A IA forte não carregou: a voz segue com a IA leve.');
+        void this.setVoice({ denoise: 'leve' });
+      } else {
+        this.toast.show('A redução de ruído por IA não carregou: use a do navegador.');
+      }
+    };
     this.session.onMicMoved = (toMobile) =>
       this.toast.show(`Seu microfone passou para o ${toMobile ? 'celular' : 'computador'}. Este aqui ficou mudo.`);
     this.session.onFocusedStats = (p) => this.diag.feed(p);
     const offChange = this.session.onChange((s) => {
       if (!s.shares.some((x) => x.isLocal && x.kind === 'screen')) this.forgetShare();
+      // Alguém mudou a qualidade de áudio da sala (não conta o que já estava ao entrar).
+      const before = this._snapshot();
+      if (before.status === 'connected' && s.audio.preset !== before.audio.preset && s.audio.by !== null) {
+        const label = ROOM_AUDIO.find((p) => p.id === s.audio.preset)?.label ?? s.audio.preset;
+        const who = s.audio.by === this.prefs.name() ? 'Você' : s.audio.by;
+        this.toast.show(`${who} mudou o áudio da sala para ${label}. Os microfones religam com o ajuste novo.`);
+      }
       this._snapshot.set(s);
       if (!s.me.mic) this._micMonitor.set(false);
       this.hintVolume(s);
@@ -591,7 +626,7 @@ export class RoomStore {
     const on = !(this.micWanted ?? this._snapshot().me.mic);
     this.micWanted = on;
     try {
-      await this.session.setMicrophone(on, this.prefs.voiceMode());
+      await this.session.setMicrophone(on, this.prefs.voice());
     } catch {
       this.toast.show('Não foi possível acessar o microfone.');
     } finally {
@@ -605,15 +640,40 @@ export class RoomStore {
   /** Ouvindo o próprio microfone (como ele chega para os outros). */
   readonly micMonitor = this._micMonitor.asReadonly();
 
-  async setVoiceMode(mode: VoiceMode) {
-    this.prefs.setVoiceMode(mode);
-    const monitoring = this._micMonitor();
+  /** Muda o tratamento da voz; com o microfone no ar, vale na hora (sem republicar). */
+  async setVoice(patch: Partial<VoiceSettings>) {
+    const next = { ...this.prefs.voice(), ...patch };
+    this.prefs.setVoice(next);
     try {
-      await this.session.setVoiceMode(mode);
+      await this.session.setVoice(next);
     } catch {
-      this.toast.show('Não foi possível religar o microfone com o novo ajuste.');
+      this.toast.show('Não foi possível aplicar o ajuste no microfone.');
     }
-    if (monitoring) this._micMonitor.set(this.session.monitorMic(true));
+  }
+
+  openVoice(on: boolean) {
+    this._voiceOpen.set(on);
+    this.session.meterVoice(on);
+    if (!on) this._voiceMeter.set(null);
+  }
+
+  /** Muda a qualidade de áudio da sala para todo mundo. */
+  async setRoomAudio(preset: RoomAudio) {
+    if (this.token === '' || this.roomAudio().preset === preset) return;
+    try {
+      await setRoomAudio(this.token, preset);
+    } catch (e) {
+      this.toast.show(e instanceof Error ? e.message : 'Não foi possível mudar o áudio da sala.');
+    }
+  }
+
+  micTracks() {
+    return this.session.micTracks();
+  }
+
+  /** Estatísticas para a estimativa de atraso da voz (só com a janela da voz aberta). */
+  voiceStats() {
+    return this.session.voiceStats();
   }
 
   toggleMicMonitor() {

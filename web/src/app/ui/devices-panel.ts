@@ -2,7 +2,7 @@ import { Component, computed, effect, inject, input } from '@angular/core';
 import { Invites } from '../core/invites';
 import { IS_MOBILE } from '../core/device';
 import { RoomStore } from '../core/room-store';
-import type { VoiceMode } from '../core/voice';
+import { DENOISE_LABELS, eqActive, roomAudio } from '../core/voice-dsp';
 import { Icon } from './icon';
 import { PhoneLinkPanel } from './phone-link';
 
@@ -25,20 +25,9 @@ import { PhoneLinkPanel } from './phone-link';
       }
     }
     @if (section() !== 'camera' && !isPhoneDevice) {
-      <p class="label">tratamento da voz</p>
-      @for (m of voiceModes; track m.id) {
-        <button type="button" class="item" [class.selected]="store.voiceMode() === m.id" (click)="store.setVoiceMode(m.id)">
-          <span class="led" [class.accent]="store.voiceMode() === m.id"></span>
-          <span class="dev">{{ m.label }}</span>
-          @if (store.voiceMode() === m.id) { <cen-icon name="check" [size]="14" /> }
-        </button>
-      }
-      <p class="hint">{{ voiceHint() }}</p>
-      @if (store.ownMicOn()) {
-        <button class="btn wide" (click)="store.toggleMicMonitor()">
-          {{ store.micMonitor() ? 'Parar de me ouvir' : 'Ouvir meu microfone (use fone)' }}
-        </button>
-      }
+      <p class="label">sua voz</p>
+      <p class="hint">{{ voiceSummary() }}</p>
+      <button class="btn wide" (click)="store.openVoice(true)">Equalizador, ruído, eco e sala</button>
     }
     @if (section() === 'mic' && store.canPublish()) {
       <p class="label">celular como microfone</p>
@@ -125,12 +114,16 @@ export class DevicesPanel {
     });
   }
 
-  protected readonly voiceModes: { id: VoiceMode; label: string; hint: string }[] = [
-    { id: 'ia', label: 'Redução de ruído por IA', hint: 'Tira ventilador, teclado e chiado. Gasta menos de 1% do processador e atrasa uns 10 ms.' },
-    { id: 'navegador', label: 'Filtro do navegador', hint: 'O filtro clássico do Chrome: o mais leve, mas deixa passar mais ruído.' },
-    { id: 'cru', label: 'Sem tratamento', hint: 'Som puro e com mais qualidade, para instrumento ou microfone bom. Sem cancelar eco: use fone.' },
-  ];
-  protected readonly voiceHint = computed(() => this.voiceModes.find((m) => m.id === this.store.voiceMode())?.hint ?? '');
+  /** Resumo do tratamento da voz; o ajuste fino fica na janela "sua voz". */
+  protected readonly voiceSummary = computed(() => {
+    const v = this.store.voice();
+    const parts = [`Ruído: ${DENOISE_LABELS[v.denoise].toLowerCase()}`];
+    if (v.denoise === 'leve' || v.denoise === 'forte') parts[0] += ` (${v.strength >= 60 ? 'máxima' : `${v.strength} dB`})`;
+    parts.push(eqActive(v) ? 'equalizador ligado' : 'sem equalizador');
+    parts.push(v.echo === 'off' ? 'sem cancelar eco' : 'com cancelamento de eco');
+    parts.push(`sala em ${roomAudio(this.store.roomAudio().preset).label.toLowerCase()}`);
+    return parts.join(' · ') + '.';
+  });
 
   pickMic(id: string) {
     void this.store.switchMicrophone(id).then(() => this.store.microphones.refresh());

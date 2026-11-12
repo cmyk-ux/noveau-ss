@@ -50,9 +50,14 @@
                 "input": "public"
               },
               {
-                "glob": "{rnnoise.wasm,rnnoise_simd.wasm,rnnoise/workletProcessor.js}",
+                "glob": "{rnnoise.wasm,rnnoise_simd.wasm}",
                 "input": "node_modules/@sapphi-red/web-noise-suppressor/dist",
                 "output": "voz"
+              },
+              {
+                "glob": "**/*",
+                "input": "vendor/dfn",
+                "output": "voz/dfn"
               }
             ],
             "styles": ["src/styles.css"]

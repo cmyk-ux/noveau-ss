@@ -79,11 +79,12 @@ LiveKit (Room) ──eventos──► RoomSession ──RoomSnapshot──► Ro
       mesma regra: escondida não toca.
     - Depois que o vigia do codificador trocava de codec, a proteção de perda na subida continuava
       contando do teto do codec antigo. Agora recomeça do teto novo (`UploadGuard.retarget`).
-11. **Ação que demora (ligar microfone, trocar modo de voz) vai numa fila.** Ligar o microfone cria a
+11. **Ação que demora (ligar microfone, mudar a voz, republicar) vai numa fila.** Ligar o microfone cria a
     trilha, carrega a redução de ruído e publica; um segundo clique nesse meio-tempo corria junto e o
-    microfone ficava ligado (ou publicado duas vezes). `RoomSession.setMicrophone`/`setVoiceMode`
-    passam por `micQueue`, e o `RoomStore` inverte o que o último clique pediu, não o que a sala mostra.
-12. **Mudo no Web Audio não é 0.** O LiveKit refaz o nó de ganho de cada faixa (ao "Ativar áudio", ao
+    microfone ficava ligado (ou publicado duas vezes). `RoomSession.setMicrophone`/`setVoice`/
+    `followRoomAudio` passam por `serial()` (`micQueue`), e o `RoomStore` inverte o que o último clique
+    pediu, não o que a sala mostra.
+12. **Mudo não é 0.** O LiveKit refaz o nó de ganho (ou o elemento) de cada faixa (ao "Ativar áudio", ao
     trocar o elemento) e só reaplica o volume guardado se ele não for 0. Com 0, quem estava mutado (ou
     escondido, fora de foco, na conversa direta) voltava a tocar em 100%. `tune()` usa `SILENT_GAIN`
     (-100 dB). Testes que precisam ler a sala usam `window.__noveau` (só com `noveau:e2e=1`).
@@ -95,6 +96,23 @@ LiveKit (Room) ──eventos──► RoomSession ──RoomSnapshot──► Ro
 14. **H.264 só nos perfis que vão para a placa.** `installH264Preference()` (`core/h264.ts`) tira o
     `42e01f` da oferta de toda faixa de vídeo que o site publica. Qualquer teste de capacidade de H.264
     pergunta pelo perfil (`h264ContentTypes()`), nunca só `video/H264`.
+
+15. **Áudio fora do Web Audio sempre que der.** Cada passagem por um `AudioContext` soma um buffer de
+    saída e uma fila entre relógios (~10-20 ms).
+    - O microfone é tratado num Worker (`voice.worker.ts`), em quadros de 10 ms, entre um
+      `MediaStreamTrackProcessor` e um `MediaStreamTrackGenerator`. O `AudioContext` que o LiveKit exige
+      para aceitar o processador fica parado (`dormantContext()`).
+    - A voz dos outros toca direto no elemento (`webAudioMix: false`). Só quem está acima de 100% passa
+      por um `AudioContext` (`route()`), e só enquanto estiver. No iPhone/iPad fica tudo no Web Audio
+      (lá o volume do elemento não muda por código).
+    - O analisador do equalizador só existe com a aba aberta; os medidores do worker só são enviados com
+      a janela da voz aberta (`meterVoice`).
+16. **Ajuste que vale para a sala inteira vai nos metadados da sala, pelo servidor.** A qualidade de áudio
+    da sala (`metadata.audio`) é escrita pela API (`/api/room/audio`, uma vez a cada 2 s por sala) e chega
+    a todos em `RoomMetadataChanged` → `update('full')`. Não use atributo de participante para isso.
+17. **Opus com quadro próprio por trilha.** `wantPtime(track, ms)` marca a trilha; a resposta do servidor
+    ganha `a=ptime` só na seção dela. Trilha nova do microfone (republicar, IA forte entrando) tem de ser
+    marcada de novo.
 
 ## Atributos dos participantes
 
@@ -134,6 +152,11 @@ com o Chromium.
   câmera junto da tela, reiniciar a tela, painel de pessoas, conversa direta, mutar a tela (o botão
   tem de mudar em até 1 s), voz mutada continua muda depois de "Ativar áudio", dois cliques rápidos
   no microfone, erros no console.
+- `BASE=http://127.0.0.1:3001 node tools/e2e/voz-teste.mjs`: o microfone no worker, Opus a ~100
+  pacotes/s, janela da voz, presets, IA forte entrando sem cortar a voz, troca da qualidade da sala,
+  volume acima de 100% (`SHOTS=pasta` grava fotos da janela).
+- `BASE=http://127.0.0.1:3001 node tools/e2e/latencia.mjs rotulo`: atraso da voz de A até B
+  (`VOZ='{"denoise":"forte"}'` muda o tratamento). Veja `docs/VOZ.md`.
 - `BASE=http://127.0.0.1:3001 node tools/e2e/qualidade.mjs [codec] [resolução] [segundos]`: o que a
   tela manda de verdade (codec e perfil do H.264, tamanho e fps de cada camada, quem codifica) e o que
   quem assiste recebe. A tela é sintética (2560x1440 a 60 fps).
