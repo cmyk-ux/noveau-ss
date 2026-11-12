@@ -157,11 +157,9 @@ export class StatsPanel {
     const out: Row[] = [];
     if (/openh264/i.test(s.encoder)) out.push(row('dica', 'H.264 saiu no processador: escolha H.265 ou reinicie a transmissão', true));
     const h = this.store.health();
-    if (h?.short === 'capture')
-      out.push(row('dica', 'jogo ocupando a placa de vídeo: limite o FPS do jogo um pouco abaixo do que ele faz hoje, ou use o OBS', true));
-    else if (h?.short === 'encoder') out.push(row('dica', 'o codificador perde quadros: limite o FPS do jogo para sobrar placa de vídeo', true));
+    if (h?.short === 'encoder') out.push(row('dica', 'o codificador perde quadros: limite o FPS do jogo para sobrar placa de vídeo', true));
     else if (s.captureFps > 0 && s.captureFps < want * 0.9)
-      out.push(row('dica', 'captura abaixo do pedido: com a imagem parada é normal (o navegador só captura o que muda)'));
+      out.push(row('dica', 'o navegador só captura quando a tela muda: área de trabalho parada ou vídeo de 30 fps dão menos quadros, e é normal'));
     return out;
   }
 

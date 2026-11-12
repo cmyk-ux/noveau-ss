@@ -805,8 +805,8 @@ export class RoomSession {
   }
 
   // ---------- prévia (mouse em cima da foto de quem transmite)
-  // Uma tela fora de foco não está sendo recebida. Para a prévia ela é ligada na cópia menor
-  // (simulcast), que custa pouco para baixar e decodificar, e desligada assim que o mouse sai.
+  // Uma tela fora de foco não está sendo recebida. Para a prévia ela é ligada (na cópia menor, se quem
+  // transmite mandar uma, como o OBS com simulcast) e desligada assim que o mouse sai.
   private previewId: string | null = null;
 
   /** Liga a prévia de uma tela num elemento de vídeo. Devolve false se a tela não existe mais. */

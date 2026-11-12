@@ -1,6 +1,7 @@
 import { Component, computed, inject, signal } from '@angular/core';
 import { describePressure, LoadGovernor } from '../core/load';
 import { Prefs } from '../core/prefs';
+import { readLink } from '../core/link';
 import { RoomStore } from '../core/room-store';
 import { lackOf } from '../core/stats';
 import {
@@ -33,6 +34,10 @@ import {
       </div>
     }
     <p class="hint">No Auto vai a tela original até 60fps e 1080p acima disso. Só mexa abaixo se quiser fixar.</p>
+    <p class="hint">
+      <a [href]="testHref" target="_blank" rel="noopener">Testar minha transmissão</a>: abre uma sala só sua no servidor e mostra o
+      tamanho e o fps que chegam a quem assiste, com estes ajustes.
+    </p>
     <p class="label">resolução máxima</p>
     <div class="chips">
       @for (r of resolutions; track r.id) {
@@ -112,7 +117,7 @@ import {
       <span>Ceder quando o PC apertar</span>
     </label>
     @if (!prefs.adaptToLoad()) {
-      <p class="hint">Desligado: o site nunca baixa o fps. O navegador ainda pode capturar menos que {{ settings().frameRate }}fps se o jogo ocupar a placa de vídeo inteira (aí aparece o aviso, com o que fazer).</p>
+      <p class="hint">Desligado: o site nunca baixa o fps. O navegador só captura quando a tela muda, e um jogo que ocupa a placa de vídeo inteira também pode segurar a captura.</p>
     }
     <p class="hint">
       @if (pressureSupported) {
@@ -162,6 +167,11 @@ import {
 export class StreamPanel {
   protected readonly prefs = inject(Prefs);
   protected readonly store = inject(RoomStore);
+  /** /teste leva a senha da instância do link da sala (se houver), para não pedir de novo. */
+  protected readonly testHref = (() => {
+    const s = readLink().secret;
+    return s === '' ? '/teste' : `/teste#s=${encodeURIComponent(s)}`;
+  })();
   protected readonly bitrates = BITRATE_LIMITS;
   protected readonly resolutions = RESOLUTIONS;
   protected readonly frameRates = FRAME_RATES;

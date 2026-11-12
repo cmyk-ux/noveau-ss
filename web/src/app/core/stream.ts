@@ -95,9 +95,13 @@ export function planFor(s: StreamSettings): StreamPlan {
     resolution: s.resolution === 'auto' ? autoResolution(s.frameRate) : s.resolution,
     frameRate: s.frameRate,
     contentHint: 'motion',
-    // Fluidez primeiro: se faltar CPU ou rede, o navegador baixa a resolução, nunca os quadros.
-    // ("balanced" derrubava o fps primeiro, e é isso que mais se nota em jogo.)
-    degradation: 'maintain-framerate',
+    // Resolução fixa: o navegador nunca encolhe a tela sozinho. Com 'maintain-framerate' o WebRTC liga
+    // o controle de qualidade (QualityScaler / BandwidthQualityScaler) numa camada só, e ele encolhe a
+    // imagem quando o codificador gasta pouco (tela parada da área de trabalho: 720p e menos) ou na
+    // largada, com a estimativa de banda ainda baixa, e numa tela que quase não muda nunca junta
+    // amostras para voltar. Visto com H.264 na placa: 320x180, 640x360, 720p numa 3070 sem jogo.
+    // Faltando banda de verdade, o navegador corta quadros (não resolução); a CPU apertada idem.
+    degradation: 'maintain-resolution',
     maxBitrate: s.maxBitrate,
   };
 }

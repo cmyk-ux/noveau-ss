@@ -1,6 +1,5 @@
 import { Component, DestroyRef, ElementRef, computed, effect, inject, signal, viewChild } from '@angular/core';
 import { activityLine } from '../core/activity';
-import { CAPTURE_FIX, captureAdvice, fpsStep } from '../core/diag';
 import { IS_MOBILE } from '../core/device';
 import { ShareView } from '../core/room-session';
 import { RoomStore } from '../core/room-store';
@@ -47,12 +46,11 @@ function iconFor(s: ShareView): string {
   template: `
     @if (mine(); as m) {
       <button type="button" class="btn mine-key" [class.on]="mineOpen()" [attr.aria-expanded]="mineOpen()"
-        [title]="capture()?.title ?? (mineOpen() ? 'Fechar a prévia da sua tela' : 'Ver a prévia da sua tela (leve: 360p a 15 fps)')"
+        [title]="mineOpen() ? 'Fechar a prévia da sua tela' : 'Ver a prévia da sua tela (leve: 360p a 15 fps)'"
         (click)="toggleMine()">
-        <span class="led" [class.accent]="capture() === null" [class.warn]="capture() !== null" aria-hidden="true"></span>
+        <span class="led accent" aria-hidden="true"></span>
         <cen-pixel [name]="m.kind === 'camera' ? 'webcam' : 'monitor'" [size]="16" />
         <span class="mono word">prévia</span>
-        @if (capture(); as c) { <span class="mono fps">{{ c.text }}</span> }
       </button>
     }
     @if (faces().length > 0 && showFaces()) {
@@ -87,7 +85,6 @@ function iconFor(s: ShareView): string {
             title="Mostrar a sua tela grande no palco, como as dos outros (pesa um pouco mais no seu PC)"
             (click)="toggleStage()">{{ store.myOnStage() ? 'tirar do palco' : 'ver grande no palco' }}</button>
         </div>
-        @if (capture(); as c) { <p class="foot warn">{{ c.title }}</p> }
         <p class="foot">Prévia leve, só para você conferir. Quem assiste recebe na qualidade cheia.
           @if (m.cam !== null) { A sua câmera fica no cantinho <b>você</b> do palco. }</p>
       </div>
@@ -129,7 +126,6 @@ function iconFor(s: ShareView): string {
     .mine-key { gap: 0.4rem; padding: 0 0.6rem; }
     .mine-key .led { width: 6px; height: 6px; }
     .mine-key .word { font-size: 0.66rem; letter-spacing: 0.12em; text-transform: uppercase; }
-    .mine-key .fps { font-size: 0.66rem; color: var(--warn); }
 
     /* Fotos como teclas de canal de uma mesa de corte, embutidas na barra. */
     .rail { display: flex; align-items: center; gap: 4px; }
@@ -175,7 +171,6 @@ function iconFor(s: ShareView): string {
     .row:empty { display: none; }
     .swap { display: flex; gap: 0.35rem; margin-top: 0.45rem; }
     .foot { margin: 0.4rem 0 0; font-size: 0.72rem; color: var(--faint); line-height: 1.3; }
-    .foot.warn { color: var(--warn); }
 
     @media (hover: none) {
       .face { width: 44px; height: 44px; }
@@ -193,17 +188,6 @@ export class LiveStrip {
 
   protected readonly focusedId = computed(() => this.store.focused()?.id ?? null);
   protected readonly mine = this.store.myShare;
-  /** A captura da minha tela não acompanha (jogo ocupando a placa): aparece na própria tecla. */
-  protected readonly capture = computed(() => {
-    const h = this.store.health();
-    if (h === null || h.short !== 'capture') return null;
-    const cf = fpsStep(h.captureFps);
-    return {
-      text: `${cf}/${h.wantFps}fps`,
-      title: `Sua tela está saindo a ~${cf} de ${h.wantFps} fps. ${captureAdvice(this.store.load()?.pressure ?? '')} ${CAPTURE_FIX}`,
-    };
-  });
-
   /** Telas dos outros (inclusive as escondidas, apagadas). A minha tem a tecla "prévia". */
   protected readonly faces = computed<Face[]>(() => {
     // Só as fotos (não muda quando alguém começa a falar).

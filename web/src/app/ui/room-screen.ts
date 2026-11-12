@@ -1,4 +1,4 @@
-import { CAPTURE_FIX, DiagEvent, captureAdvice, fpsStep, parseSendHealth } from '../core/diag';
+import { DiagEvent, parseSendHealth } from '../core/diag';
 import { Component, DestroyRef, ElementRef, computed, effect, inject, input, output, signal, untracked, viewChild } from '@angular/core';
 import { IS_IOS, IS_MOBILE } from '../core/device';
 import { Prefs } from '../core/prefs';
@@ -854,13 +854,6 @@ export class RoomScreen {
   protected readonly adaptedBadge = computed(() => {
     const h = this.store.health();
     if (h === null) return null;
-    if (h.short === 'capture') {
-      const cpu = this.store.load()?.pressure ?? '';
-      return {
-        text: `captura em ~${fpsStep(h.captureFps)} de ${h.wantFps} fps`,
-        title: `O navegador está capturando só ~${fpsStep(h.captureFps)} de ${h.wantFps} quadros por segundo da sua tela. ${captureAdvice(cpu)} ${CAPTURE_FIX}`,
-      };
-    }
     return !h.sustained
       ? null
       : { text: `qualidade reduzida (${shortLimitation(h.reason)})`, title: `Enviando ${h.width}x${h.height} a ${h.fps} fps. Volta sozinho.` };
@@ -937,13 +930,6 @@ export class RoomScreen {
     const tx = f === null || f.isLocal ? null : parseSendHealth(f.senderTx);
     if (f === null || tx === null) return null;
     const s = { name: f.ownerName };
-    // A captura dele não acompanha: o número mais útil para entender fps baixo em jogo.
-    if (tx.lim === 'capture' && (tx.cf ?? 0) > 0) {
-      return {
-        text: `captura de ${s.name}: ~${tx.cf} de ${tx.wf} fps`,
-        title: `O navegador de ${s.name} está capturando só ~${tx.cf} de ${tx.wf} quadros por segundo. ${captureAdvice(tx.cpu)} Não é a internet nem o seu PC. ${CAPTURE_FIX}`,
-      };
-    }
     if (tx.lim === 'encoder' && (tx.cf ?? 0) > 0) {
       return {
         text: `codificador de ${s.name}: ~${tx.cf} de ${tx.wf} fps`,

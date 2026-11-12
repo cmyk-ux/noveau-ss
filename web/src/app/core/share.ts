@@ -7,12 +7,11 @@ import {
   Room,
   Track,
   type TrackPublishOptions,
-  VideoPreset,
 } from 'livekit-client';
 import { Codec, CodecChoice, cappedBitrate, encoderProbes, hardwareOnly, LADDER, parseDecoders, pickCodec, planSize, probeEncoders, StreamPlan, Size } from './stream';
 import { CAPTURE_MAX, LoadGovernor, LoadState } from './load';
 import { UploadGuard, UploadState } from './upload-guard';
-import { LOW_LAYER_MAX_FPS, ShareHealth, ShareWatch, StatsFeed, sourceAudioLevel } from './stats';
+import { ShareHealth, ShareWatch, StatsFeed, sourceAudioLevel } from './stats';
 import { StudioBits, StudioSender } from './studio';
 import { CodecGuard } from './codec-guard';
 import { ShrinkEvent, ShrinkGuard } from './shrink-guard';
@@ -229,7 +228,7 @@ class EncoderScale {
   }
 }
 
-function videoPublishOptions(req: ShareRequest, codec: Codec, maxBitrate: number, size: Size): TrackPublishOptions {
+function videoPublishOptions(req: ShareRequest, codec: Codec, maxBitrate: number): TrackPublishOptions {
   // H.265 só toca em quem tem decodificador de hardware; AV1/VP9 em navegadores antigos podem falhar.
   // Com REGRESSION a reserva só é codificada se alguém da sala não conseguir decodificar. Ela sai na
   // resolução cheia, então se cair no processador o jogo de quem transmite perde FPS no instante em
@@ -241,25 +240,17 @@ function videoPublishOptions(req: ShareRequest, codec: Codec, maxBitrate: number
   // (Antes a sondagem nunca via o H.264 na placa e a reserva era sempre VP8 por software, em resolução
   // cheia: quando ela ligava, a sala inteira passava para ela. Ver h264.ts.)
   const backup = encoderProbes().h264?.gpu === true ? 'h264' : 'vp8';
-  // Automático (bitrate Auto): manda também uma cópia menor (2/3 da resolução). O servidor troca para ela
-  // só para quem não está aguentando (rede ou PC), em vez de travar; quem aguenta continua no máximo.
-  // AV1/VP9 já saem com camadas de tempo (L1T3), que fazem o mesmo cortando quadros.
-  const adaptive = req.plan.maxBitrate === 0 && (codec === 'vp8' || codec === 'h264') && Math.max(size.width, size.height) >= 960;
-  const lowFps = Math.min(req.plan.frameRate, LOW_LAYER_MAX_FPS);
+  // Uma camada só, como era no começo (quando a tela chegava "quase original" a 60 fps). A cópia menor
+  // (simulcast, 2/3 do tamanho) fazia o servidor mandar 720p para quem a estimativa de banda dele não
+  // alcançava a camada de cima: medido aqui mesmo, sem limite nenhum de rede, quem assistia passava os
+  // primeiros ~10 s na cópia menor; num servidor pequeno ele pode nunca subir. Ver DESEMPENHO.md,
+  // "Sétima rodada".
   return {
     source: Track.Source.ScreenShare,
     videoCodec: codec,
     screenShareEncoding: { maxBitrate, maxFramerate: req.plan.frameRate, priority: 'high' },
     degradationPreference: req.plan.degradation,
-    simulcast: adaptive,
-    ...(adaptive
-      ? {
-          screenShareSimulcastLayers: [
-            // 2/3 do tamanho (1080p -> 720p): se alguém precisar cair, cai pouco.
-            new VideoPreset(even((size.width * 2) / 3), even((size.height * 2) / 3), Math.max(2e6, Math.round(maxBitrate * 0.4)), lowFps, 'high'),
-          ],
-        }
-      : {}),
+    simulcast: false,
     ...(needsBackup ? { backupCodec: { codec: backup }, backupCodecPolicy: BackupCodecPolicy.REGRESSION } : {}),
   } as TrackPublishOptions;
 }
@@ -369,7 +360,7 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
     },
     { once: true },
   );
-  await room.localParticipant.publishTrack(video, videoPublishOptions(req, codec, bitrate, encoded));
+  await room.localParticipant.publishTrack(video, videoPublishOptions(req, codec, bitrate));
   if (codec === 'vp8') await addTemporalLayers(video);
   const scale = new EncoderScale(video, req.plan, resolution);
   scale.apply();
@@ -428,7 +419,7 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
       console.info(`[tela] ${e.from} saía no processador (${e.encoder}); trocando para ${next}`);
       await room.localParticipant.unpublishTrack(video, false);
       if (video.mediaStreamTrack.readyState !== 'live') return null;
-      await room.localParticipant.publishTrack(video, videoPublishOptions(req, next, br, encoded));
+      await room.localParticipant.publishTrack(video, videoPublishOptions(req, next, br));
       if (next === 'vp8') await addTemporalLayers(video);
       scale.apply();
       current = next;
