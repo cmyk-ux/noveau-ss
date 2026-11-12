@@ -43,9 +43,10 @@ async function join(name, { mobile = false, voice = 'cru' } = {}) {
   await ctx.addInitScript(fakeMonitor, { width: 1920, height: 1080 });
   const page = await ctx.newPage();
   const errors = [];
-  page.on('pageerror', (e) => errors.push(String(e)));
+  // Cada erro leva o nome da parte em que apareceu (a conferência do fim junta todos).
+  page.on('pageerror', (e) => errors.push(`[${current}] ${String(e)}`));
   page.on('console', (m) => {
-    if (m.type() === 'error' && !/404|Failed to load resource/.test(m.text())) errors.push(m.text());
+    if (m.type() === 'error' && !/404|Failed to load resource/.test(m.text())) errors.push(`[${current}] ${m.text()}`);
   });
   await page.goto(`${BASE}/room/controles#${KEY}`);
   await page.fill('#nickname', name);
@@ -308,13 +309,17 @@ await part('pessoas', async () => {
   await fader.locator('button.mute').click();
   const g2 = await gainIs(B, 'A', 'microphone', 0);
   ok('painel: mutar a voz de A vai a 0', g2.ok, JSON.stringify(g2.last?.s));
-  ok('painel: fader da voz mostra "mudo"', (await fader.locator('.readout').innerText()).trim() === 'mudo');
+  // A leitura chega no quadro seguinte ao do ganho (o ganho muda na hora, a tela redesenha depois).
+  const readout = (want) => eventually(async () => { const t = (await fader.locator('.readout').innerText()).trim(); return { ok: t === want, t }; }, 2500);
+  const r1 = await readout('mudo');
+  ok('painel: fader da voz mostra "mudo"', r1.ok, r1.last?.t);
   await fader.locator('button.mute').click();
   ok('painel: desmutar a voz de A volta a 100%', (await gainIs(B, 'A', 'microphone', 1)).ok);
   await fader.locator('input[type=range]').evaluate((el) => { el.value = String(150 + 18); el.dispatchEvent(new Event('input', { bubbles: true })); });
   const g3 = await gainIs(B, 'A', 'microphone', 1.5);
   ok('painel: voz de A a 150% (ganho 1,5)', g3.ok, JSON.stringify(g3.last?.s));
-  ok('painel: leitura 150%', (await fader.locator('.readout').innerText()).trim() === '150%');
+  const r2 = await readout('150%');
+  ok('painel: leitura 150%', r2.ok, r2.last?.t);
   await fader.locator('input[type=range]').evaluate((el) => { el.value = '100'; el.dispatchEvent(new Event('input', { bubbles: true })); });
   // "Ativar áudio" recria o ganho de cada voz: um mudo não pode voltar a tocar.
   await fader.locator('button.mute').click();
@@ -406,12 +411,20 @@ await part('grade', async () => {
   await C.page.keyboard.press('Escape');
   await btn(B, 'Desligar câmera').click();
   ok('B desliga a câmera: C volta a 1 tela em foco', await until(C, () => document.querySelectorAll('cen-share-tile').length === 0 && document.querySelector('cen-stage video')?.videoWidth > 0));
+  // O aviso de antes (6 s) não pode sobrar com um "ver" que não leva a nada.
+  ok('câmera desligada: o aviso dela some', await until(C, () => !(document.querySelector('.toast')?.textContent ?? '').includes('B ligou a câmera')));
   // O "ver" do aviso leva até a câmera que chegou.
   await btn(B, 'Ligar câmera').click();
   ok('com a tela de A em foco, aparece o aviso de novo', await until(C, () => (document.querySelector('.toast')?.textContent ?? '').includes('B ligou a câmera'), undefined, 10000));
   await C.page.locator('.toast button', { hasText: 'ver' }).click();
   ok('"ver" no aviso foca a câmera de B', await until(C, () => (document.querySelector('.now')?.textContent ?? '').includes('de B') && document.querySelector('cen-stage video')?.videoWidth > 0));
   await btn(B, 'Desligar câmera').click();
+  // A câmera acaba antes do aviso (6 s): o aviso sai junto, sem esperar o tempo dele.
+  ok('C volta para a tela de A', await until(C, () => (document.querySelector('.now')?.textContent ?? '').includes('tela de A') && document.querySelector('cen-stage video')?.videoWidth > 0));
+  await btn(B, 'Ligar câmera').click();
+  ok('aviso de novo', await until(C, () => (document.querySelector('.toast')?.textContent ?? '').includes('B ligou a câmera'), undefined, 10000));
+  await btn(B, 'Desligar câmera').click();
+  ok('câmera desligada antes do aviso acabar: o aviso some junto', await until(C, () => !(document.querySelector('.toast')?.textContent ?? '').includes('B ligou a câmera'), undefined, 3000));
 });
 
 await part('camera', async () => {
@@ -426,19 +439,27 @@ await part('camera', async () => {
   ok('câmera escondida não é baixada', r.ok, JSON.stringify(r.last?.s));
   await C.page.locator('.corner .cam-key').click();
   ok('C volta a ver a câmera de A', await until(C, () => [...document.querySelectorAll('cen-cam-pip video')].some((v) => v.videoWidth > 0)));
-  const before = await C.page.evaluate(() => document.querySelector('cen-stage video').videoWidth);
+  // Qual faixa de A está no palco de C (pela faixa ligada ao vídeo; a largura variava com a rede).
+  const onStage = () => C.page.evaluate(() => {
+    const v = document.querySelector('cen-stage video');
+    const id = v?.srcObject?.getVideoTracks?.()[0]?.id;
+    if (id === undefined || !(v.videoWidth > 0)) return null;
+    const a = [...window.__noveau.room.remoteParticipants.values()].find((x) => (x.name || x.identity).startsWith('A'));
+    for (const pub of a?.trackPublications.values() ?? []) if (pub.track?.mediaStreamTrack?.id === id) return pub.source;
+    return 'outra';
+  });
+  ok('antes de trocar: a tela de A está no palco', (await eventually(async () => (await onStage()) === 'screen_share')).ok);
   const swapKey = async () => {
     await C.page.locator('cen-cam-pip .win').hover();
     await wait(300);
     await C.page.locator('cen-cam-pip button[title="Trocar com a imagem grande"]').click();
   };
   await swapKey();
-  ok('trocar: a câmera vai para o palco', (await eventually(async () => {
-    const w = await C.page.evaluate(() => document.querySelector('cen-stage video')?.videoWidth ?? 0);
-    return w > 0 && w !== before;
-  })).ok);
+  const s1 = await eventually(async () => { const s = await onStage(); return { ok: s === 'camera', s }; });
+  ok('trocar: a câmera vai para o palco', s1.ok, JSON.stringify(s1.last));
   await swapKey();
-  ok('trocar de novo: a tela volta para o palco', (await eventually(async () => (await C.page.evaluate(() => document.querySelector('cen-stage video')?.videoWidth ?? 0)) === before)).ok);
+  const s2 = await eventually(async () => { const s = await onStage(); return { ok: s === 'screen_share', s }; });
+  ok('trocar de novo: a tela volta para o palco', s2.ok, JSON.stringify(s2.last));
   // Retorno da própria câmera em A
   // As teclas do retorno só aparecem com o mouse em cima da janelinha.
   const mirror = A.page.locator('cen-self-cam button[aria-pressed]');
@@ -490,9 +511,15 @@ await part('faixa', async () => {
 
 /** Abre o submenu de qualidade da tela de A e devolve o painel. */
 async function streamPanel(p) {
-  if ((await p.page.locator('cen-stream-panel').count()) === 0) await p.page.locator('button[aria-label="Qualidade da transmissão"]').click();
-  await p.page.waitForSelector('cen-stream-panel');
-  return p.page.locator('cen-stream-panel');
+  // Pelo aria-expanded: um menu que está saindo (animação) ainda fica na página por um instante.
+  const caret = p.page.locator('button[aria-label="Qualidade da transmissão"]');
+  if ((await caret.getAttribute('aria-expanded')) !== 'true') {
+    await p.page.locator('footer .pop').waitFor({ state: 'detached', timeout: 3000 }).catch(() => undefined);
+    await caret.click();
+  }
+  const panel = p.page.locator('footer .pop cen-stream-panel');
+  await panel.waitFor({ timeout: 5000 });
+  return panel;
 }
 const chipsAfter = (panel, label) => panel.locator('p.label', { hasText: label }).locator('xpath=following-sibling::div[contains(@class,"chips")][1]');
 /**
@@ -584,7 +611,8 @@ await part('voz', async () => {
   await A.page.locator('button[aria-label="Escolher microfone"]').click();
   const menu = A.page.locator('cen-devices-panel');
   await menu.waitFor();
-  ok('lista de microfones aparece', (await menu.locator('button.item').count()) >= 1);
+  // A lista vem do navegador (enumerateDevices) logo depois de o menu abrir.
+  ok('lista de microfones aparece', (await eventually(async () => (await menu.locator('button.item').count()) >= 1, 4000)).ok);
   await A.page.getByRole('button', { name: 'Equalizador, ruído, eco e sala' }).click();
   ok('janela "sua voz" abre', await until(A, () => document.querySelector('cen-voice-panel') !== null));
   const vp = A.page.locator('cen-voice-panel');
@@ -744,7 +772,10 @@ await part('celular', async () => {
 
 await part('reconexao', async () => {
   await baseline({ aSharing: true });
-  C.expected.push(/ERR_INTERNET_DISCONNECTED|ERR_NETWORK_CHANGED|Failed to fetch|could not establish signal connection|websocket closed/i);
+  // Só valem nesta parte: o mesmo erro em outra parte é defeito. "negotiation timed out": o LiveKit
+  // 2.22.0 às vezes perde a negociação começada durante a queda e refaz a conexão inteira; as
+  // conferências abaixo garantem que tudo volta.
+  C.expected.push(/^\[reconexao\] .*(ERR_INTERNET_DISCONNECTED|ERR_NETWORK_CHANGED|Failed to fetch|could not establish signal connection|websocket closed|negotiation timed out)/i);
   const cdp = await C.ctx.newCDPSession(C.page);
   await cdp.send('Network.enable');
   await cdp.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
@@ -813,6 +844,27 @@ await part('queda-sinal', async () => {
   ok('depois das quedas, "Voltar para todos": C volta a ouvir B (sem conversa fantasma)', (await eventually(async () => ({ ok: await flowing(C, 'B', 'microphone') }), 12000)).ok);
   ok('A também sai da conversa', await until(A, () => document.querySelector('.banner.direct') === null, undefined, 8000));
   await btn(B, 'Desligar microfone').click().catch(() => undefined);
+});
+
+// Quem transmite cai e volta (reconexão completa): o LiveKit republica a tela num sender novo.
+await part('queda-transmissor', async () => {
+  await baseline({ aSharing: true });
+  const layers = () => A.page.evaluate(() => {
+    const t = window.__noveau.room.localParticipant.getTrackPublication('screen_share')?.track;
+    return { codec: t?.codec ?? null, modes: (t?.sender?.getParameters().encodings ?? []).map((e) => e.scalabilityMode ?? null) };
+  });
+  const all3 = (l) => l.modes.length > 0 && l.modes.every((m) => m === 'L1T3');
+  const l0 = await eventually(async () => { const l = await layers(); return { ok: l.codec !== null, l }; }, 8000);
+  const vp8 = l0.last?.l?.codec === 'vp8';
+  // Aqui não há placa de vídeo, então a tela sai em VP8, com as camadas de tempo.
+  if (vp8) ok('antes: a tela de A sai em VP8 com camadas de tempo', all3(l0.last.l), JSON.stringify(l0.last.l));
+  await A.page.evaluate(() => window.__noveau.room.simulateScenario('full-reconnect'));
+  ok('reconexão completa de quem transmite: A volta a "conectado"', await until(A, () => window.__noveau.room.state === 'connected', undefined, 20000));
+  ok('C volta a ver a tela de A', await until(C, playing, 'cen-stage video', 20000));
+  if (vp8) {
+    const l1 = await eventually(async () => { const l = await layers(); return { ok: all3(l), l }; }, 8000);
+    ok('depois: as camadas de tempo voltam no sender novo', l1.ok, JSON.stringify(l1.last?.l));
+  } else ok(`tela em ${l0.last?.l?.codec}: camadas de tempo só no VP8 (pulado)`, true);
 });
 
 await part('sair', async () => {

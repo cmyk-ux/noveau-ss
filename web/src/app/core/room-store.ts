@@ -45,7 +45,7 @@ import { StudioHub } from './studio';
 import { DawListener, requestDawCode } from './daw';
 import { ShareHealth, StatsSampler } from './stats';
 import { formatBitrate, planFor } from './stream';
-import { Toast } from './toast';
+import { Toast, type ToastAction } from './toast';
 import { Channel } from './volume';
 import { ClipRecorder, ClipServer, clipServer, clipsSupported } from './clips';
 import { ShareWatch } from './stats';
@@ -324,13 +324,19 @@ export class RoomStore {
       this.toast.show(`Seu microfone passou para o ${toMobile ? 'celular' : 'computador'}. Este aqui ficou mudo.`);
     this.session.onFocusedStats = (p) => this.diag.feed(p);
     // Chegou outra tela enquanto você assiste uma: o foco fica, e o aviso leva até ela.
-    this.session.onShareArrived = (id, name, kind) =>
-      this.toast.show(kind === 'camera' ? `${name} ligou a câmera.` : `${name} começou a transmitir.`, {
-        action: { label: 'ver', run: () => this.focusShare(id) },
-        ms: 6000,
-      });
+    // O aviso some se a tela ou câmera acabar antes dele: o "ver" não levaria a lugar nenhum.
+    let arrival: { id: string; action: ToastAction } | null = null;
+    this.session.onShareArrived = (id, name, kind) => {
+      const action: ToastAction = { label: 'ver', run: () => this.focusShare(id) };
+      arrival = { id, action };
+      this.toast.show(kind === 'camera' ? `${name} ligou a câmera.` : `${name} começou a transmitir.`, { action, ms: 6000 });
+    };
     const offChange = this.session.onChange((s) => {
       if (!s.shares.some((x) => x.isLocal && x.kind === 'screen')) this.forgetShare();
+      if (arrival !== null && !s.shares.some((x) => x.id === arrival?.id)) {
+        if (this.toast.action() === arrival.action) this.toast.hide();
+        arrival = null;
+      }
       // Alguém mudou a qualidade de áudio da sala (não conta o que já estava ao entrar).
       const before = this._snapshot();
       if (before.status === 'connected' && s.audio.preset !== before.audio.preset && s.audio.by !== null) {
