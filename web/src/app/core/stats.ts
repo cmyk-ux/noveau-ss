@@ -79,6 +79,26 @@ function captureFpsOf(report: RTCStatsReport, id: unknown): number {
   return src === undefined ? 0 : Math.round(num(src, 'framesPerSecond'));
 }
 
+function captureSizeOf(report: RTCStatsReport, id: unknown): string {
+  const src = typeof id === 'string' ? (report.get(id) as any) : undefined;
+  return src === undefined || !(num(src, 'width') > 0) ? '?' : `${num(src, 'width')}x${num(src, 'height')}`;
+}
+
+function layersOf(report: RTCStatsReport): string[] {
+  const out: { h: number; text: string }[] = [];
+  for (const s of report.values() as Iterable<any>) {
+    if (s.type !== 'outbound-rtp' || s.kind !== 'video') continue;
+    const rid = typeof s.rid === 'string' ? s.rid : '-';
+    const h = num(s, 'frameHeight');
+    const text =
+      s.active === false
+        ? `${rid} pausada`
+        : `${rid} ${num(s, 'frameWidth')}x${h} ${Math.round(num(s, 'framesPerSecond'))}fps ${asLimitation(s.qualityLimitationReason) === 'none' ? '' : shortLimitation(asLimitation(s.qualityLimitationReason))}`.trim();
+    out.push({ h, text });
+  }
+  return out.sort((a, b) => b.h - a.h).map((x) => x.text);
+}
+
 function largestOutboundVideo(report: RTCStatsReport): any | null {
   let best: any = null;
   for (const s of report.values()) {
@@ -363,6 +383,10 @@ export interface OutboundVideo {
   encodeMs: number;
   /** Quadros por segundo que a captura do navegador está entregando (antes do encoder). */
   captureFps: number;
+  /** Tamanho que a captura entrega ao codificador (media-source), ex. "2560x1440". */
+  captureSize: string;
+  /** Cada camada que sai: "h 1920x1080 60fps", "q pausada"... */
+  layers: string[];
   scalabilityMode: string;
   limitation: Limitation;
   resolutionChanges: number;
@@ -424,6 +448,8 @@ export class StatsSampler {
       encoder: text(s, 'encoderImplementation'),
       gpu: typeof s.powerEfficientEncoder === 'boolean' ? s.powerEfficientEncoder : null,
       captureFps: captureFpsOf(report, s.mediaSourceId),
+      captureSize: captureSizeOf(report, s.mediaSourceId),
+      layers: layersOf(report),
       encodeMs: num(s, 'framesEncoded') > 0 ? Math.round((num(s, 'totalEncodeTime') / num(s, 'framesEncoded')) * 1e4) / 10 : 0,
       scalabilityMode: text(s, 'scalabilityMode'),
       limitation: asLimitation(s.qualityLimitationReason),

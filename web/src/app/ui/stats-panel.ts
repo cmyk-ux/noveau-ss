@@ -121,6 +121,8 @@ export class StatsPanel {
       title: 'Enviando',
       rows: [
         row('tamanho', `${s.width}x${s.height}`),
+        row('captura', s.captureSize),
+        row('camadas', s.layers.join(' · ') || '?'),
         row('fps capturados', `${s.captureFps} / ${want}`, s.captureFps > 0 && s.captureFps < want * 0.9),
         row('fps enviados', String(s.fps), s.captureFps > 0 && s.fps < s.captureFps * 0.85),
         row('bitrate', formatBitrate(s.bitrate)),
