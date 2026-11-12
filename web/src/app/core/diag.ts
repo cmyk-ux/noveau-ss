@@ -60,7 +60,7 @@ export function parseSendHealth(raw: string | null): SendHealth | null {
   }
 }
 
-export type Cause = 'their-net' | 'their-pc' | 'their-idle' | 'my-net' | 'my-pc' | 'my-decoder' | 'my-capture' | 'unknown';
+export type Cause = 'their-net' | 'their-pc' | 'their-idle' | 'my-net' | 'my-pc' | 'my-decoder' | 'my-capture' | 'my-shrink' | 'unknown';
 
 export interface DiagEvent {
   id: number;
@@ -378,6 +378,19 @@ export class Diagnostics {
       `Sua tela está saindo a ~${e.cf} de ${e.wf} fps: a captura do navegador não pega mais quadros. ${captureAdvice(e.cpu)} ${CAPTURE_FIX}`,
       1,
       { fpsCapturados: e.cf, fpsPedidos: e.wf, cpuMeu: e.cpu, ...e.metrics },
+    );
+  }
+
+  /** O navegador encolheu a tela sozinho com bits de sobra e ela passou para "manter resolução". */
+  noteShrink(e: { who: string; width: number; height: number; expected: number; target: number; codec: string }) {
+    if (this.sender === undefined) return;
+    this.add(
+      'my-shrink',
+      e.who,
+      `O navegador encolheu sua tela para ${e.width}x${e.height} (era para sair ${e.expected}p) mesmo com ` +
+        `${Math.round(e.target / 1e5) / 10} Mbps para ela. A tela passou a manter a resolução.`,
+      1,
+      { tamanho: `${e.width}x${e.height}`, planejado: e.expected, alvoMbps: Math.round(e.target / 1e5) / 10, codec: e.codec },
     );
   }
 

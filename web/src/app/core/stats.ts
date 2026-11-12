@@ -170,8 +170,12 @@ const SHORT_RATIO = 0.8;
 const MOVING_BPS = 1.5e6;
 /** Menos que isso é tela parada com um detalhe mudando (relógio, cursor), não jogo sem captura. */
 const MIN_SHORT_FPS = 8;
-/** Ritmos de vídeo e de jogo travado: captura firme num deles é o conteúdo, não falta de captura. */
-const CONTENT_RATES = [24, 25, 30];
+/**
+ * Ritmos de vídeo, de jogo travado e de monitor: captura firme num deles é o conteúdo (ou o monitor de
+ * 60 Hz), não falta de captura. Visto em 12/11/2026: área de trabalho com vídeo de 60 fps e 120 pedidos
+ * acusava "captura curta" com a dica de jogo pesando na placa.
+ */
+const CONTENT_RATES = [24, 25, 30, 50, 60];
 
 interface ShortSample {
   capture: number;
@@ -193,7 +197,7 @@ function contentPaced(samples: ShortSample[]): boolean {
  * O Chrome não pede prioridade na placa (o OBS só consegue isso rodando como administrador).
  *
  * Exceções que não são falta de captura: tela parada (o navegador só captura o que muda: poucos bits
- * ou poucos quadros) e conteúdo que tem menos quadros mesmo (vídeo de 24/25/30 fps, jogo travado em
+ * ou poucos quadros) e conteúdo que tem menos quadros mesmo (vídeo de 24/25/30/50/60 fps, jogo travado em
  * 30): captura firme num desses ritmos não acusa. Precisa estar curta em todas as leituras de ~10 s.
  */
 export class CaptureShortfall {

@@ -8,15 +8,19 @@
 //   curta   captura a 18 fps com 60 pedidos: A vê o aviso na tecla "prévia", B vê "captura de A".
 //   cheia   captura a 60 fps: nenhum aviso.
 //   video   captura firme a 30 fps (vídeo, jogo travado em 30): nenhum aviso.
+//   sessenta 120 pedidos, conteúdo de 60 (área de trabalho com vídeo, ou monitor de 60 Hz): nenhum aviso.
 //   parada  tela parada (o navegador quase não manda nada): nenhum aviso.
 //   ceder   "Ceder" ligado; processador "serious" (75-90%) não mexe; "critical" baixa o fps; volta.
+//   encolhe o getStats de A finge o que o Chrome contou com H.264 na NVIDIA (320x180, "bandwidth", 7,3 Mbps
+//           de alvo) enquanto a tela estiver em "manter fluidez": o vigia (shrink-guard.ts) passa para
+//           "manter resolução". (O OpenH264 daqui não encolhe sozinho nem com 2 Mbps: não dá para provocar.)
 // Uso: BASE=http://127.0.0.1:3001 node tools/e2e/captura.mjs [partes separadas por vírgula]
 // Sai com 1 se alguma conferência falhar.
 import { createRequire } from 'node:module';
 import { browserArgs } from './voz.mjs';
 const { chromium } = createRequire(import.meta.url)('playwright');
 const BASE = process.env.BASE ?? 'http://127.0.0.1:3000';
-const ONLY = (process.argv[2] ?? 'curta,cheia,video,parada,ceder').split(',');
+const ONLY = (process.argv[2] ?? 'curta,cheia,video,sessenta,parada,ceder,encolhe').split(',');
 const browser = await chromium.launch({ args: browserArgs() });
 let failures = 0;
 
@@ -28,16 +32,34 @@ function check(ok, what) {
 async function person(room, key, name, opts) {
   const ctx = await browser.newContext({ viewport: { width: 1400, height: 860 }, permissions: ['microphone', 'camera'] });
   await ctx.addInitScript(
-    ({ sender, fps, still, adapt }) => {
+    ({ sender, fps, still, adapt, maxBitrate, codec, fakeShrink, want }) => {
       try {
         localStorage.setItem('noveau:e2e', '1');
         localStorage.setItem('noveau:voice', 'cru');
         localStorage.setItem('cenaculum:volume-hint', 'yes');
         localStorage.setItem('cenaculum:audio', 'no');
         localStorage.setItem('cenaculum:adapt-load', adapt ? 'yes' : 'no');
-        localStorage.setItem('cenaculum:stream3', JSON.stringify({ resolution: 'source', frameRate: 60, maxBitrate: 0 }));
+        localStorage.setItem('cenaculum:stream3', JSON.stringify({ resolution: 'source', frameRate: want, maxBitrate }));
+        if (codec) localStorage.setItem('cenaculum:codec', codec);
       } catch {}
       if (!sender) return;
+      if (fakeShrink) {
+        const orig = RTCRtpSender.prototype.getStats;
+        RTCRtpSender.prototype.getStats = async function () {
+          const rep = await orig.call(this);
+          if (this.track?.kind !== 'video' || this.getParameters().degradationPreference === 'maintain-resolution') return rep;
+          const out = new Map();
+          rep.forEach((v, k) => {
+            out.set(
+              k,
+              v.type === 'outbound-rtp' && v.kind === 'video'
+                ? { ...v, frameWidth: 320, frameHeight: 180, qualityLimitationReason: 'bandwidth', targetBitrate: 7.3e6 }
+                : v,
+            );
+          });
+          return out;
+        };
+      }
       navigator.mediaDevices.getDisplayMedia = async () => {
         const c = document.createElement('canvas');
         c.width = 1280;
@@ -73,16 +95,18 @@ async function person(room, key, name, opts) {
         return c.captureStream(60);
       };
     },
-    { sender: opts.sender, fps: opts.fps ?? 60, still: opts.still === true, adapt: opts.adapt === true },
+    { sender: opts.sender, fps: opts.fps ?? 60, still: opts.still === true, adapt: opts.adapt === true, maxBitrate: opts.maxBitrate ?? 0, codec: opts.codec ?? '', fakeShrink: opts.fakeShrink === true, want: opts.want ?? 60 },
   );
   const page = await ctx.newPage();
   const errors = [];
+  const logs = [];
+  page.on('console', (m) => logs.push(m.text()));
   page.on('pageerror', (e) => errors.push(String(e)));
   await page.goto(`${BASE}/room/${room}#${key}`);
   await page.fill('#nickname', name);
   await page.click('button[type=submit]');
   await page.waitForSelector('footer.dock', { timeout: 20000 });
-  return { ctx, page, errors };
+  return { ctx, page, errors, logs };
 }
 
 async function room(label, opts) {
@@ -160,6 +184,16 @@ if (ONLY.includes('video')) {
   await done(r);
 }
 
+if (ONLY.includes('sessenta')) {
+  console.log('\n[sessenta] 120 pedidos, conteúdo de 60');
+  const r = await room('sessenta', { fps: 60, want: 120 });
+  const key = await waitFor(() => keyText(r.A), 30000);
+  const h = await health(r.A);
+  console.log('  saúde de A:', JSON.stringify(h));
+  check(key === '' && h?.short !== 'capture' && h?.wantFps === 120, `conteúdo de 60 com 120 pedidos não acusa (${key || 'nada'})`);
+  await done(r);
+}
+
 if (ONLY.includes('parada')) {
   console.log('\n[parada] tela parada');
   const r = await room('parada', { still: true });
@@ -199,6 +233,27 @@ if (ONLY.includes('ceder')) {
   }, 30000);
   console.log('  com "fair" depois de ~20 s:', JSON.stringify(l));
   check(l?.step === 0 && l?.fps === 60, 'quando alivia, volta à qualidade total');
+  await done(r);
+}
+
+if (ONLY.includes('encolhe')) {
+  console.log('\n[encolhe] o navegador encolhe a tela com bits de sobra');
+  const r = await room('encolhe', { fps: 60, fakeShrink: true });
+  const pref = () =>
+    r.A.page.evaluate(() => {
+      const s = window.__noveau?.room?.localParticipant?.getTrackPublication('screen_share')?.track?.sender;
+      return s ? (s.getParameters().degradationPreference ?? '(nenhum)') : null;
+    });
+  console.log('  no começo:', await pref());
+  const fixed = await waitFor(async () => r.A.logs.find((l) => l.includes('encolheu a tela')) ?? null, 30000);
+  console.log('  vigia:', fixed ?? 'não agiu');
+  check(fixed !== null && /320x180/.test(fixed), 'o vigia percebe o encolhimento (320x180 com 7,3 Mbps de alvo)');
+  const now = await waitFor(async () => ((await pref()) === 'maintain-resolution' ? 'maintain-resolution' : null), 5000);
+  check(now === 'maintain-resolution', `a tela passa para "manter resolução" (${now ?? (await pref())})`);
+  const diary = await r.A.page.evaluate(() => window.__noveau.store.diag.events().map((e) => e.cause));
+  check(diary.includes('my-shrink'), `diário registra (${diary.join(',') || 'vazio'})`);
+  const panel = await r.A.page.evaluate(async () => (await window.__noveau.store.sendingStats())?.height ?? 0);
+  check(panel >= 700, `depois, o tamanho real volta a aparecer (${panel}p)`);
   await done(r);
 }
 

@@ -140,6 +140,12 @@ LiveKit (Room) ──eventos──► RoomSession ──RoomSnapshot──► Ro
     baixar fps ou resolução "por precaução": o "Ceder" só age com o processador em `critical` (acima de
     ~90%); `serious` (75-90%) é o normal de um jogo. Números em `docs/DESEMPENHO.md`, "Quinta rodada".
     Teste: `tools/e2e/captura.mjs`.
+22. **O navegador não encolhe a tela com banda sobrando.** Em "manter fluidez" o controle de qualidade do
+    WebRTC (QualityScaler) pode reduzir a imagem até 320x180 olhando só o QP, e conta isso como "banda".
+    `ShrinkGuard` (`core/shrink-guard.ts`) vê camada bem menor que a planejada, com "bandwidth" e mais de
+    0,3 bit por pixel por quadro no alvo, por 6 s, e passa a tela para `maintain-resolution` (tira o limite
+    na hora). O painel mostra "controle de qualidade do navegador (não é a rede)". Teste: parte `encolhe`
+    de `tools/e2e/captura.mjs`.
 
 ## Atributos dos participantes
 
