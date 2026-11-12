@@ -746,9 +746,18 @@ export class RoomScreen {
   protected readonly menu = signal<Menu | null>(null);
   /** Algum plugin de DAW tocando na sala: a tecla do plugin fica acesa. */
   protected readonly dawPlaying = computed(() => this.store.studio.streams().some((s) => s.source === 'daw'));
-  /** Só o nome de cada som de estúdio (o buffer dele muda 2x por segundo e não aparece aqui). */
+  /**
+   * Só o nome de cada som de estúdio (o buffer dele muda 2x por segundo e não aparece aqui). O modo
+   * estúdio de uma tela só aparece na barra dessa tela; o plugin de DAW não tem tela e aparece sempre.
+   */
   protected readonly studioTags = computed(
-    () => this.store.studio.streams().map((st) => ({ key: st.key, text: st.source === 'daw' ? `DAW de ${st.name}` : `estúdio ${st.bits}-bit` })),
+    () => {
+      const focused = this.store.focused()?.id;
+      return this.store.studio
+        .streams()
+        .filter((st) => st.source === 'daw' || st.identity === focused)
+        .map((st) => ({ key: st.key, text: st.source === 'daw' ? `DAW de ${st.name}` : `estúdio ${st.bits}-bit` }));
+    },
     { equal: same },
   );
   protected readonly obsLive = computed(() => this.store.shares().some((s) => s.obs));

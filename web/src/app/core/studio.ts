@@ -7,11 +7,12 @@
 //
 // Pacote (10 ms): cabeçalho de 12 bytes + PCM inteiro little-endian intercalado L R.
 //   0 'S' | 1 versão | 2 bits (16 ou 24) | 3 canais | 4..7 seq | 8..9 frames | 10..11 livre
+// Pacote com 0 frames = "acabou": quem recebe fecha o player na hora (sem esperar 3 s de silêncio).
 //
 // Banda: 48 000 Hz x 2 canais x 24 bits = 2,3 Mbps (16 bits: 1,5 Mbps) por pessoa assistindo.
 
 import { signal } from '@angular/core';
-import { Participant, RemoteParticipant, Room, RoomEvent } from 'livekit-client';
+import { Participant, RemoteParticipant, RemoteTrackPublication, Room, RoomEvent, Track } from 'livekit-client';
 
 const TOPIC = 'studio';
 const RATE = 48000;
@@ -31,6 +32,8 @@ export class StudioSender {
   private ctx: AudioContext | null = null;
   private seq = 0;
   private stopped = false;
+  /** O som da tela acabou (o navegador parou a captura): para de mandar, nem que ninguém mais peça. */
+  private readonly onEnded = () => this.stop();
 
   constructor(
     private readonly room: Room,
@@ -39,6 +42,8 @@ export class StudioSender {
   ) {}
 
   async start() {
+    if (this.track.readyState === 'ended') return this.stop();
+    this.track.addEventListener('ended', this.onEnded, { once: true });
     const ctx = new AudioContext({ sampleRate: RATE, latencyHint: 'interactive' });
     this.ctx = ctx;
     await ctx.audioWorklet.addModule(WORKLET_URL);
@@ -54,10 +59,28 @@ export class StudioSender {
   }
 
   stop() {
+    if (this.stopped) return;
     this.stopped = true;
+    this.track.removeEventListener('ended', this.onEnded);
     this.track.stop();
+    if (this.ctx !== null) this.sendEnd();
     void this.ctx?.close();
     this.ctx = null;
+  }
+
+  /** Avisa quem recebe que o som acabou (selo e player somem na hora). */
+  private sendEnd() {
+    const buf = new ArrayBuffer(HEADER);
+    const view = new DataView(buf);
+    view.setUint8(0, 0x53);
+    view.setUint8(1, 1);
+    view.setUint8(2, this.bits);
+    view.setUint8(3, 2);
+    view.setUint32(4, this.seq++ >>> 0, true);
+    view.setUint16(8, 0, true);
+    void this.room.localParticipant
+      .publishData(new Uint8Array(buf), { reliable: true, topic: TOPIC })
+      .catch(() => undefined);
   }
 
   private send(pcm: Float32Array) {
@@ -205,6 +228,10 @@ export class StudioHub {
     if (topic === TOPIC && p !== undefined) this.receive(payload, p);
   };
   private readonly onLeave = (p: Participant) => this.drop(p.identity);
+  /** O som de estúdio é o som da tela: a tela saiu, o player (e o selo) saem junto. */
+  private readonly onUnpublished = (pub: RemoteTrackPublication, p: RemoteParticipant) => {
+    if (pub.source === Track.Source.ScreenShare) this.drop(p.identity);
+  };
   private readonly dawVolume = new Map<string, number>();
   /** Plugins de DAW conectados nesta sala (do "on" ao "off"), tocando ou não. */
   private readonly dawOnline = new Map<string, { name: string; rate: number; bits: number; channels: number }>();
@@ -232,6 +259,7 @@ export class StudioHub {
   constructor(private readonly room: Room) {
     room.on(RoomEvent.DataReceived, this.onData);
     room.on(RoomEvent.ParticipantDisconnected, this.onLeave);
+    room.on(RoomEvent.TrackUnpublished, this.onUnpublished);
     document.addEventListener('pointerdown', this.unlock);
     document.addEventListener('keydown', this.unlock);
   }
@@ -239,6 +267,7 @@ export class StudioHub {
   dispose() {
     this.room.off(RoomEvent.DataReceived, this.onData);
     this.room.off(RoomEvent.ParticipantDisconnected, this.onLeave);
+    this.room.off(RoomEvent.TrackUnpublished, this.onUnpublished);
     document.removeEventListener('pointerdown', this.unlock);
     document.removeEventListener('keydown', this.unlock);
     clearInterval(this.sweep);
@@ -282,6 +311,10 @@ export class StudioHub {
   }
 
   private receive(payload: Uint8Array, p: RemoteParticipant) {
+    // Sem tela publicada não tem som de estúdio: ignora o que ainda chegar (pacotes atrasados depois
+    // de parar, ou alguém com a versão antiga, que continuava mandando silêncio depois de parar a tela
+    // pelo navegador). Sem isto o player renascia e o selo "estúdio" ficava aceso.
+    if (p.getTrackPublication(Track.Source.ScreenShare) === undefined) return void this.drop(p.identity);
     this.ingest(p.identity, p.identity, p.name || p.identity.split('#')[0], 'room', payload);
   }
 
@@ -327,6 +360,7 @@ export class StudioHub {
     const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
     const h = readHeader(view);
     if (h === null) return;
+    if (h.frames === 0) return void this.drop(key);
     let pl = this.players.get(key);
     // Mudou a taxa (a DAW trocou de 48 para 96 kHz): recria o player na taxa nova.
     if (pl !== undefined && pl.rate !== h.rate) {

@@ -335,11 +335,16 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
   // Quem já está na sala e disse o que decodifica na placa de vídeo (atributo "hwdec").
   const codec = pickCodec(req.preferredCodec, viewersOf(room));
   const bitrate = cappedBitrate(encoded, req.plan, codec);
+  // "Parar de compartilhar" do navegador. O LiveKit ouve o mesmo 'ended' (e ouviu primeiro: ele se
+  // inscreveu ao criar a faixa) e já tirou a publicação do mapa quando chegamos aqui. Antes este
+  // teste exigia a publicação ainda lá, então nunca passava: o som de estúdio continuava mandando
+  // silêncio para sempre e o selo "estúdio 24-bit" não saía de quem assistia. 'ended' só vem do
+  // navegador (track.stop() não dispara), então só ignora se outra tela já tomou o lugar desta.
   video.mediaStreamTrack.addEventListener(
     'ended',
     () => {
       const current = room.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.track;
-      if (current?.mediaStreamTrack === video.mediaStreamTrack) cb.onEndedByBrowser();
+      if (current === undefined || current.mediaStreamTrack === video.mediaStreamTrack) cb.onEndedByBrowser();
     },
     { once: true },
   );
