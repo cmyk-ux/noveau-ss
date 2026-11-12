@@ -166,20 +166,40 @@ function scaled(size: Size, factor: number): Size {
   return { width: even(size.width / factor), height: even(size.height / factor) };
 }
 
+/** A cópia menor (simulcast) sai com 2/3 do tamanho da de cima (ver videoPublishOptions). */
+const LOW_LAYER_RATIO = 1.5;
+
 /**
  * Redução de tamanho no codificador (scaleResolutionDownBy), para todos os envios da tela: o
  * principal e a reserva (backupCodec), que o LiveKit cria sozinho quando alguém precisa. A camada
- * de cima vai para o teto escolhido; as de baixo (cópia menor) já são calculadas pelo LiveKit no
- * tamanho certo. Com o PC apertado (LoadGovernor), todas reduzem junto.
+ * de cima vai para o teto escolhido e a de baixo para 2/3 dela, sempre contados do tamanho REAL que a
+ * captura está entregando (media-source no getStats). Antes o teto vinha do primeiro quadro e a cópia
+ * menor da conta do LiveKit na hora de publicar; se a captura mudasse de tamanho (janela redimensionada,
+ * troca de superfície, primeiro quadro diferente) as escalas ficavam erradas para sempre.
+ * Com o PC apertado (LoadGovernor), todas reduzem junto.
  */
 class EncoderScale {
   private load = 1;
-  private readonly bases = new WeakMap<RTCRtpSender, number[]>();
+  private cap: number;
 
   constructor(
     private readonly track: LocalVideoTrack,
-    private readonly cap: number,
-  ) {}
+    private readonly plan: StreamPlan,
+    first: Size,
+  ) {
+    this.cap = capScale(first, plan);
+  }
+
+  /** Tamanho que a captura entrega agora (da leitura de 2 s): refaz o teto se mudou. */
+  setSource(report: RTCStatsReport) {
+    for (const s of report.values()) {
+      if (s.type !== 'media-source' || s.kind !== 'video') continue;
+      const w = Number(s.width);
+      const h = Number(s.height);
+      if (w > 0 && h > 0) this.cap = capScale({ width: w, height: h }, this.plan);
+      return;
+    }
+  }
 
   setLoad(factor: number) {
     this.load = factor;
@@ -196,14 +216,10 @@ class EncoderScale {
       const params = sender.getParameters();
       const encodings = params.encodings ?? [];
       if (encodings.length === 0) continue;
-      let base = this.bases.get(sender);
-      if (base === undefined || base.length !== encodings.length) {
-        base = encodings.map((e, i) => (i === encodings.length - 1 ? this.cap : (e.scaleResolutionDownBy ?? 1)));
-        this.bases.set(sender, base);
-      }
+      const last = encodings.length - 1;
       let changed = false;
       encodings.forEach((e, i) => {
-        const want = Math.max(1, base[i] * this.load);
+        const want = Math.max(1, this.cap * LOW_LAYER_RATIO ** (last - i) * this.load);
         if (Math.abs((e.scaleResolutionDownBy ?? 1) - want) < 0.01) return;
         e.scaleResolutionDownBy = want;
         changed = true;
@@ -355,7 +371,7 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
   );
   await room.localParticipant.publishTrack(video, videoPublishOptions(req, codec, bitrate, encoded));
   if (codec === 'vp8') await addTemporalLayers(video);
-  const scale = new EncoderScale(video, cap);
+  const scale = new EncoderScale(video, req.plan, resolution);
   scale.apply();
   let audioState: ShareResult['audio'] = req.includeAudio ? 'refused' : 'not-requested';
   stopStudio();
@@ -376,7 +392,10 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
   // Depois de trocar de codec o sender muda: a leitura segue o atual.
   const feed = new StatsFeed(() => video.sender);
   // A reserva (backupCodec) aparece sozinha quando alguém precisa: a cada leitura confere o tamanho.
-  feed.add(() => scale.apply());
+  feed.add((r) => {
+    scale.setSource(r);
+    scale.apply();
+  });
   // O vigia do processador existe sempre: com o "Ceder" desligado ele só lê o uso (para o diagnóstico
   // dizer se a captura curta é o processador ou a placa de vídeo), sem mexer na transmissão.
   const governor = new LoadGovernor(video.mediaStreamTrack, encoded, req.plan.frameRate, cb.onLoad, (f) => scale.setLoad(f), req.adaptToLoad);

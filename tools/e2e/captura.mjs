@@ -171,6 +171,12 @@ if (ONLY.includes('cheia')) {
   const h = await health(r.A);
   console.log('  saúde de A:', JSON.stringify(h));
   check(key === '' && h?.short !== 'capture', `sem aviso de captura (${key || 'nada'})`);
+  const st = await r.A.page.evaluate(async () => {
+    const s = await window.__noveau.store.sendingStats();
+    return s ? { captura: s.captureSize, camadas: s.layers } : null;
+  });
+  console.log('  painel de A:', JSON.stringify(st));
+  check(st?.captura === '1280x720' && st.camadas.length > 0, 'o painel mostra o tamanho da captura e as camadas');
   await done(r);
 }
 
