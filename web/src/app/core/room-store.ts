@@ -522,6 +522,10 @@ export class RoomStore {
     const r = await this.session.shareReport();
     return r === null ? null : this.sampler.readOutbound(r);
   }
+  /** O que está sendo compartilhado: 'monitor' (tela inteira), 'window' ou 'browser' (aba). */
+  shareSurface(): string {
+    return this.session.shareSurface();
+  }
   async sendingAudioStats() {
     const r = await this.session.shareAudioReport();
     return r === null ? null : this.sampler.readOutboundAudio(r);

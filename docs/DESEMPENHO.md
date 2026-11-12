@@ -347,3 +347,33 @@ Mudanças:
 - Comparações de "codificador perdendo quadros" usam o menor entre captura e pedido, porque a captura agora pode passar do pedido.
 
 Teste: `tools/e2e/autoteste.mjs monitor144` (monitor de 144 Hz fingido nos quadros de animação: pede 72, varre 60/72/144, quem assiste recebe ~60).
+
+## Nona rodada (12/11/2026): tela inteira presa em 48 fps, janela a 144
+
+A varredura do /teste no PC do Pedro deu sempre ~48 fps, pedindo 60, 72 ou 144. O ambiente:
+- Windows 11 build 26200, Brave 157.1.99.56 (Chromium 157), RTX 3070.
+- Um monitor 1920x1080 a 144 Hz.
+
+Medição no próprio PC: Brave com perfil temporário, animação em tela cheia e contagem por `MediaStreamTrackProcessor`, 8 s depois de 2 s de aquecimento.
+
+| captura | fps |
+| --- | --- |
+| tela inteira, sem flags | 48,1 |
+| tela inteira, `WebRtcAllowWgcUsingTexture` | 48,1 |
+| tela inteira, `ZeroCopyDesktopCapture` | 48,1 |
+| tela inteira, as duas | 48,2 |
+| tela inteira, pedindo 60 | 48,1 |
+| **janela** (a própria janela do teste, 1920x1080) | **144,1** |
+
+O que isso mostra:
+- O teto é só da captura de **tela inteira** no Windows 11 24H2+. Ele não muda com o fps pedido nem com flags.
+- 48 = 144 / 3. Num monitor de 240 Hz dá 60 (o Rhenan tinha 60 de 120).
+- Explicação mais provável: no 24H2 o Windows Graphics Capture entrega no máximo um quadro a cada `MinUpdateInterval`, que tem padrão de 16 ms. O próximo quadro depois de 16 ms cai em 20,8 ms (144 Hz) ou 16,7 ms (240 Hz). O Chromium usa WGC para tela inteira a partir do 24H2 (`IsWgcEnabledForScreenCapture`) e não muda esse intervalo. Outros projetos medem ~58 fps com o padrão e ~188 com 1 ms (github.com/gjovanov/roomler-ai/pull/2915); o OBS muda o intervalo (PR 12759).
+- A captura de janela não tem esse teto.
+
+Mudanças:
+- O seletor do navegador abre na aba de **janelas** (`displaySurface: 'window'`). A tela inteira continua disponível.
+- O painel de estatísticas, com tela inteira e captura abaixo do pedido, sugere compartilhar a janela do jogo (em "janela sem bordas"; tela cheia exclusiva pode sair preta).
+- O /teste tem "Testar pela janela" e "Testar pela tela inteira", mostra o que foi compartilhado e, na tela inteira com fps baixo, explica o teto.
+
+Ainda não testado com um jogo de verdade (fps e som da janela).

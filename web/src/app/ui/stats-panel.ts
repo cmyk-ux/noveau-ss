@@ -139,9 +139,13 @@ export class StatsPanel {
     const want = this.store.health()?.wantFps || this.prefs.stream().frameRate;
     const out: Row[] = [];
     if (/openh264/i.test(s.encoder)) out.push(row('dica', 'H.264 saiu no processador: escolha H.265 ou reinicie a transmissão', true));
+    // Tela inteira no Windows 11 24H2+: a captura do Chromium fica presa (~48 fps em 144 Hz); a de janela
+    // acompanha o monitor (DESEMPENHO.md, "Nona rodada").
+    const monitorShort = this.store.shareSurface() === 'monitor' && s.captureFps > 0 && s.captureFps < want * 0.9;
+    if (monitorShort) out.push(row('dica', 'tela inteira tem teto no Windows 11: compartilhe a JANELA do jogo (sem bordas) para passar disso', true));
     const h = this.store.health();
     if (h?.short === 'encoder') out.push(row('dica', 'o codificador perde quadros: limite o FPS do jogo para sobrar placa de vídeo', true));
-    else if (s.captureFps > 0 && s.captureFps < want * 0.9)
+    else if (!monitorShort && s.captureFps > 0 && s.captureFps < want * 0.9)
       out.push(row('dica', 'o navegador só captura quando a tela muda: área de trabalho parada ou vídeo de 30 fps dão menos quadros, e é normal'));
     return out;
   }

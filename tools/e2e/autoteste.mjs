@@ -67,7 +67,7 @@ async function run(label, { fps, width, height, codec = 'h264', fakeHz = 0 }) {
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   await page.goto(`${BASE}/teste`);
-  await page.getByRole('button', { name: 'Começar o teste' }).click();
+  await page.getByRole('button', { name: 'Testar pela janela' }).click();
   await page.waitForSelector('.verdict', { timeout: 90000 });
   const verdict = (await page.textContent('.verdict'))?.trim() ?? '';
   const rows = Object.fromEntries(
@@ -79,10 +79,11 @@ async function run(label, { fps, width, height, codec = 'h264', fakeHz = 0 }) {
   for (const n of notes) console.log('  nota:', n);
   // Depois do teste a sala some (sem transmissão sobrando).
   const asked = await page.evaluate(() => window.__gdm?.video?.frameRate ?? null);
+  const surface = await page.evaluate(() => window.__gdm?.video?.displaySurface ?? null);
   const leftover = await page.evaluate(() => [...document.querySelectorAll('video')].some((v) => v.srcObject?.getVideoTracks?.().some((t) => t.readyState === 'live')));
   check(errors.length === 0, `sem erro na página${errors.length ? ': ' + errors.join(' | ').slice(0, 300) : ''}`);
   await ctx.close();
-  return { verdict, rows, notes, leftover, asked };
+  return { verdict, rows, notes, leftover, asked, surface };
 }
 
 if (ONLY.includes('inteira')) {
@@ -91,6 +92,7 @@ if (ONLY.includes('inteira')) {
   check(/^1920x1080 a (5\d|6\d) fps$/.test(r.rows['quem assiste recebe'] ?? ''), `quem assiste recebe 1920x1080 a ~60 fps (${r.rows['quem assiste recebe']})`);
   check(/^1920x1080 a /.test(r.rows['seu PC manda'] ?? ''), `o PC manda no tamanho da captura (${r.rows['seu PC manda']})`);
   check(!r.leftover, 'a transmissão do teste termina com ele');
+  check(r.surface === 'window', `o seletor abre nas janelas (${r.surface})`);
 }
 
 if (ONLY.includes('lenta')) {
