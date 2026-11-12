@@ -19,6 +19,8 @@
 // vai para o diagnóstico (números ao vivo e o atributo "tx"), para dizer se a captura curta é o
 // processador ou a placa de vídeo.
 
+import { captureRateFor } from './monitor';
+
 export type Pressure = 'nominal' | 'fair' | 'serious' | 'critical';
 
 export interface LoadState {
@@ -163,8 +165,10 @@ export class LoadGovernor {
     const s = this.steps[next];
     if (s.fps !== this.applied) {
       this.applied = s.fps;
+      // Qualidade total: o mesmo ritmo da largada (divisor do monitor, monitor.ts). Nos degraus, o teto
+      // é o do degrau: o codificador continua com teto no pedido, então só a captura corta os quadros.
       void this.track
-        .applyConstraints({ width: { max: CAPTURE_MAX.width }, height: { max: CAPTURE_MAX.height }, frameRate: { max: s.fps } })
+        .applyConstraints({ width: { max: CAPTURE_MAX.width }, height: { max: CAPTURE_MAX.height }, frameRate: { max: next === 0 ? captureRateFor(s.fps) : s.fps } })
         .catch(() => undefined);
     }
     this.scaleTo(s.scale);

@@ -298,7 +298,9 @@ export class ShareWatch {
     const at = num(s, 'timestamp');
     const bps = this.bytes === null || at <= this.bytes.at ? 0 : ((sent - this.bytes.sent) * 8 * 1e3) / (at - this.bytes.at);
     this.bytes = { sent, at };
-    const short = this.shortfall.push({ capture, sent: sentFps < 0 ? capture : sentFps, want, moving: bps >= MOVING_BPS });
+    // A captura pode passar do pedido (divisor do monitor, monitor.ts): o codificador só deve mandar o pedido.
+    const usable = Math.min(capture, want);
+    const short = this.shortfall.push({ capture: usable, sent: sentFps < 0 ? usable : Math.min(sentFps, usable), want, moving: bps >= MOVING_BPS });
     const next: ShareHealth = {
       reason: lasting === 'none' ? asLimitation(s.qualityLimitationReason) : lasting,
       width: num(s, 'frameWidth'),
