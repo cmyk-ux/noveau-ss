@@ -213,17 +213,21 @@ export function isWaitingForCamera(s: RoomSnapshot, cameraOffered: boolean) {
 
 /**
  * Foco: com uma tela só, ela fica em foco. Com várias, o foco fica onde estava; se a tela em
- * foco sumir, volta para a grade (null), como no Discord.
+ * foco sumir, volta para a grade (null).
  */
 function keepFocus(ids: string[], current: string | null) {
   if (current !== null && ids.includes(current)) return current;
   return ids.length === 1 ? ids[0] : null;
 }
 
-/** Quando a primeira tela aparece, ela ganha o foco; com várias, o foco fica onde estava. */
-function focusIfOnly(ids: string[], arriving: string, _current: string | null) {
-  // Chegou outra tela: mostra todas em grade, como o Discord.
-  return ids.length === 1 && ids[0] === arriving ? arriving : null;
+/**
+ * Apareceu mais uma tela (ou câmera). Se o foco foi escolhido por você (clicou numa tela), ele
+ * fica: alguém ligar a câmera não pode tirar você do jogo que está assistindo. Se o foco era
+ * automático (era a única tela), mostra todas em grade, para você ver que chegou outra.
+ */
+function focusOnArrival(ids: string[], current: string | null, chosen: boolean) {
+  if (chosen && current !== null && ids.includes(current)) return current;
+  return ids.length === 1 ? ids[0] : null;
 }
 
 /**
@@ -340,6 +344,8 @@ async function webcamPlan() {
 
 export class RoomSession {
   private focusedShareId: string | null = null;
+  /** O foco atual foi escolhido por você (clicou na tela), não automático por ser a única. */
+  private focusChosen = false;
   private readonly hidden = new Set<string>();
   private readonly listeners = new Set<(s: RoomSnapshot) => void>();
   private readonly mixer = new Mixer();
@@ -515,7 +521,7 @@ export class RoomSession {
       .on(RoomEvent.LocalTrackUnpublished, changed)
       .on(RoomEvent.TrackPublished, (pub, p) => {
         // A câmera do celular conta como a câmera do dono dele.
-        if (isVisual(pub.source)) this.focusedShareId = focusIfOnly(this.liveIds(), phoneOf(p) ?? p.identity, this.focusedShareId);
+        if (isVisual(pub.source)) this.setFocus(focusOnArrival(this.liveIds(), this.focusedShareId, this.focusChosen), this.focusChosen);
         this.micMovedToPhone(pub, p);
         changed();
       })
@@ -530,6 +536,13 @@ export class RoomSession {
         changed();
       })
       .on(RoomEvent.AudioPlaybackStatusChanged, () => this.update('view'))
+      // Voltou de uma queda: a conversa direta reenvia o que o servidor pode ter perdido, e quem
+      // assiste conta de novo o que decodifica na placa (some numa reconexão completa).
+      .on(RoomEvent.Reconnected, () => {
+        this.direct.reconnected();
+        void this.publishDecoders();
+        changed();
+      })
       .on(RoomEvent.Disconnected, changed);
   }
 
@@ -830,32 +843,42 @@ export class RoomSession {
   setMyOnStage(on: boolean) {
     if (this.myOnStage === on) return;
     this.myOnStage = on;
-    if (!on && this.live.some((s) => s.view.isLocal && s.view.id === this.focusedShareId)) this.focusedShareId = null;
+    if (!on && this.live.some((s) => s.view.isLocal && s.view.id === this.focusedShareId)) this.setFocus(null, false);
     this.emit();
   }
 
   focusShare(id: string) {
     if (!this.myOnStage && this.live.some((s) => s.view.id === id && s.view.isLocal)) return;
-    this.focusedShareId = id;
+    this.setFocus(id, true);
     this.emit();
   }
 
   /** Esconde uma tela só para você: para de baixar o vídeo e de tocar o som dela. */
   hideShare(id: string) {
     this.hidden.add(id);
-    if (this.focusedShareId === id) this.focusedShareId = null;
+    if (this.focusedShareId === id) this.setFocus(null, false);
     this.emit();
   }
 
+  /**
+   * Volta a mostrar uma tela escondida. Com o foco automático (sobrou uma tela só quando você
+   * escondeu a outra), volta para a grade com as duas; com o foco escolhido por você, ele fica.
+   */
   showShare(id: string) {
-    this.hidden.delete(id);
+    if (!this.hidden.delete(id)) return;
+    if (!this.focusChosen) this.setFocus(null, false);
     this.emit();
   }
 
   /** Volta para a grade com todas as telas. */
   unfocus() {
-    this.focusedShareId = null;
+    this.setFocus(null, false);
     this.emit();
+  }
+
+  private setFocus(id: string | null, chosen: boolean) {
+    this.focusedShareId = id;
+    this.focusChosen = id !== null && chosen;
   }
 
   /** Solta o vídeo de um elemento que vai sumir. */
@@ -1284,14 +1307,16 @@ export class RoomSession {
 
   private settle(): RoomSnapshot {
     if (statusOf(this.room.state) === 'disconnected') {
-      this.focusedShareId = null;
+      this.setFocus(null, false);
       this.live = [];
       return emptySnapshot();
     }
     this.direct.sync();
     const shares = this.collectShares();
     this.live = shares;
-    this.focusedShareId = keepFocus(this.stageIds(shares), this.focusedShareId);
+    const focus = keepFocus(this.stageIds(shares), this.focusedShareId);
+    // A tela escolhida acabou: o próximo foco é automático.
+    if (focus !== this.focusedShareId) this.setFocus(focus, false);
     this.followFocus(shares);
     this.mix();
     this.publishWatching();
@@ -1539,7 +1564,12 @@ function statusOf(state: ConnectionState): RoomStatus {
       return 'connecting';
     case ConnectionState.Connected:
       return 'connected';
+    // SignalReconnecting é a retomada rápida: o LiveKit perdeu o canal de controle (WebSocket) e
+    // está voltando; a imagem e o som costumam continuar chegando. Antes ela caía no "default" e
+    // virava "desconectado": o palco sumia, aparecia "Conexão perdida" e a página da call do
+    // Discord tirava a pessoa da sala (parando a tela dela para todo mundo) por uma piscada de rede.
     case ConnectionState.Reconnecting:
+    case ConnectionState.SignalReconnecting:
       return 'reconnecting';
     default:
       return 'disconnected';
