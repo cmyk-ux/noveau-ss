@@ -50,10 +50,13 @@ async function join(name, { mobile = false, voice = 'cru' } = {}) {
   await page.fill('#nickname', name);
   await page.click('button[type=submit]');
   await page.waitForSelector('footer.dock', { timeout: 20000 });
-  const p = { name, page, ctx, errors };
+  const p = { name, page, ctx, errors, expected: [] };
   people[name] = p;
   return p;
 }
+
+/** Erros de console que a parte provocou de propósito (ex.: tirar a internet) não contam no fim. */
+const unexpected = (p) => p.errors.filter((e) => !p.expected.some((re) => re.test(e)));
 
 /** Espera uma condição na página; devolve true/false (nunca lança). */
 async function until(p, fn, arg, ms = 12000) {
@@ -155,6 +158,8 @@ async function part(name, fn) {
     await fn();
   } catch (e) {
     ok('parte terminou sem exceção', false, String(e).split('\n')[0]);
+    // Foto de cada um no momento da falha (SHOTS=pasta).
+    if (process.env.SHOTS) for (const p of Object.values(people)) await p.page.screenshot({ path: `${process.env.SHOTS}/${name}-${p.name}.png` }).catch(() => undefined);
   }
   // Nenhum menu aberto vaza para a próxima parte.
   for (const p of Object.values(people)) await p.page.keyboard.press('Escape').catch(() => undefined);
@@ -162,6 +167,30 @@ async function part(name, fn) {
 
 const btn = (p, title) => p.page.locator(`button[title="${title}"]`).first();
 const hover = async (p, sel) => p.page.locator(sel).first().hover().catch(() => undefined);
+const has = async (p, sel) => (await p.page.locator(sel).count()) > 0;
+
+/**
+ * Deixa a sala no ponto de partida, para uma parte que falhou não derrubar as seguintes:
+ * câmeras desligadas, só A transmitindo (se a parte pedir), nada escondido, sem foco escolhido.
+ */
+async function baseline({ aSharing = false } = {}) {
+  for (const p of [A, B, C]) {
+    await p.page.keyboard.press('Escape').catch(() => undefined);
+    if (await has(p, 'button[title="Desligar câmera"]')) await btn(p, 'Desligar câmera').click().catch(() => undefined);
+    if (p !== A && (await has(p, 'button[title="Parar de compartilhar"]'))) await btn(p, 'Parar de compartilhar').click().catch(() => undefined);
+    // Nada escondido e sem foco escolhido (isso é só da tela de cada um, não é o que se testa aqui).
+    await p.page.evaluate(() => {
+      const st = window.__noveau.store;
+      for (const h of st.hiddenShares()) st.showShare(h.id);
+      if (st.myOnStage()) st.setMyOnStage(false);
+      st.unfocus();
+    }).catch(() => undefined);
+  }
+  if (aSharing && (await has(A, 'button[title="Compartilhar tela"]'))) await btn(A, 'Compartilhar tela').click();
+  if (aSharing) {
+    for (const p of [B, C]) await until(p, playing, 'cen-stage video', 20000);
+  }
+}
 
 // =====================================================================================
 const A = await join('A');
@@ -181,7 +210,7 @@ await part('microfone', async () => {
   ok('voz de A chega em B', await flowing(B, 'A', 'microphone'));
   await B.page.locator('button.people-top').click();
   const rowA = B.page.locator('li.strip').filter({ has: B.page.locator('.name', { hasText: /^A$/ }) });
-  ok('B vê o microfone de A aberto no painel', await rowA.locator('.mic.open').count().then((n) => n === 1));
+  ok('B vê o microfone de A aberto no painel', (await eventually(async () => (await rowA.locator('.mic.open').count()) === 1)).ok);
   await btn(A, 'Desligar microfone').click();
   ok('B vê o microfone de A fechado', (await eventually(async () => (await rowA.locator('.mic.open').count()) === 0)).ok);
   await btn(A, 'Ligar microfone').click();
@@ -196,12 +225,12 @@ await part('tela', async () => {
   ok('A vê "Sua tela está no ar." (a própria não vai pro palco)', await until(A, () => document.body.innerText.includes('Sua tela está no ar.')));
   ok('tecla da tela vira "Parar de compartilhar"', await until(A, () => document.querySelector('button[title="Parar de compartilhar"]') !== null));
   ok('B: barra de cima diz "tela de A" e "com som"', await until(B, () => { const t = document.querySelector('.now')?.textContent ?? ''; return t.includes('tela de A') && t.includes('com som'); }));
-  const s = await remote(B, 'A', 'screen_share_audio');
-  ok('som da tela de A chega em B a 20% (padrão)', near(s.gain, 0.2), JSON.stringify(s));
+  const s = await gainIs(B, 'A', 'screen_share_audio', 0.2);
+  ok('som da tela de A chega em B a 20% (padrão)', s.ok, JSON.stringify(s.last?.s));
   ok('B recebe a tela de A (inscrito e ligado)', (await remote(B, 'A', 'screen_share')).enabled === true);
   ok('vídeo da tela de A chegando em B', await flowing(B, 'A', 'screen_share'));
   const tag = await B.page.locator('.now .tag.mono').first().innerText().catch(() => '');
-  ok('B: etiqueta com resolução e fps medidos', /\d+p/.test(tag), tag);
+  ok('B: etiqueta com resolução e fps medidos', /\d+p/i.test(tag), tag);
 });
 
 await part('volume', async () => {
@@ -320,7 +349,15 @@ await part('palco', async () => {
 });
 
 await part('grade', async () => {
+  await baseline({ aSharing: true });
   await btn(B, 'Ligar câmera').click();
+  // Quem assiste uma tela continua nela quando chega outra (como no Discord): aviso com "ver".
+  ok('B liga a câmera: ela aparece na faixa de C', await until(C, () => document.querySelectorAll('cen-live-strip .face').length >= 2, undefined, 10000));
+  ok('C continua na tela de A (o foco não é roubado)', await C.page.evaluate(() =>
+    document.querySelectorAll('cen-share-tile').length === 0 && (document.querySelector('.now')?.textContent ?? '').includes('tela de A')));
+  ok('aviso "B ligou a câmera."', await until(C, () => (document.querySelector('.toast')?.textContent ?? '').includes('B ligou a câmera')));
+  await hover(C, 'cen-stage');
+  await C.page.locator('button[title="Ver todas as telas"]').click();
   ok('C vê a grade com 2 telas', await until(C, () => document.querySelectorAll('cen-share-tile').length === 2));
   ok('vídeos da grade tocando em C', await until(C, () => [...document.querySelectorAll('cen-share-tile video')].filter((v) => v.videoWidth > 0).length >= 2));
   const tileA = C.page.locator('cen-share-tile').filter({ hasText: /\bA\b/ });
@@ -352,9 +389,16 @@ await part('grade', async () => {
   await C.page.keyboard.press('Escape');
   await btn(B, 'Desligar câmera').click();
   ok('B desliga a câmera: C volta a 1 tela em foco', await until(C, () => document.querySelectorAll('cen-share-tile').length === 0 && document.querySelector('cen-stage video')?.videoWidth > 0));
+  // O "ver" do aviso leva até a câmera que chegou.
+  await btn(B, 'Ligar câmera').click();
+  ok('com a tela de A em foco, aparece o aviso de novo', await until(C, () => (document.querySelector('.toast')?.textContent ?? '').includes('B ligou a câmera'), undefined, 10000));
+  await C.page.locator('.toast button', { hasText: 'ver' }).click();
+  ok('"ver" no aviso foca a câmera de B', await until(C, () => (document.querySelector('.now')?.textContent ?? '').includes('de B') && document.querySelector('cen-stage video')?.videoWidth > 0));
+  await btn(B, 'Desligar câmera').click();
 });
 
 await part('camera', async () => {
+  await baseline({ aSharing: true });
   await btn(A, 'Ligar câmera').click();
   ok('C vê a câmera de A na janelinha', await until(C, () => [...document.querySelectorAll('cen-cam-pip video')].some((v) => v.videoWidth > 0)));
   ok('A vê o próprio retorno ("você")', await until(A, () => document.querySelector('cen-self-cam .win video')?.videoWidth > 0));
@@ -366,12 +410,17 @@ await part('camera', async () => {
   await C.page.locator('.corner .cam-key').click();
   ok('C volta a ver a câmera de A', await until(C, () => [...document.querySelectorAll('cen-cam-pip video')].some((v) => v.videoWidth > 0)));
   const before = await C.page.evaluate(() => document.querySelector('cen-stage video').videoWidth);
-  await C.page.locator('cen-cam-pip button[title="Trocar com a imagem grande"]').click();
+  const swapKey = async () => {
+    await C.page.locator('cen-cam-pip .win').hover();
+    await wait(300);
+    await C.page.locator('cen-cam-pip button[title="Trocar com a imagem grande"]').click();
+  };
+  await swapKey();
   ok('trocar: a câmera vai para o palco', (await eventually(async () => {
     const w = await C.page.evaluate(() => document.querySelector('cen-stage video')?.videoWidth ?? 0);
     return w > 0 && w !== before;
   })).ok);
-  await C.page.locator('cen-cam-pip button[title="Trocar com a imagem grande"]').click();
+  await swapKey();
   ok('trocar de novo: a tela volta para o palco', (await eventually(async () => (await C.page.evaluate(() => document.querySelector('cen-stage video')?.videoWidth ?? 0)) === before)).ok);
   // Retorno da própria câmera em A
   const mirror = A.page.locator('cen-self-cam button[aria-pressed]');
@@ -392,12 +441,12 @@ await part('camera', async () => {
 });
 
 await part('faixa', async () => {
+  await baseline({ aSharing: true });
   await A.page.locator('cen-live-strip .mine-key').click();
   ok('A abre a prévia da própria tela', await until(A, () => document.querySelector('cen-live-strip video')?.videoWidth > 0));
   await A.page.locator('cen-live-strip button', { hasText: 'ver grande no palco' }).click();
   ok('A vê a própria tela no palco', await until(A, playing, 'cen-stage video'));
-  await A.page.locator('cen-live-strip .mine-key').click().catch(() => undefined);
-  await A.page.locator('cen-live-strip .mine-key').click();
+  if ((await A.page.locator('cen-live-strip button', { hasText: 'tirar do palco' }).count()) === 0) await A.page.locator('cen-live-strip .mine-key').click();
   await A.page.locator('cen-live-strip button', { hasText: 'tirar do palco' }).click();
   ok('A tira a própria tela do palco', await until(A, () => document.body.innerText.includes('Sua tela está no ar.')));
   await A.page.locator('cen-live-strip .mine-key').click().catch(() => undefined);
@@ -428,13 +477,17 @@ async function streamPanel(p) {
 const chipsAfter = (panel, label) => panel.locator('p.label', { hasText: label }).locator('xpath=following-sibling::div[contains(@class,"chips")][1]');
 
 await part('qualidade', async () => {
+  await baseline({ aSharing: true });
   const panel = await streamPanel(A);
   await chipsAfter(panel, 'resolução máxima').locator('.chip', { hasText: '720p' }).click();
   await chipsAfter(panel, 'quadros por segundo').locator('.chip', { hasText: '30fps' }).click();
   await chipsAfter(panel, 'codec').locator('.chip', { hasText: 'VP9' }).click();
-  ok('chips acendem (720p, 30fps, VP9)', (await chipsAfter(panel, 'resolução máxima').locator('.chip.lit').innerText()) === '720p' &&
-    (await chipsAfter(panel, 'quadros por segundo').locator('.chip.lit').innerText()) === '30fps' &&
-    (await chipsAfter(panel, 'codec').locator('.chip.lit').innerText()) === 'VP9');
+  const lit = async (label) => ((await chipsAfter(panel, label).locator('.chip.lit').first().textContent()) ?? '').trim().toLowerCase();
+  const chips = await eventually(async () => {
+    const v = [await lit('resolução máxima'), await lit('quadros por segundo'), await lit('codec')].join(' ');
+    return { ok: v === '720p 30fps vp9', v };
+  }, 3000);
+  ok('chips acendem (720p, 30fps, VP9)', chips.ok, chips.last?.v);
   ok('"Aplicar agora" aparece com a tela no ar', (await panel.locator('.apply button').count()) === 1);
   await panel.locator('.apply button').click();
   const r = await eventually(async () => {
@@ -453,13 +506,14 @@ await part('qualidade', async () => {
 });
 
 await part('som-da-tela', async () => {
+  await baseline({ aSharing: true });
   const panel = await streamPanel(A);
-  await panel.locator('label.switch', { hasText: 'Compartilhar o áudio' }).locator('input').click();
+  await panel.locator('label.switch', { hasText: 'Compartilhar o áudio' }).click();
   if ((await panel.locator('.apply button').count()) === 1) await panel.locator('.apply button').click();
   ok('sem áudio: B não tem mais som da tela de A', (await eventually(async () => (await remote(B, 'A', 'screen_share_audio')).exists === false, 15000)).ok);
   ok('sem áudio: "com som" some da barra de B', await until(B, () => !(document.querySelector('.now')?.textContent ?? '').includes('com som')));
   const p2 = await streamPanel(A);
-  await p2.locator('label.switch', { hasText: 'Compartilhar o áudio' }).locator('input').click();
+  await p2.locator('label.switch', { hasText: 'Compartilhar o áudio' }).click();
   // Estúdio 16-bit
   await p2.locator('.chip', { hasText: 'Estúdio 16-bit' }).click();
   if ((await p2.locator('.apply button').count()) === 1) await p2.locator('.apply button').click();
@@ -546,6 +600,7 @@ await part('direta', async () => {
 });
 
 await part('topo', async () => {
+  await baseline({ aSharing: true });
   // Cursor: B mostra o cursor e C (vendo a mesma tela) vê
   await B.page.locator('.cursor-ctl button').click();
   ok('cursor: a tecla acende', await until(B, () => document.querySelector('.cursor-ctl.on') !== null));
@@ -588,6 +643,7 @@ await part('obs-daw', async () => {
 });
 
 await part('celular', async () => {
+  await baseline({ aSharing: true });
   await A.page.locator('button[aria-label="Escolher câmera"]').click();
   await A.page.locator('cen-devices-panel cen-phone-link button', { hasText: 'Usar o celular' }).click();
   ok('link do celular: aparece o QR', await until(A, () => document.querySelector('cen-phone-link svg.qr') !== null, undefined, 8000));
@@ -599,8 +655,9 @@ await part('celular', async () => {
   const perrors = [];
   phone.on('pageerror', (e) => perrors.push(String(e)));
   await phone.goto(url);
+  // Com a permissão já dada (como aqui), a página entra direto; senão aparece o botão "Permitir".
   const allow = phone.locator('button', { hasText: /Permitir/ });
-  await allow.first().click({ timeout: 15000 });
+  await allow.first().click({ timeout: 4000 }).catch(() => undefined);
   const P = { name: 'celular', page: phone, ctx: phoneCtx, errors: perrors };
   people.celular = P;
   ok('celular entra e liga a câmera', await until(P, () => document.querySelector('.keys .key.lit') !== null, undefined, 20000));
@@ -617,6 +674,8 @@ await part('celular', async () => {
 });
 
 await part('reconexao', async () => {
+  await baseline({ aSharing: true });
+  C.expected.push(/ERR_INTERNET_DISCONNECTED|ERR_NETWORK_CHANGED|Failed to fetch|could not establish signal connection|websocket closed/i);
   const cdp = await C.ctx.newCDPSession(C.page);
   await cdp.send('Network.enable');
   await cdp.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
@@ -627,14 +686,75 @@ await part('reconexao', async () => {
   ok('C volta a ouvir a voz de A', (await eventually(async () => ({ ok: await flowing(C, 'A', 'microphone') }), 15000)).ok);
 });
 
+/** Grava, a cada 25 ms, o que C mostra durante uma queda: status, se o vídeo do palco sumiu, o aviso. */
+async function watchC() {
+  await C.page.evaluate(() => {
+    const w = { seen: [], v0: document.querySelector('cen-stage video'), lostVideo: false, banner: false };
+    window.__watch = w;
+    window.__watchTimer = setInterval(() => {
+      const st = window.__noveau.store.status();
+      if (!w.seen.includes(st)) w.seen.push(st);
+      const v = document.querySelector('cen-stage video');
+      if (v !== w.v0 || v === null || v.videoWidth === 0) w.lostVideo = true;
+      if (document.body.innerText.includes('Conexão perdida')) w.banner = true;
+    }, 25);
+  });
+}
+const readWatch = () => C.page.evaluate(() => {
+  clearInterval(window.__watchTimer);
+  const w = window.__watch;
+  return { seen: w.seen, lostVideo: w.lostVideo, banner: w.banner };
+});
+const idOf = (p, who) => p.page.evaluate((who) => [...window.__noveau.room.remoteParticipants.values()].find((x) => x.name === who && !x.attributes?.phoneOf)?.identity, who);
+
+await part('queda-sinal', async () => {
+  await baseline({ aSharing: true });
+  // Retomada rápida: só o canal de controle cai (o mais comum numa piscada de Wi-Fi). A imagem continua.
+  await watchC();
+  await C.page.evaluate(() => window.__noveau.room.simulateScenario('signal-reconnect'));
+  ok('retomada: C volta a "conectado"', await until(C, () => window.__noveau.room.state === 'connected' && document.querySelector('.plate .led.ok') !== null, undefined, 15000));
+  await wait(300);
+  const r1 = await readWatch();
+  ok('retomada: C passou por "reconectando"', r1.seen.includes('reconnecting'), JSON.stringify(r1));
+  ok('retomada: nunca virou "desconectado" nem mostrou "Conexão perdida"', !r1.seen.includes('disconnected') && !r1.banner, JSON.stringify(r1));
+  ok('retomada: a tela de A ficou no palco o tempo todo (mesmo vídeo)', !r1.lostVideo, JSON.stringify(r1));
+  // Reconexão completa (o LiveKit refaz tudo): a tela volta sozinha.
+  await watchC();
+  await C.page.evaluate(() => window.__noveau.room.simulateScenario('full-reconnect'));
+  ok('reconexão completa: C volta a "conectado"', await until(C, () => window.__noveau.room.state === 'connected' && document.querySelector('.plate .led.ok') !== null, undefined, 20000));
+  const r2 = await readWatch();
+  ok('reconexão completa: sem "Conexão perdida"', !r2.seen.includes('disconnected') && !r2.banner, JSON.stringify(r2));
+  ok('reconexão completa: C vê a tela de A de novo', await until(C, playing, 'cen-stage video', 20000));
+  // Conversa a dois e queda de quem travou: na volta, "Voltar para todos" devolve a voz de B para C.
+  if (await has(B, 'button[title="Ligar microfone"]')) await btn(B, 'Ligar microfone').click();
+  ok('C recebe a voz de B', (await eventually(async () => ({ ok: await flowing(C, 'B', 'microphone') }), 10000)).ok);
+  const aId = await idOf(B, 'A');
+  await B.page.evaluate((id) => window.__noveau.store.directLock(id), aId);
+  const cut = await eventually(async () => { const s = await remote(C, 'B', 'microphone'); return { ok: s.subscribed === false || s.allowed === false, s }; }, 10000);
+  ok('conversa a dois: servidor corta a voz de B para C', cut.ok, JSON.stringify(cut.last?.s));
+  for (const scenario of ['signal-reconnect', 'full-reconnect']) {
+    await B.page.evaluate((sc) => window.__noveau.room.simulateScenario(sc), scenario);
+    await until(B, () => window.__noveau.room.state === 'connected', undefined, 20000);
+    await wait(1500);
+    const still = await eventually(async () => { const s = await remote(C, 'B', 'microphone'); return { ok: s.subscribed === false || s.allowed === false, s }; }, 6000);
+    ok(`${scenario}: a conversa a dois continua (C segue sem ouvir B)`, still.ok, JSON.stringify(still.last?.s));
+    ok(`${scenario}: B continua vendo a conversa com A`, await until(B, () => document.body.innerText.includes('Conversa a dois com'), undefined, 6000));
+  }
+  await B.page.evaluate(() => window.__noveau.store.directEnd());
+  ok('depois das quedas, "Voltar para todos": C volta a ouvir B (sem conversa fantasma)', (await eventually(async () => ({ ok: await flowing(C, 'B', 'microphone') }), 12000)).ok);
+  ok('A também sai da conversa', await until(A, () => document.querySelector('.banner.direct') === null, undefined, 8000));
+  await btn(B, 'Desligar microfone').click().catch(() => undefined);
+});
+
 await part('sair', async () => {
+  await baseline({ aSharing: true });
   await btn(A, 'Parar de compartilhar').click();
   ok('A para: B vê "Ninguém está compartilhando."', await until(B, () => document.body.innerText.includes('Ninguém está compartilhando.')));
   await btn(A, 'Sair da sala').click();
   ok('A sai: B vê 2 pessoas', await until(B, () => document.querySelector('button.people-top .mono')?.textContent?.trim() === '2', undefined, 15000));
 });
 
-for (const p of Object.values(people)) ok(`${p.name} sem erros no console`, p.errors.length === 0, p.errors.slice(0, 3).join(' | '));
+for (const p of Object.values(people)) ok(`${p.name} sem erros no console`, unexpected(p).length === 0, unexpected(p).slice(0, 3).join(' | ').slice(0, 600));
 current = 'fim';
 const failed = results.filter((r) => !r.pass);
 console.log(`\n${results.length - failed.length} de ${results.length} conferências passaram.`);

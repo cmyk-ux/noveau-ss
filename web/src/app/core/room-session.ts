@@ -38,6 +38,44 @@ import type { Probe } from './diag';
 const SILENT_GAIN = 1e-5;
 export type FocusedStats = Probe;
 
+/** O que o LiveKit guarda de cada faixa de som com webAudioMix (campos internos, mas estáveis). */
+type Gained = { gainNode?: GainNode; elementVolume?: number; setVolume(v: number): void };
+
+/**
+ * O LiveKit cria o ganho de cada som em 100% e só depois desce até o volume guardado, numa rampa lenta
+ * (setTargetAtTime com constante de 0,1 s: ~0,5 s até ficar inaudível). Medido: uma voz mutada tocava
+ * em volume cheio por meio segundo toda vez que esse ganho nascia de novo (a pessoa trocou o modo do
+ * microfone, reconectou, você clicou em "Ativar áudio"), e o som de uma tela nova começava 5x mais alto
+ * que os 20% padrão. Ganho que acabou de nascer vai direto ao volume guardado, antes de tocar qualquer
+ * amostra.
+ */
+function gainOf(v: Volume, audible: boolean) {
+  return !audible || isSilent(v) ? SILENT_GAIN : v.level;
+}
+
+function snapGain(track: Track) {
+  const t = track as unknown as Gained;
+  if (t.gainNode === undefined || t.elementVolume === undefined) return;
+  t.gainNode.gain.cancelScheduledValues(0);
+  t.gainNode.gain.value = t.elementVolume;
+}
+
+/**
+ * Mudança de volume pedida (mutar, fader, esconder): rampa curta em vez da do LiveKit. Mutar fica
+ * mudo em 15 ms (antes ~0,5 s), sem estalo; o fader anda em 60 ms.
+ */
+function rampGain(track: Track, level: number) {
+  const t = track as unknown as Gained;
+  t.setVolume(level); // guarda o volume (o LiveKit reaplica quando refaz o ganho)
+  const g = t.gainNode;
+  if (g === undefined) return;
+  const now = g.context.currentTime;
+  const from = g.gain.value;
+  g.gain.cancelScheduledValues(0);
+  g.gain.setValueAtTime(from, now);
+  g.gain.linearRampToValueAtTime(level, now + (level === SILENT_GAIN ? 0.015 : 0.06));
+}
+
 // O som do OBS (WHIP) chega sem a marca de estéreo; veja stereo.ts.
 installStereoReceive();
 // H.264 da tela e da câmera na placa de vídeo, não no OpenH264 (ver h264.ts).
@@ -224,12 +262,14 @@ function keepFocus(ids: string[], current: string | null) {
 }
 
 /**
- * Apareceu mais uma tela (ou câmera). Se o foco foi escolhido por você (clicou numa tela), ele
- * fica: alguém ligar a câmera não pode tirar você do jogo que está assistindo. Se o foco era
- * automático (era a única tela), mostra todas em grade, para você ver que chegou outra.
+ * Apareceu mais uma tela (ou câmera). Quem está assistindo uma tela continua nela, escolhida ou não:
+ * alguém ligar a câmera ou começar outra transmissão não tira você do jogo que está vendo (a nova
+ * aparece na barra de baixo e num aviso com "ver"). O Discord também nunca troca o foco sozinho.
+ * Só uma câmera em foco automático (era a única coisa no ar) dá lugar à grade, para a tela que chegou
+ * aparecer.
  */
-function focusOnArrival(ids: string[], current: string | null, chosen: boolean) {
-  if (chosen && current !== null && ids.includes(current)) return current;
+function focusOnArrival(ids: string[], current: string | null, keep: boolean) {
+  if (keep && current !== null && ids.includes(current)) return current;
   return ids.length === 1 ? ids[0] : null;
 }
 
@@ -524,14 +564,23 @@ export class RoomSession {
       .on(RoomEvent.LocalTrackUnpublished, changed)
       .on(RoomEvent.TrackPublished, (pub, p) => {
         // A câmera do celular conta como a câmera do dono dele.
-        if (isVisual(pub.source)) this.setFocus(focusOnArrival(this.liveIds(), this.focusedShareId, this.focusChosen), this.focusChosen);
+        if (isVisual(pub.source)) this.arrived(phoneOf(p) ?? p.identity);
         this.micMovedToPhone(pub, p);
         changed();
       })
       .on(RoomEvent.TrackUnpublished, changed)
-      .on(RoomEvent.TrackSubscribed, (track, _pub, p) => {
+      .on(RoomEvent.TrackSubscribed, (track, pub, p) => {
         cushion(track, isObs(p));
-        if (track.kind === Track.Kind.Audio) this.audioContainer.appendChild(track.attach());
+        if (track.kind === Track.Kind.Audio) {
+          // O volume vai antes de ligar o som, e o ganho já nasce nele (veja snapGain): mudo continua mudo.
+          const level = this.levelOf(p, pub.source);
+          if (level !== undefined) {
+            (track as unknown as Gained).setVolume(level);
+            this.tuned.set(track, level);
+          }
+          this.audioContainer.appendChild(track.attach());
+          snapGain(track);
+        }
         changed();
       })
       .on(RoomEvent.TrackUnsubscribed, (track) => {
@@ -837,8 +886,16 @@ export class RoomSession {
   }
 
   async unlockAudio() {
-    await this.room.startAudio();
+    // startAudio refaz o ganho de cada som na hora (nascendo em 100%); o ajuste vem antes de tocar.
+    const started = this.room.startAudio();
+    this.snapAllGains();
+    await started;
+    this.snapAllGains();
     this.emit();
+  }
+
+  private snapAllGains() {
+    for (const p of this.room.remoteParticipants.values()) for (const pub of p.audioTrackPublications.values()) if (pub.track) snapGain(pub.track);
   }
 
   /** Minha tela no palco (desligado por padrão, para não pesar em quem transmite). */
@@ -877,6 +934,24 @@ export class RoomSession {
   unfocus() {
     this.setFocus(null, false);
     this.emit();
+  }
+
+  /** Avisa que chegou uma tela ou câmera enquanto você assiste outra (id, nome, tipo). */
+  onShareArrived: ((id: string, name: string, kind: 'screen' | 'camera') => void) | null = null;
+
+  /** Chegou uma tela ou câmera nova: decide o foco (focusOnArrival) e avisa se ela ficou de fora. */
+  private arrived(id: string) {
+    const before = new Set(this.stageIds(this.live));
+    const shares = this.collectShares();
+    const ids = this.stageIds(shares);
+    const current = this.focusedShareId;
+    const watchingScreen = this.live.find((s) => s.view.id === current)?.view.kind === 'screen';
+    const next = focusOnArrival(ids, current, this.focusChosen || watchingScreen);
+    if (next !== current) this.setFocus(next, false);
+    const share = shares.find((s) => s.view.id === id);
+    if (next !== null && next !== id && share !== undefined && !before.has(id) && ids.includes(id)) {
+      this.onShareArrived?.(id, share.view.ownerName, share.view.kind === 'camera' ? 'camera' : 'screen');
+    }
   }
 
   private setFocus(id: string | null, chosen: boolean) {
@@ -1471,31 +1546,45 @@ export class RoomSession {
     return mine !== undefined && mine !== '' && p !== this.room.localParticipant && p.attributes?.['discordId'] === mine;
   }
 
+  /**
+   * Volume de cada som de cada pessoa. Passa por todas as faixas de som (não só a primeira de cada
+   * tipo): quando alguém troca o modo do microfone, a faixa nova chega antes da antiga sair, e só a
+   * primeira recebia o volume. A nova tocava em 100% mesmo com a pessoa mutada.
+   */
   private mix() {
-    const me = this.room.localParticipant;
     for (const p of this.room.remoteParticipants.values()) {
-      const id = p.identity;
-      // Microfone do celular de alguém: é a voz dele, com o volume dele. O do meu celular não toca
-      // aqui (eu me ouviria), e o de quem já saiu da sala também não.
-      const of = phoneOf(p);
-      if (of !== null) {
-        const owner = this.room.remoteParticipants.get(of);
-        const audible = of !== me.identity && owner !== undefined && !this.isMyOtherDevice(owner) && this.direct.audible(of);
-        this.tune(p, Track.Source.Microphone, this.mixer.read('mic', of), audible);
-        continue;
+      for (const pub of p.audioTrackPublications.values()) {
+        const level = pub.track === undefined ? undefined : this.levelOf(p, pub.source);
+        if (pub.track !== undefined && level !== undefined) this.tune(pub.track, level);
       }
-      // O microfone do meu outro aparelho não toca aqui: eu me ouviria com atraso (e daria eco).
-      // (No OBS o "microfone" é o som da tela, tratado logo abaixo.)
-      // Conversa direta: só a voz da outra pessoa; e quem fala direto com outra pessoa não toca aqui.
-      if (!isObs(p)) this.tune(p, Track.Source.Microphone, this.mixer.read('mic', id), !this.isMyOtherDevice(p) && this.direct.audible(id));
-      // Na grade, o som de todas as telas toca (cada uma com seu volume); em foco, só a dela.
-      this.tune(
-        p,
-        screenAudioSource(p),
+    }
+  }
+
+  /** O ganho de um som (mudo, foco, escondida, conversa direta); undefined = não é um som que o mixer controla. */
+  private levelOf(p: RemoteParticipant, source: Track.Source): number | undefined {
+    const me = this.room.localParticipant;
+    const id = p.identity;
+    // Microfone do celular de alguém: é a voz dele, com o volume dele. O do meu celular não toca
+    // aqui (eu me ouviria), e o de quem já saiu da sala também não.
+    const of = phoneOf(p);
+    if (of !== null) {
+      if (source !== Track.Source.Microphone) return undefined;
+      const owner = this.room.remoteParticipants.get(of);
+      const audible = of !== me.identity && owner !== undefined && !this.isMyOtherDevice(owner) && this.direct.audible(of);
+      return gainOf(this.mixer.read('mic', of), audible);
+    }
+    // O microfone do meu outro aparelho não toca aqui: eu me ouviria com atraso (e daria eco).
+    // (No OBS o "microfone" é o som da tela, tratado logo abaixo.)
+    // Conversa direta: só a voz da outra pessoa; e quem fala direto com outra pessoa não toca aqui.
+    if (source === Track.Source.Microphone && !isObs(p)) return gainOf(this.mixer.read('mic', id), !this.isMyOtherDevice(p) && this.direct.audible(id));
+    // Na grade, o som de todas as telas toca (cada uma com seu volume); em foco, só a dela.
+    if (source === screenAudioSource(p)) {
+      return gainOf(
         this.mixer.read('share', id),
         !this.isMyObs(p) && !this.hidden.has(id) && (this.focusedShareId === null || id === this.focusedShareId),
       );
     }
+    return undefined;
   }
 
   /**
@@ -1503,14 +1592,11 @@ export class RoomSession {
    * 0 (veja SILENT_GAIN): o LiveKit reaplica sozinho o volume guardado quando refaz o ganho.
    */
   private readonly tuned = new WeakMap<Track, number>();
-  private tune(p: RemoteParticipant, source: Track.Source, v: Volume, audible: boolean) {
-    const track = p.getTrackPublication(source)?.track;
-    if (track === undefined || track.kind !== Track.Kind.Audio) return;
-    const level = !audible || isSilent(v) ? SILENT_GAIN : v.level;
+  private tune(track: Track, level: number) {
     if (this.tuned.get(track) === level) return;
     this.tuned.set(track, level);
     // Com webAudioMix o volume é um ganho do Web Audio, que passa de 100%.
-    (track as any).setVolume(level);
+    rampGain(track, level);
   }
 
   private collectParticipants(activities: Map<string, Activity>): PersonView[] {

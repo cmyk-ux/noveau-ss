@@ -284,6 +284,9 @@ export class RoomStore {
   readonly waitingForCamera = computed(() => isWaitingForCamera(this._snapshot(), this._camera() !== null));
 
   constructor() {
+    // Só para os testes de ponta a ponta: o teste também usa o store (ver o gancho em RoomSession).
+    const hook = (window as { __noveau?: Record<string, unknown> }).__noveau;
+    if (hook !== undefined && hook['session'] === this.session) hook['store'] = this;
     // Espelhar o próprio retorno (PC ou celular) vale em todo lugar onde você se vê.
     effect(() => this.session.setMirrorSelf(this.camPrefs.mirror()));
     void this.session.setVoiceMode(this.prefs.voiceMode());
@@ -292,6 +295,12 @@ export class RoomStore {
     this.session.onMicMoved = (toMobile) =>
       this.toast.show(`Seu microfone passou para o ${toMobile ? 'celular' : 'computador'}. Este aqui ficou mudo.`);
     this.session.onFocusedStats = (p) => this.diag.feed(p);
+    // Chegou outra tela enquanto você assiste uma: o foco fica, e o aviso leva até ela.
+    this.session.onShareArrived = (id, name, kind) =>
+      this.toast.show(kind === 'camera' ? `${name} ligou a câmera.` : `${name} começou a transmitir.`, {
+        action: { label: 'ver', run: () => this.focusShare(id) },
+        ms: 6000,
+      });
     const offChange = this.session.onChange((s) => {
       if (!s.shares.some((x) => x.isLocal && x.kind === 'screen')) this.forgetShare();
       this._snapshot.set(s);
