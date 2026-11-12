@@ -9,8 +9,8 @@ import {
   type TrackPublishOptions,
   VideoPreset,
 } from 'livekit-client';
-import { Codec, CodecChoice, cappedBitrate, encoderProbes, hardwareOnly, parseDecoders, pickCodec, planSize, probeEncoders, StreamPlan, Size } from './stream';
-import { LoadGovernor, LoadState } from './load';
+import { Codec, CodecChoice, cappedBitrate, encoderProbes, hardwareOnly, LADDER, parseDecoders, pickCodec, planSize, probeEncoders, StreamPlan, Size } from './stream';
+import { CAPTURE_MAX, LoadGovernor, LoadState } from './load';
 import { UploadGuard, UploadState } from './upload-guard';
 import { ShareHealth, ShareWatch, StatsFeed, sourceAudioLevel } from './stats';
 import { StudioBits, StudioSender } from './studio';
@@ -90,9 +90,15 @@ export interface ShareResult {
  *   (aí vai tudo, inclusive o Discord; o navegador não consegue separar).
  * - restrictOwnAudio (Chrome 140+, Windows/macOS): tira do som do sistema o que esta própria
  *   página toca, ou seja, as vozes da sala não voltam para quem está assistindo.
+ *
+ * Imagem: sempre no tamanho original da tela ou janela, qualquer que seja o teto escolhido. O teto
+ * (720p/1080p/1440p, ou o Auto acima de 60 fps) é aplicado no codificador (EncoderScale). Motivo: o
+ * Chrome captura numa thread que ele limita a meio núcleo (desktop_capture_device.cc: espera o dobro
+ * do tempo que o quadro levou). Com um teto na captura, essa thread converte a tela inteira e depois
+ * ainda reduz (libyuv ARGBToI420 + I420Scale), ou seja, mais trabalho por quadro e menos quadros por
+ * segundo, principalmente com o jogo disputando o processador. No tamanho original ela só converte.
  */
 function displayMediaOptions(req: ShareRequest): DisplayMediaStreamOptions {
-  const { width, height } = planSize(req.plan);
   const audio: MediaTrackConstraints | false = req.includeAudio
     ? ({
         channelCount: 2,
@@ -106,11 +112,9 @@ function displayMediaOptions(req: ShareRequest): DisplayMediaStreamOptions {
       } as MediaTrackConstraints)
     : false;
   return {
-    // Original: pede o tamanho nativo. Com teto: no máximo aquilo (a tela é reduzida, nunca ampliada).
-    video:
-      req.plan.resolution === 'source'
-        ? { width: { ideal: width }, height: { ideal: height }, frameRate: req.plan.frameRate }
-        : { width: { max: width }, height: { max: height }, frameRate: req.plan.frameRate },
+    // Só um teto bem alto: o Chrome entrega o tamanho original de qualquer monitor ou janela (sem
+    // teto, ele usaria o tamanho da tela onde está o navegador e reduziria um monitor maior).
+    video: { width: { max: CAPTURE_MAX.width }, height: { max: CAPTURE_MAX.height }, frameRate: req.plan.frameRate },
     audio,
     selfBrowserSurface: 'include',
     surfaceSwitching: 'include',
@@ -146,6 +150,64 @@ async function addTemporalLayers(track: LocalVideoTrack) {
 
 const even = (n: number) => Math.max(2, Math.round(n / 2) * 2);
 
+/** Quanto reduzir a captura (tamanho original) para caber no teto escolhido. 1 = sem reduzir. */
+function capScale(capture: Size, plan: StreamPlan): number {
+  if (plan.resolution === 'auto' || plan.resolution === 'source') return 1;
+  const cap = LADDER[plan.resolution];
+  return Math.max(1, capture.width / cap.width, capture.height / cap.height);
+}
+
+function scaled(size: Size, factor: number): Size {
+  return { width: even(size.width / factor), height: even(size.height / factor) };
+}
+
+/**
+ * Redução de tamanho no codificador (scaleResolutionDownBy), para todos os envios da tela: o
+ * principal e a reserva (backupCodec), que o LiveKit cria sozinho quando alguém precisa. A camada
+ * de cima vai para o teto escolhido; as de baixo (cópia menor) já são calculadas pelo LiveKit no
+ * tamanho certo. Com o PC apertado (LoadGovernor), todas reduzem junto.
+ */
+class EncoderScale {
+  private load = 1;
+  private readonly bases = new WeakMap<RTCRtpSender, number[]>();
+
+  constructor(
+    private readonly track: LocalVideoTrack,
+    private readonly cap: number,
+  ) {}
+
+  setLoad(factor: number) {
+    this.load = factor;
+    this.apply();
+  }
+
+  /** Confere e acerta. Barato (getParameters não vai ao navegador de fora): roda a cada leitura. */
+  apply() {
+    const senders: RTCRtpSender[] = [];
+    if (this.track.sender !== undefined) senders.push(this.track.sender);
+    const extra = (this.track as unknown as { simulcastCodecs?: Map<string, { sender?: RTCRtpSender }> }).simulcastCodecs;
+    for (const [, info] of extra ?? []) if (info.sender !== undefined) senders.push(info.sender);
+    for (const sender of senders) {
+      const params = sender.getParameters();
+      const encodings = params.encodings ?? [];
+      if (encodings.length === 0) continue;
+      let base = this.bases.get(sender);
+      if (base === undefined || base.length !== encodings.length) {
+        base = encodings.map((e, i) => (i === encodings.length - 1 ? this.cap : (e.scaleResolutionDownBy ?? 1)));
+        this.bases.set(sender, base);
+      }
+      let changed = false;
+      encodings.forEach((e, i) => {
+        const want = Math.max(1, base[i] * this.load);
+        if (Math.abs((e.scaleResolutionDownBy ?? 1) - want) < 0.01) return;
+        e.scaleResolutionDownBy = want;
+        changed = true;
+      });
+      if (changed) void sender.setParameters(params).catch(() => undefined);
+    }
+  }
+}
+
 function videoPublishOptions(req: ShareRequest, codec: Codec, maxBitrate: number, size: Size): TrackPublishOptions {
   // H.265 só toca em quem tem decodificador de hardware; AV1/VP9 em navegadores antigos podem falhar.
   // Com REGRESSION a reserva só é codificada se alguém da sala não conseguir decodificar. Ela sai na
@@ -155,6 +217,8 @@ function videoPublishOptions(req: ShareRequest, codec: Codec, maxBitrate: number
   const needsBackup = codec === 'h265' || ((codec === 'av1' || codec === 'vp9') && req.maxCompatibility);
   // A reserva é H.264 quando a placa codifica H.264: quem não decodifica o principal (iPhone, Firefox)
   // recebe H.264 da placa, sem custo para o jogo. Só sem placa para H.264 ela volta a ser VP8.
+  // (Antes a sondagem nunca via o H.264 na placa e a reserva era sempre VP8 por software, em resolução
+  // cheia: quando ela ligava, a sala inteira passava para ela. Ver h264.ts.)
   const backup = encoderProbes().h264?.gpu === true ? 'h264' : 'vp8';
   // Automático (bitrate Auto): manda também uma cópia menor (2/3 da resolução). O servidor troca para ela
   // só para quem não está aguentando (rede ou PC), em vez de travar; quem aguenta continua no máximo.
@@ -263,11 +327,14 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
     width: settings.width !== undefined && settings.width > 0 ? settings.width : planned.width,
     height: settings.height !== undefined && settings.height > 0 ? settings.height : planned.height,
   };
-  // Com o tamanho real da captura, pergunta ao navegador quais codecs rodam na GPU e escolhe.
-  const probes = await probeEncoders(resolution, req.plan.frameRate);
+  // A captura vem no tamanho original; o teto escolhido é aplicado no codificador.
+  const cap = capScale(resolution, req.plan);
+  const encoded = scaled(resolution, cap);
+  // Com o tamanho que vai sair, pergunta ao navegador quais codecs rodam na GPU e escolhe.
+  const probes = await probeEncoders(encoded, req.plan.frameRate);
   // Quem já está na sala e disse o que decodifica na placa de vídeo (atributo "hwdec").
   const codec = pickCodec(req.preferredCodec, viewersOf(room));
-  const bitrate = cappedBitrate(resolution, req.plan, codec);
+  const bitrate = cappedBitrate(encoded, req.plan, codec);
   video.mediaStreamTrack.addEventListener(
     'ended',
     () => {
@@ -276,8 +343,10 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
     },
     { once: true },
   );
-  await room.localParticipant.publishTrack(video, videoPublishOptions(req, codec, bitrate, resolution));
+  await room.localParticipant.publishTrack(video, videoPublishOptions(req, codec, bitrate, encoded));
   if (codec === 'vp8') await addTemporalLayers(video);
+  const scale = new EncoderScale(video, cap);
+  scale.apply();
   let audioState: ShareResult['audio'] = req.includeAudio ? 'refused' : 'not-requested';
   stopStudio();
   if (audio !== undefined && req.studio !== null) {
@@ -296,11 +365,13 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
   // Uma leitura de estatísticas a cada 2 s para os três vigias (saúde, perda na subida, codificador).
   // Depois de trocar de codec o sender muda: a leitura segue o atual.
   const feed = new StatsFeed(() => video.sender);
+  // A reserva (backupCodec) aparece sozinha quando alguém precisa: a cada leitura confere o tamanho.
+  feed.add(() => scale.apply());
   const watch = new ShareWatch({ onChange: cb.onHealth }, feed);
   watch.start();
   let governor: LoadGovernor | null = null;
   if (req.adaptToLoad) {
-    governor = new LoadGovernor(video.mediaStreamTrack, resolution, req.plan.frameRate, cb.onLoad);
+    governor = new LoadGovernor(video.mediaStreamTrack, encoded, req.plan.frameRate, cb.onLoad, (f) => scale.setLoad(f));
     governor.start();
   }
   const upload = new UploadGuard(() => video.sender, bitrate, cb.onUpload, feed);
@@ -320,12 +391,13 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
         video.mediaStreamTrack.readyState === 'live' &&
         room.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.track === video;
       if (!live()) return null;
-      const br = cappedBitrate(resolution, req.plan, next);
+      const br = cappedBitrate(encoded, req.plan, next);
       console.info(`[tela] ${e.from} saía no processador (${e.encoder}); trocando para ${next}`);
       await room.localParticipant.unpublishTrack(video, false);
       if (video.mediaStreamTrack.readyState !== 'live') return null;
-      await room.localParticipant.publishTrack(video, videoPublishOptions(req, next, br, resolution));
+      await room.localParticipant.publishTrack(video, videoPublishOptions(req, next, br, encoded));
       if (next === 'vp8') await addTemporalLayers(video);
+      scale.apply();
       current = next;
       // O teto de perda na subida passa a contar do máximo do codec novo.
       upload.retarget(br);
@@ -335,7 +407,7 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
     feed,
   );
   guard.start();
-  return { codec, bitrate, resolution, audio: audioState, watch, surface, governor, upload, guard, gpu: probes[codec]?.gpu === true };
+  return { codec, bitrate, resolution: encoded, audio: audioState, watch, surface, governor, upload, guard, gpu: probes[codec]?.gpu === true };
 }
 
 export async function stopShareAudio(room: Room) {

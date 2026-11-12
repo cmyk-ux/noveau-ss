@@ -139,13 +139,18 @@ export class StatsPanel {
     };
   }
 
-  /** Dicas a partir da pesquisa: OpenH264 = H.264 no processador; captura acima de 1080p presa no orçamento do Chrome. */
+  /**
+   * Dicas a partir da pesquisa. OpenH264 = H.264 no processador (o site pede o perfil que vai para a
+   * placa; se ainda assim sair aqui, a placa recusou). Captura abaixo do pedido = a thread de captura
+   * do Chrome, limitada a meio núcleo, não deu conta (jogo disputando o processador); o tamanho
+   * escolhido não muda isso, porque a captura é sempre no tamanho original.
+   */
   private tipRows(s: { encoder: string; width: number; height: number; captureFps: number }): Row[] {
     const want = this.prefs.stream().frameRate;
     const out: Row[] = [];
-    if (/openh264/i.test(s.encoder)) out.push(row('dica', 'H.264 no processador: abra com a flag PlatformH264CbpEncoding', true));
-    if (s.captureFps > 0 && s.captureFps < want * 0.9 && s.width * s.height > 1920 * 1080)
-      out.push(row('dica', 'captura acima de 1080p limitada pelo navegador: tente 1080p ou Auto', true));
+    if (/openh264/i.test(s.encoder)) out.push(row('dica', 'H.264 saiu no processador: escolha H.265 ou reinicie a transmissão', true));
+    if (s.captureFps > 0 && s.captureFps < want * 0.9)
+      out.push(row('dica', 'o navegador não captura mais rápido que isso: menos fps no menu, ou o OBS para fps cheio', true));
     return out;
   }
 

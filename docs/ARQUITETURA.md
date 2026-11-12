@@ -87,6 +87,14 @@ LiveKit (Room) ──eventos──► RoomSession ──RoomSnapshot──► Ro
     trocar o elemento) e só reaplica o volume guardado se ele não for 0. Com 0, quem estava mutado (ou
     escondido, fora de foco, na conversa direta) voltava a tocar em 100%. `tune()` usa `SILENT_GAIN`
     (-100 dB). Testes que precisam ler a sala usam `window.__noveau` (só com `noveau:e2e=1`).
+13. **Tela: captura no tamanho original, resolução no codificador.** Nunca ponha `width`/`height`
+    menores em `getDisplayMedia` nem em `applyConstraints` da tela: o Chrome converte a tela inteira e
+    depois reduz, na thread de captura que ele limita a meio núcleo, e o FPS cai. O teto escolhido e a
+    redução do "Ceder se o PC apertar" vão em `scaleResolutionDownBy` (`EncoderScale` em `share.ts`).
+    Os quadros por segundo podem cair na captura (`frameRate`).
+14. **H.264 só nos perfis que vão para a placa.** `installH264Preference()` (`core/h264.ts`) tira o
+    `42e01f` da oferta de toda faixa de vídeo que o site publica. Qualquer teste de capacidade de H.264
+    pergunta pelo perfil (`h264ContentTypes()`), nunca só `video/H264`.
 
 ## Atributos dos participantes
 
@@ -126,6 +134,9 @@ com o Chromium.
   câmera junto da tela, reiniciar a tela, painel de pessoas, conversa direta, mutar a tela (o botão
   tem de mudar em até 1 s), voz mutada continua muda depois de "Ativar áudio", dois cliques rápidos
   no microfone, erros no console.
+- `BASE=http://127.0.0.1:3001 node tools/e2e/qualidade.mjs [codec] [resolução] [segundos]`: o que a
+  tela manda de verdade (codec e perfil do H.264, tamanho e fps de cada camada, quem codifica) e o que
+  quem assiste recebe. A tela é sintética (2560x1440 a 60 fps).
 - `BASE=http://127.0.0.1:3001 PANEL=1 node tools/e2e/measure.mjs rotulo`: custo por segundo em cada
   navegador (JavaScript, trabalho total, recálculo de estilo, mensagens de sinalização por tipo).
   `CAM=1` faz B ligar a câmera (grade com 2 telas).
