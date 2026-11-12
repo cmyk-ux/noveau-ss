@@ -1,4 +1,4 @@
-import { DiagEvent, parseSendHealth } from '../core/diag';
+import { CAPTURE_FIX, DiagEvent, captureAdvice, fpsStep, parseSendHealth } from '../core/diag';
 import { Component, DestroyRef, ElementRef, computed, effect, inject, input, output, signal, untracked, viewChild } from '@angular/core';
 import { IS_IOS, IS_MOBILE } from '../core/device';
 import { Prefs } from '../core/prefs';
@@ -844,7 +844,15 @@ export class RoomScreen {
   );
   protected readonly adaptedBadge = computed(() => {
     const h = this.store.health();
-    return h === null || !h.sustained
+    if (h === null) return null;
+    if (h.short === 'capture') {
+      const cpu = this.store.load()?.pressure ?? '';
+      return {
+        text: `captura em ~${fpsStep(h.captureFps)} de ${h.wantFps} fps`,
+        title: `O navegador está capturando só ~${fpsStep(h.captureFps)} de ${h.wantFps} quadros por segundo da sua tela. ${captureAdvice(cpu)} ${CAPTURE_FIX}`,
+      };
+    }
+    return !h.sustained
       ? null
       : { text: `qualidade reduzida (${shortLimitation(h.reason)})`, title: `Enviando ${h.width}x${h.height} a ${h.fps} fps. Volta sozinho.` };
   });
@@ -920,7 +928,20 @@ export class RoomScreen {
     const tx = f === null || f.isLocal ? null : parseSendHealth(f.senderTx);
     if (f === null || tx === null) return null;
     const s = { name: f.ownerName };
-    if (tx.lim === 'cpu' || tx.cpu === 'serious' || tx.cpu === 'critical') {
+    // A captura dele não acompanha: o número mais útil para entender fps baixo em jogo.
+    if (tx.lim === 'capture' && (tx.cf ?? 0) > 0) {
+      return {
+        text: `captura de ${s.name}: ~${tx.cf} de ${tx.wf} fps`,
+        title: `O navegador de ${s.name} está capturando só ~${tx.cf} de ${tx.wf} quadros por segundo. ${captureAdvice(tx.cpu)} Não é a internet nem o seu PC. ${CAPTURE_FIX}`,
+      };
+    }
+    if (tx.lim === 'encoder' && (tx.cf ?? 0) > 0) {
+      return {
+        text: `codificador de ${s.name}: ~${tx.cf} de ${tx.wf} fps`,
+        title: `A tela de ${s.name} é capturada no fps cheio, mas o codificador de vídeo dele está perdendo quadros (sai ~${tx.cf} de ${tx.wf}). Costuma ser a placa de vídeo ocupada pelo jogo; limitar o FPS do jogo ajuda.`,
+      };
+    }
+    if (tx.lim === 'cpu' || tx.cpu === 'critical') {
       return {
         text: `PC de ${s.name} no limite`,
         title: `O PC de ${s.name} não aguenta transmitir no máximo agora, então o navegador dele baixou resolução ou fps para a transmissão não travar. Volta sozinho quando sobrar folga (por exemplo, limitando o fps do jogo).`,
@@ -949,6 +970,8 @@ export class RoomScreen {
         return 'seu PC';
       case 'my-decoder':
         return 'decodificador do seu navegador';
+      case 'my-capture':
+        return 'captura da sua tela';
       default:
         return 'sem causa clara';
     }

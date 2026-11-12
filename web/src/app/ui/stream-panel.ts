@@ -58,6 +58,8 @@ import {
     @if (settings().frameRate > 60) {
       <p class="hint">Acima de 60 só aparece para quem assiste num monitor de 120 Hz ou mais. 120 é o máximo que o navegador captura.</p>
     }
+    <p class="hint">Em jogo: se o jogo usar a placa de vídeo inteira, o navegador não consegue copiar a tela no fps pedido. Limitar o FPS do jogo
+      um pouco abaixo do que ele faz (de preferência num múltiplo deste: 120 para 60) deixa folga e a tela sai cheia.</p>
     <p class="label">bitrate máximo</p>
     <div class="chips">
       @for (b of bitrates; track b.bps) {
@@ -110,11 +112,12 @@ import {
       <span>Ceder quando o PC apertar</span>
     </label>
     @if (!prefs.adaptToLoad()) {
-      <p class="hint">Desligado: fica sempre em {{ settings().frameRate }}fps, mesmo que o jogo perca FPS.</p>
+      <p class="hint">Desligado: o site nunca baixa o fps. O navegador ainda pode capturar menos que {{ settings().frameRate }}fps se o jogo ocupar a placa de vídeo inteira (aí aparece o aviso, com o que fazer).</p>
     }
     <p class="hint">
       @if (pressureSupported) {
-        Se o processador ficar sobrecarregado (jogo pesado), baixa primeiro o fps e depois a resolução. Quando alivia, volta sozinho.
+        Só age com o processador no limite (acima de ~90% por alguns segundos): baixa primeiro o fps e depois a resolução.
+        Quando alivia, volta sozinho. O uso normal de um jogo (75-90%) não mexe em nada.
       } @else {
         Este navegador não informa o uso do processador; o ajuste não funciona aqui.
       }
