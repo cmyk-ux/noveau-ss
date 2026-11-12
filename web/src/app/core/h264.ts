@@ -117,13 +117,20 @@ export function h264PreferenceStatus(): { applied: number; refused: number } {
   return { applied, refused };
 }
 
+/** Faixas em que mexemos: se o navegador recusar a oferta por causa disso, voltam ao padrão. */
+const touched = new WeakSet<RTCRtpTransceiver>();
+/** Depois de uma recusa, para de mexer (nesta página). */
+let disabled = false;
+
 function prefer(tr: RTCRtpTransceiver) {
-  if (typeof tr.setCodecPreferences !== 'function') return;
+  if (disabled || typeof tr.setCodecPreferences !== 'function') return;
   const send = senderCodecs();
   const recv = receiverCodecs();
-  // O navegador valida a lista: alguns aceitam codecs de envio e de recebimento, outros só os de
-  // recebimento. Tenta do mais completo para o mais restrito; se nada passar, fica o padrão.
-  const attempts = [preferenceList(recv, send), preferenceList(recv, [])];
+  // Só os codecs de recebimento, reordenados. Misturar os de envio (ex.: H.264 High 640034 da placa, que
+  // no recebimento aparece como 64001f) passava no setCodecPreferences, mas o Chrome dava o mesmo número
+  // de payload a dois codecs e o createOffer falhava ("Duplicate payload type in codec list"): a tela
+  // não abria. O nível do perfil não importa para escolher o codificador da placa (só o perfil).
+  const attempts = [preferenceList(recv, [])];
   const sendMimes = new Set(send.filter((c) => !/rtx|red|ulpfec|flexfec/i.test(c.mimeType)).map((c) => c.mimeType.toLowerCase()));
   for (const list of attempts) {
     if (list === null) continue;
@@ -133,6 +140,7 @@ function prefer(tr: RTCRtpTransceiver) {
     if ([...sendMimes].some((m) => !mimes.has(m))) continue;
     try {
       tr.setCodecPreferences(list);
+      touched.add(tr);
       applied++;
       return;
     } catch {
@@ -166,4 +174,31 @@ export function installH264Preference() {
     }
     return tr;
   } as typeof RTCPeerConnection.prototype.addTransceiver;
+
+  // Rede de segurança: se o navegador recusar a oferta por causa da lista de codecs (já aconteceu:
+  // "Duplicate payload type in codec list"), devolve as faixas ao padrão e tenta de novo. A tela abre
+  // com o H.264 que o navegador escolher, em vez de não abrir.
+  const createOffer = RTCPeerConnection.prototype.createOffer;
+  RTCPeerConnection.prototype.createOffer = async function (this: RTCPeerConnection, ...args: unknown[]) {
+    const call = () => (createOffer as (...a: unknown[]) => Promise<RTCSessionDescriptionInit>).apply(this, args);
+    if (typeof args[0] === 'function') return call();
+    try {
+      return await call();
+    } catch (e) {
+      const ours = this.getTransceivers().filter((t) => touched.has(t));
+      if (ours.length === 0) throw e;
+      console.warn('[h264] oferta recusada com a preferência de codec; voltando ao padrão do navegador', e);
+      disabled = true;
+      refused++;
+      for (const t of ours) {
+        touched.delete(t);
+        try {
+          t.setCodecPreferences([]);
+        } catch {
+          /* segue */
+        }
+      }
+      return call();
+    }
+  } as typeof RTCPeerConnection.prototype.createOffer;
 }
