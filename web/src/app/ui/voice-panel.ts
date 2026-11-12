@@ -13,6 +13,7 @@ import {
   Echo,
   GateMode,
   MAX_BANDS,
+  MAX_DYN,
   MAX_STRENGTH,
   ROOM_AUDIO,
   RoomAudio,
@@ -20,11 +21,14 @@ import {
   band,
   bandLabel,
   bandSections,
+  canDyn,
   chainDelayMs,
   eqSections,
   hasGain,
+  isDynamic,
   responseDb,
   roomAudio,
+  soloRange,
 } from '../core/voice-dsp';
 import { Icon } from './icon';
 
@@ -32,7 +36,23 @@ type Tab = 'eq' | 'ruido' | 'sala';
 
 const F_MIN = 20;
 const F_MAX = 20000;
-const G_MAX = 18;
+const RANGES = [3, 6, 12, 30];
+const NOTES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+/** Nota mais próxima de uma frequência, como no teclado do Pro-Q ("A4 +12"). */
+function noteOf(f: number) {
+  const m = 69 + 12 * Math.log2(f / 440);
+  const n = Math.round(m);
+  const cents = Math.round((m - n) * 100);
+  return `${NOTES[((n % 12) + 12) % 12]}${Math.floor(n / 12) - 1}${cents === 0 ? '' : ` ${cents > 0 ? '+' : ''}${cents}`}`;
+}
+function readRange(): number {
+  try {
+    const v = Number(localStorage.getItem('noveau:eq-escala'));
+    return RANGES.includes(v) ? v : 12;
+  } catch {
+    return 12;
+  }
+}
 const LOG_MIN = Math.log10(F_MIN);
 const LOG_SPAN = Math.log10(F_MAX) - LOG_MIN;
 const BAND_HUES = [265, 30, 140, 200, 340, 95, 175, 55];
@@ -111,6 +131,10 @@ class Scope {
           <span class="bar"><i [style.width.%]="meterPct(meter()?.inDb)"></i></span>
           <span class="bar out"><i [style.width.%]="meterPct(meter()?.outDb)"></i></span>
         </span>
+        <button type="button" class="btn small listen" [class.on]="store.micMonitor()" [attr.aria-pressed]="store.micMonitor()" [disabled]="!store.ownMicOn()"
+          (click)="store.toggleMicMonitor()" [title]="store.ownMicOn() ? 'Ouvir o que vai para a sala, já tratado (use fone: na caixa vira microfonia)' : 'Ligue o microfone para se ouvir'">
+          <cen-icon name="headphones" [size]="14" /> {{ store.micMonitor() ? 'me ouvindo' : 'me ouvir' }}
+        </button>
         <button class="close" title="Fechar" (click)="store.openVoice(false)"><cen-icon name="close" [size]="15" /></button>
       </header>
 
@@ -148,19 +172,35 @@ class Scope {
               title="Liga/desliga o equalizador inteiro: bom para comparar antes e depois">{{ voice().eqOn ? 'EQ ligado' : 'EQ desligado' }}</button>
           </div>
           <p class="hint">{{ presetHint() }}</p>
+          <div class="row tools">
+            <span class="lbl short">analisador</span>
+            <button type="button" class="chip" [class.lit]="showPre()" (click)="showPre.set(!showPre())" title="Microfone cru, antes de todo o tratamento">pré</button>
+            <button type="button" class="chip" [class.lit]="showPost()" (click)="showPost.set(!showPost())" title="O que vai para a sala">pós</button>
+            <button type="button" class="chip" [class.lit]="freeze()" (click)="toggleFreeze()" title="Segura o pico de cada frequência (bom para achar um zumbido ou o ponto que mais arde)">congelar</button>
+            <span class="grow"></span>
+            <span class="lbl short">escala</span>
+            @for (r of ranges; track r) {
+              <button type="button" class="chip" [class.lit]="range() === r" (click)="setRange(r)">±{{ r }}</button>
+            }
+          </div>
           <div class="graph" #wrap>
             <canvas #canvas (pointerdown)="down($event)" (pointermove)="move($event)" (pointerup)="up($event)" (pointercancel)="up($event)"
-              (dblclick)="dbl($event)" (wheel)="wheel($event)" (contextmenu)="ctx($event)" tabindex="0"
-              aria-label="Gráfico do equalizador: clique duas vezes para pôr uma banda; arraste para mudar; roda muda a largura; clique direito apaga"></canvas>
+              (pointerleave)="hover.set(null)" (dblclick)="dbl($event)" (wheel)="wheel($event)" (contextmenu)="ctx($event)" tabindex="0"
+              aria-label="Gráfico do equalizador: clique num lugar vazio para pôr uma banda; arraste para mudar; roda muda a largura; clique direito apaga"></canvas>
+            @if (hover(); as h) { <span class="readout mono">{{ h }}</span> }
           </div>
-          <p class="hint small">Clique duas vezes no gráfico para pôr uma banda, arraste o ponto (frequência e ganho), use a roda do mouse para a largura (Q) e o clique direito para apagar. Até {{ maxBands }} bandas.</p>
+          <p class="hint small">Clique num lugar vazio para pôr uma banda (na ponta esquerda vira corte de grave, na direita corte de agudo) e arraste. Roda: largura (Q) ou inclinação do corte · Ctrl + roda: ganho · Alt + roda: alcance dinâmico · Shift: ajuste fino · Alt + clique: liga/desliga a banda · clique duplo no ponto: digitar valores · clique direito: apaga. Segure o <cen-icon name="headphones" [size]="11" /> da banda para ouvir só a faixa dela (só você ouve; arraste para os lados para procurar o ruído). Até {{ maxBands }} bandas.</p>
           @if (selected(); as b) {
             <div class="row edit">
               <span class="dot" [style.background]="hue(sel())"></span>
+              <button type="button" class="btn small solo" [class.on]="store.soloing()" title="Segure para ouvir só a faixa desta banda (só você ouve). Arraste para os lados para mudar a frequência."
+                (pointerdown)="soloDown($event)" (pointermove)="soloMove($event)" (pointerup)="soloUp($event)" (pointercancel)="soloUp($event)" (contextmenu)="$event.preventDefault()">
+                <cen-icon name="headphones" [size]="14" />
+              </button>
               <select class="sel" (change)="patchBand({ type: $any($event.target).value })" aria-label="Tipo da banda">
                 @for (t of types; track t) { <option [value]="t" [selected]="t === b.type">{{ bandLabel(t) }}</option> }
               </select>
-              <label>Hz <input class="num" type="number" min="20" max="20000" step="1" [value]="round(b.freq)" (change)="patchBand({ freq: +$any($event.target).value })" /></label>
+              <label>Hz <input #hz class="num" type="number" min="20" max="20000" step="1" [value]="round(b.freq)" (change)="patchBand({ freq: +$any($event.target).value })" /></label>
               @if (hasGain(b.type)) {
                 <label>dB <input class="num" type="number" min="-24" max="24" step="0.5" [value]="b.gain" (change)="patchBand({ gain: +$any($event.target).value })" /></label>
               }
@@ -170,9 +210,23 @@ class Scope {
                   @for (s of slopes; track s) { <option [value]="s" [selected]="s === b.slope">{{ s }} dB/oit</option> }
                 </select>
               }
+              @if (canDyn(b.type)) {
+                <button class="btn small" [class.on]="b.dyn !== 0" [attr.aria-pressed]="b.dyn !== 0" (click)="toggleDyn(b)"
+                  title="EQ dinâmico: a banda só age quando o som na faixa dela passa do limiar (ótimo para S ardido e estouro de P)">dinâmica</button>
+              }
               <button class="btn small" [class.on]="!b.on" (click)="patchBand({ on: !b.on })">{{ b.on ? 'Ligada' : 'Desligada' }}</button>
               <button class="btn small" title="Apagar banda" (click)="removeBand(sel())"><cen-icon name="trash" [size]="14" /></button>
             </div>
+            @if (b.dyn !== 0 && canDyn(b.type)) {
+              <div class="row edit dynrow">
+                <span class="lbl short">dinâmica</span>
+                <label>limiar <input class="num" type="number" min="-70" max="0" step="1" [value]="b.thr" (change)="patchBand({ thr: +$any($event.target).value })" /> dB</label>
+                <label>alcance <input class="num" type="number" [min]="-maxDyn" [max]="maxDyn" step="0.5" [value]="b.dyn" (change)="patchBand({ dyn: +$any($event.target).value })" /> dB</label>
+                <span class="bar wide dynlvl" title="Quanto a banda está mexendo agora"><i [style.width.%]="dynPct(sel())"></i></span>
+                <span class="val">{{ fmtDb(dynNow(sel())) }} dB</span>
+              </div>
+              <p class="hint small">Começa a agir quando a faixa da banda passa do limiar e chega ao alcance todo 10 dB acima. Alcance negativo abaixa (sibilância, estouro); positivo sobe. Segure o fone para ouvir a faixa e achar o limiar.</p>
+            }
           }
           <div class="row">
             <span class="lbl">ganho final</span>
@@ -234,11 +288,6 @@ class Scope {
           </div>
           <p class="hint">O navegador sobe a voz baixa e segura a alta. Desligue com microfone bom e interface de áudio (ele também sobe o ruído antes da IA).</p>
 
-          @if (store.ownMicOn()) {
-            <button class="btn wide" (click)="store.toggleMicMonitor()">
-              {{ store.micMonitor() ? 'Parar de me ouvir' : 'Ouvir meu microfone como a sala ouve (use fone)' }}
-            </button>
-          }
           <p class="hint small mono">{{ status() }}</p>
         }
 
@@ -298,6 +347,13 @@ class Scope {
     .thr .range { width: 100%; }
     .val { font: 0.8rem var(--mono); min-width: 64px; text-align: right; }
     .hint.small { font-size: 0.74rem; }
+    .listen { display: inline-flex; align-items: center; gap: 0.35rem; }
+    .solo { padding: 0 0.45rem; display: inline-grid; place-items: center; touch-action: none; }
+    .tools { margin: 0.4rem 0 0; gap: 0.35rem; }
+    .lbl.short { min-width: 0; }
+    .readout { position: absolute; top: 6px; right: 8px; font-size: 0.72rem; color: var(--muted); pointer-events: none; background: rgb(16 16 17 / 0.8); padding: 1px 5px; border-radius: 2px; }
+    .dynlvl { width: 90px; }
+    .dynlvl i { background: var(--warn); }
     .hint.warn { color: var(--warn); }
     .lat { font: 0.8rem var(--mono); background: var(--well); box-shadow: var(--inset); padding: 0.45rem 0.6rem; border-radius: 2px; }
     .lr { display: flex; justify-content: space-between; gap: 1rem; padding: 1px 0; color: var(--muted); }
@@ -337,6 +393,18 @@ export class VoicePanel implements OnDestroy {
   ];
   protected readonly roomPresets = ROOM_AUDIO;
   protected readonly bandLabel = bandLabel;
+  protected readonly canDyn = canDyn;
+  protected readonly maxDyn = MAX_DYN;
+  protected readonly ranges = RANGES;
+  protected readonly range = signal(readRange());
+  protected readonly showPre = signal(true);
+  protected readonly showPost = signal(true);
+  protected readonly freeze = signal(false);
+  protected readonly hover = signal<string | null>(null);
+  private readonly hzInput = viewChild<ElementRef<HTMLInputElement>>('hz');
+  private peakPre: Float32Array | null = null;
+  private peakPost: Float32Array | null = null;
+  private soloDrag: { id: number; x: number; freq: number } | null = null;
   protected readonly hasGain = hasGain;
   protected readonly fmtDb = fmtDb;
   protected readonly round = Math.round;
@@ -344,7 +412,7 @@ export class VoicePanel implements OnDestroy {
   private readonly scope = new Scope();
   private raf = 0;
   private statsTimer = 0;
-  private drag: { index: number; id: number } | null = null;
+  private drag: { index: number; id: number; x: number; y: number; freq: number; gain: number; fine: boolean } | null = null;
   protected readonly stats = signal<VoiceStats | null>(null);
   private readonly peakPps = signal<{ preset: RoomAudio | null; pps: number }>({ preset: null, pps: 0 });
 
@@ -446,18 +514,69 @@ export class VoicePanel implements OnDestroy {
     b.gain = Math.min(24, Math.max(-24, Number.isFinite(b.gain) ? b.gain : 0));
     b.q = Math.min(18, Math.max(0.1, b.q || 0.71));
     if (!this.slopes.includes(b.slope)) b.slope = 12;
+    b.dyn = Math.min(MAX_DYN, Math.max(-MAX_DYN, Number.isFinite(b.dyn) ? b.dyn : 0));
+    b.thr = Math.min(0, Math.max(-70, Number.isFinite(b.thr) ? b.thr : -30));
     this.set({ eq, eqOn: true });
+    // Em solo, a escuta acompanha a banda (arrastar procurando o ruído).
+    if (this.store.soloing()) this.store.soloBand(b);
   }
   protected removeBand(i: number) {
     const eq = this.voice().eq.filter((_, k) => k !== i);
     this.sel.set(Math.max(0, Math.min(this.sel(), eq.length - 1)));
     this.set({ eq });
   }
-  private addBand(f: number, g: number) {
+  /** Banda nova onde clicou: nas pontas vira corte (como no Pro-Q), no meio um sino. */
+  private addBand(f: number, g: number): number {
     const eq = this.voice().eq;
-    if (eq.length >= MAX_BANDS) return;
-    this.set({ eq: [...eq, band('bell', Math.round(f), Math.round(g * 2) / 2, 1)], eqOn: true });
+    if (eq.length >= MAX_BANDS) return -1;
+    const b = f < 40 ? band('lowcut', Math.max(20, Math.round(f)), 0, 0.71, 12) : f > 14000 ? band('highcut', Math.round(f), 0, 0.71, 12) : band('bell', Math.round(f), Math.round(g * 2) / 2, 1);
+    this.set({ eq: [...eq, b], eqOn: true });
     this.sel.set(eq.length);
+    return eq.length;
+  }
+  protected toggleDyn(b: EqBand) {
+    this.patchBand(b.dyn !== 0 ? { dyn: 0 } : { dyn: -6, thr: -30 });
+  }
+  protected dynNow(i: number): number {
+    return this.meter()?.dyn?.[i] ?? 0;
+  }
+  protected dynPct(i: number): number {
+    const b = this.voice().eq[i];
+    return b === undefined || b.dyn === 0 ? 0 : Math.min(100, (Math.abs(this.dynNow(i)) / Math.abs(b.dyn)) * 100);
+  }
+  protected setRange(r: number) {
+    this.range.set(r);
+    try {
+      localStorage.setItem('noveau:eq-escala', String(r));
+    } catch {
+      /* sem armazenamento: vale só agora */
+    }
+  }
+  protected toggleFreeze() {
+    this.freeze.set(!this.freeze());
+    this.peakPre = this.peakPost = null;
+  }
+
+  // ---------- solo (segurar o fone da banda)
+
+  protected soloDown(e: PointerEvent) {
+    const b = this.selected();
+    if (b === null || e.button !== 0) return;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    this.soloDrag = { id: e.pointerId, x: e.clientX, freq: b.freq };
+    this.store.soloBand(b);
+  }
+  protected soloMove(e: PointerEvent) {
+    const d = this.soloDrag;
+    if (d === null || d.id !== e.pointerId) return;
+    // 40 px = uma oitava (Shift: 5x mais fino).
+    const oct = (e.clientX - d.x) / (e.shiftKey ? 200 : 40);
+    this.patchBand({ freq: Math.round(Math.min(F_MAX, Math.max(F_MIN, d.freq * Math.pow(2, oct)))) });
+  }
+  protected soloUp(e: PointerEvent) {
+    if (this.soloDrag?.id !== e.pointerId) return;
+    this.soloDrag = null;
+    this.store.soloBand(null);
   }
 
   // ---------- gráfico
@@ -475,10 +594,17 @@ export class VoicePanel implements OnDestroy {
     return Math.pow(10, LOG_MIN + (Math.min(Math.max(x, 0), w) / w) * LOG_SPAN);
   }
   private yOf(g: number, h: number) {
-    return h / 2 - (g / G_MAX) * (h / 2 - 14);
+    const r = this.gMax();
+    return h / 2 - (g / r) * (h / 2 - 14);
   }
   private gOf(y: number, h: number) {
-    return Math.max(-G_MAX, Math.min(G_MAX, ((h / 2 - y) / (h / 2 - 14)) * G_MAX));
+    const r = this.gMax();
+    return Math.max(-24, Math.min(24, ((h / 2 - y) / (h / 2 - 14)) * r));
+  }
+  /** Escala do gráfico: a escolhida, ou a próxima maior se alguma banda passar dela. */
+  private gMax(): number {
+    const need = Math.max(0, ...this.voice().eq.map((b) => Math.max(Math.abs(b.gain), Math.abs(b.gain + b.dyn))));
+    return RANGES.find((r) => r >= this.range() && r >= need) ?? 30;
   }
   private nodeXY(b: EqBand, w: number, h: number) {
     return { x: this.xOf(b.freq, w), y: hasGain(b.type) ? this.yOf(b.gain, h) : this.yOf(0, h) };
@@ -501,42 +627,95 @@ export class VoicePanel implements OnDestroy {
     return best;
   }
 
+  /**
+   * Clique no ponto: pega a banda; num lugar vazio: põe uma banda ali e já arrasta (como no Pro-Q).
+   * Alt + clique: liga/desliga. O arrasto é relativo, então o Shift (fino) não pula.
+   */
   protected down(e: PointerEvent) {
     if (e.button !== 0) return;
-    const i = this.hit(e);
+    const s = this.size();
+    if (s === null) return;
+    let i = this.hit(e);
+    if (e.altKey) {
+      if (i >= 0) {
+        this.sel.set(i);
+        this.patchBand({ on: !this.voice().eq[i].on });
+      }
+      e.preventDefault();
+      return;
+    }
+    if (i < 0) i = this.addBand(this.fOf(e.clientX - s.r.left, s.w), this.gOf(e.clientY - s.r.top, s.h));
     if (i < 0) return;
     this.sel.set(i);
-    this.drag = { index: i, id: e.pointerId };
+    const b = this.voice().eq[i];
+    this.drag = { index: i, id: e.pointerId, x: e.clientX, y: e.clientY, freq: b.freq, gain: b.gain, fine: e.shiftKey };
+    this.hover.set(null);
     (e.target as HTMLElement).setPointerCapture(e.pointerId);
   }
   protected move(e: PointerEvent) {
-    if (this.drag === null || this.drag.id !== e.pointerId) return;
     const s = this.size();
     if (s === null) return;
-    const b = this.voice().eq[this.drag.index];
-    const f = Math.round(this.fOf(e.clientX - s.r.left, s.w));
-    const patch: Partial<EqBand> = { freq: f };
-    if (hasGain(b.type)) patch.gain = Math.round(this.gOf(e.clientY - s.r.top, s.h) * 10) / 10;
+    const d = this.drag;
+    if (d === null || d.id !== e.pointerId) {
+      if (e.buttons === 0) {
+        const f = this.fOf(e.clientX - s.r.left, s.w);
+        this.hover.set(`${fmtHz(f)} Hz · ${noteOf(f)} · ${fmtDb(this.gOf(e.clientY - s.r.top, s.h))} dB`);
+      }
+      return;
+    }
+    const b = this.voice().eq[d.index];
+    if (b === undefined) return;
+    // Shift trocou no meio do arrasto: recomeça daqui para não pular.
+    if (e.shiftKey !== d.fine) Object.assign(d, { x: e.clientX, y: e.clientY, freq: b.freq, gain: b.gain, fine: e.shiftKey });
+    const k = d.fine ? 0.15 : 1;
+    const freq = d.freq * Math.pow(10, ((e.clientX - d.x) / s.w) * LOG_SPAN * k);
+    const patch: Partial<EqBand> = { freq: Math.round(Math.min(F_MAX, Math.max(F_MIN, freq))) };
+    if (hasGain(b.type)) {
+      const g = d.gain - ((e.clientY - d.y) / (s.h / 2 - 14)) * this.gMax() * k;
+      patch.gain = Math.round(Math.max(-24, Math.min(24, g)) * 10) / 10;
+    }
+    this.hover.set(`${fmtHz(patch.freq!)} Hz · ${noteOf(patch.freq!)}${patch.gain !== undefined ? ` · ${fmtDb(patch.gain)} dB` : ''}`);
     this.patchBand(patch);
   }
   protected up(e: PointerEvent) {
     if (this.drag?.id === e.pointerId) this.drag = null;
   }
+  /** Clique duplo no ponto: vai para os números da banda. */
   protected dbl(e: MouseEvent) {
     const i = this.hit(e);
-    if (i >= 0) return this.removeBand(i);
-    const s = this.size();
-    if (s === null) return;
-    this.addBand(this.fOf(e.clientX - s.r.left, s.w), this.gOf(e.clientY - s.r.top, s.h));
+    if (i < 0) return;
+    this.sel.set(i);
+    setTimeout(() => {
+      const el = this.hzInput()?.nativeElement;
+      el?.focus();
+      el?.select();
+    });
   }
+  /** Roda: largura (Q) ou inclinação do corte · Ctrl: ganho · Alt: alcance dinâmico · Shift: fino. */
   protected wheel(e: WheelEvent) {
     const i = this.hit(e);
     const target = i >= 0 ? i : this.sel();
-    if (this.voice().eq[target] === undefined) return;
+    const b = this.voice().eq[target];
+    if (b === undefined) return;
     e.preventDefault();
     this.sel.set(target);
-    const q = this.voice().eq[target].q * (e.deltaY < 0 ? 1.12 : 1 / 1.12);
-    this.patchBand({ q: Math.round(q * 100) / 100 });
+    // Shift + roda vira rolagem de lado em vários sistemas.
+    const delta = e.deltaY !== 0 ? e.deltaY : e.deltaX;
+    if (delta === 0) return;
+    const up = delta < 0;
+    const fine = e.shiftKey;
+    if (e.ctrlKey || e.metaKey) {
+      if (hasGain(b.type)) this.patchBand({ gain: Math.round((b.gain + (up ? 1 : -1) * (fine ? 0.1 : 0.5)) * 10) / 10 });
+    } else if (e.altKey) {
+      if (canDyn(b.type)) this.patchBand({ dyn: Math.round((b.dyn + (up ? 1 : -1) * (fine ? 0.1 : 0.5)) * 10) / 10 });
+    } else if (b.type === 'lowcut' || b.type === 'highcut') {
+      const k = this.slopes.indexOf(b.slope) + (up ? 1 : -1);
+      const slope = this.slopes[Math.max(0, Math.min(this.slopes.length - 1, k))];
+      if (slope !== b.slope) this.patchBand({ slope });
+    } else {
+      const q = b.q * Math.pow(up ? 1.12 : 1 / 1.12, fine ? 0.25 : 1);
+      this.patchBand({ q: Math.round(q * 100) / 100 });
+    }
   }
   protected ctx(e: MouseEvent) {
     const i = this.hit(e);
@@ -557,6 +736,11 @@ export class VoicePanel implements OnDestroy {
     e.preventDefault();
   }
 
+  /** Ganho de cada banda agora: as dinâmicas somam o que o detector está mexendo. */
+  private liveBands(): EqBand[] {
+    return this.voice().eq.map((b, i) => (isDynamic(b) ? { ...b, gain: b.gain + this.dynNow(i) } : b));
+  }
+
   private draw() {
     const s = this.size();
     if (s === null) return;
@@ -572,6 +756,20 @@ export class VoicePanel implements OnDestroy {
     const w = s.w;
     const h = s.h;
     g.clearRect(0, 0, w, h);
+    const v = this.voice();
+    const on = v.eqOn;
+    const soloing = this.store.soloing();
+    const sel = this.sel();
+
+    // faixa em solo
+    const solo = soloing ? v.eq[sel] : undefined;
+    if (solo !== undefined) {
+      const [lo, hi] = soloRange(solo);
+      const x0 = this.xOf(Math.max(F_MIN, lo), w);
+      const x1 = this.xOf(Math.min(F_MAX, hi), w);
+      g.fillStyle = this.hue(sel).replace(')', ' / 0.10)');
+      g.fillRect(x0, 0, x1 - x0, h);
+    }
 
     // grade
     g.font = '10px "DM Mono", monospace';
@@ -586,7 +784,8 @@ export class VoicePanel implements OnDestroy {
       g.fillStyle = 'rgb(255 255 255 / 0.28)';
       if (f > 20 && f < 20000) g.fillText(fmtHz(f), x + 3, h - 4);
     }
-    for (const db of [-12, -6, 0, 6, 12]) {
+    const r = this.gMax();
+    for (const db of [-r, -r / 2, 0, r / 2, r]) {
       const y = Math.round(this.yOf(db, h)) + 0.5;
       g.strokeStyle = db === 0 ? 'rgb(255 255 255 / 0.14)' : 'rgb(255 255 255 / 0.05)';
       g.beginPath();
@@ -594,11 +793,18 @@ export class VoicePanel implements OnDestroy {
       g.lineTo(w, y);
       g.stroke();
       g.fillStyle = 'rgb(255 255 255 / 0.28)';
-      g.fillText(`${db > 0 ? '+' : ''}${db}`, 3, y - 3);
+      g.fillText(`${db > 0 ? '+' : ''}${String(db).replace('.', ',')}`, 3, y - 3);
     }
 
-    // analisador: antes (cinza) e depois (cor) do tratamento
+    // analisador: antes (cinza) e depois (cor), inclinado 4,5 dB por oitava em volta de 1 kHz
+    // (como o Pro-Q: voz e música caem nos agudos, e assim a curva fica reta para o olho)
     if (this.scope.read()) {
+      const hold = (data: Float32Array, peak: Float32Array | null) => {
+        if (!this.freeze()) return data;
+        if (peak === null || peak.length !== data.length) return Float32Array.from(data);
+        for (let k = 0; k < data.length; k++) if (data[k] > peak[k]) peak[k] = data[k];
+        return peak;
+      };
       const spec = (data: Float32Array, fill: string, stroke: string) => {
         const nyq = this.scope.rate / 2;
         g.beginPath();
@@ -606,8 +812,9 @@ export class VoicePanel implements OnDestroy {
         for (let px = 0; px <= w; px += 2) {
           const f = this.fOf(px, w);
           const bin = Math.min(data.length - 1, Math.round((f / nyq) * data.length));
-          const v = Math.max(-100, Math.min(-10, data[bin]));
-          g.lineTo(px, h - ((v + 100) / 90) * h);
+          const t = data[bin] + 4.5 * Math.log2(f / 1000);
+          const db = Math.max(-100, Math.min(-10, Number.isFinite(t) ? t : -100));
+          g.lineTo(px, h - ((db + 100) / 90) * h);
         }
         g.lineTo(w, h);
         g.closePath();
@@ -616,51 +823,75 @@ export class VoicePanel implements OnDestroy {
         g.strokeStyle = stroke;
         g.stroke();
       };
-      if (this.scope.hasPre) spec(this.scope.preData, 'rgb(255 255 255 / 0.03)', 'rgb(255 255 255 / 0.10)');
-      spec(this.scope.postData, 'rgb(111 95 166 / 0.16)', 'rgb(164 151 207 / 0.35)');
+      if (this.scope.hasPre && this.showPre()) {
+        this.peakPre = this.freeze() ? hold(this.scope.preData, this.peakPre) : null;
+        spec(this.peakPre ?? this.scope.preData, 'rgb(255 255 255 / 0.03)', 'rgb(255 255 255 / 0.10)');
+      }
+      if (this.showPost()) {
+        this.peakPost = this.freeze() ? hold(this.scope.postData, this.peakPost) : null;
+        spec(this.peakPost ?? this.scope.postData, 'rgb(111 95 166 / 0.16)', 'rgb(164 151 207 / 0.35)');
+      }
     }
 
-    const v = this.voice();
-    const on = v.eqOn;
-    // cada banda (fraca) e a soma (forte)
-    v.eq.forEach((b, i) => {
-      if (!b.on) return;
-      const secs = bandSections(b);
-      g.strokeStyle = this.hue(i).replace(')', ' / 0.35)');
+    const line = (secs: ReturnType<typeof bandSections>, step: number) => {
       g.beginPath();
-      for (let px = 0; px <= w; px += 3) {
+      for (let px = 0; px <= w; px += step) {
         const y = this.yOf(responseDb(secs, this.fOf(px, w)), h);
         if (px === 0) g.moveTo(px, y);
         else g.lineTo(px, y);
       }
       g.stroke();
+    };
+    const live = this.liveBands();
+    // cada banda (fraca); as dinâmicas mostram também até onde podem ir (tracejado)
+    v.eq.forEach((b, i) => {
+      if (!b.on) return;
+      const dim = solo !== undefined && i !== sel;
+      g.lineWidth = 1;
+      if (isDynamic(b)) {
+        g.setLineDash([3, 4]);
+        g.strokeStyle = this.hue(i).replace(')', dim ? ' / 0.12)' : ' / 0.45)');
+        line(bandSections({ ...b, gain: b.gain + b.dyn }), 3);
+        g.setLineDash([]);
+      }
+      g.strokeStyle = this.hue(i).replace(')', dim ? ' / 0.12)' : ' / 0.35)');
+      line(bandSections(live[i]), 3);
     });
-    const all = eqSections(v);
+    // a soma, com o que as bandas dinâmicas estão fazendo agora
     g.lineWidth = 2;
     g.strokeStyle = on ? '#cfc6ef' : 'rgb(255 255 255 / 0.25)';
-    g.beginPath();
-    for (let px = 0; px <= w; px += 2) {
-      const y = this.yOf(responseDb(all, this.fOf(px, w)), h);
-      if (px === 0) g.moveTo(px, y);
-      else g.lineTo(px, y);
-    }
-    g.stroke();
+    line(eqSections({ eqOn: on, eq: live }), 2);
 
     // pontos
     v.eq.forEach((b, i) => {
       const n = this.nodeXY(b, w, h);
+      const dim = solo !== undefined && i !== sel;
+      g.globalAlpha = !on || dim ? 0.45 : 1;
+      if (isDynamic(b)) {
+        // anel = banda dinâmica; marquinha = onde ela está agora
+        g.beginPath();
+        g.arc(n.x, n.y, (i === sel ? 8 : 6.5) + 3.5, 0, Math.PI * 2);
+        g.lineWidth = 1.5;
+        g.strokeStyle = this.hue(i);
+        g.stroke();
+        const yNow = this.yOf(live[i].gain, h);
+        g.beginPath();
+        g.moveTo(n.x - 5, yNow);
+        g.lineTo(n.x + 5, yNow);
+        g.lineWidth = 2;
+        g.stroke();
+      }
       g.beginPath();
-      g.arc(n.x, n.y, i === this.sel() ? 8 : 6.5, 0, Math.PI * 2);
+      g.arc(n.x, n.y, i === sel ? 8 : 6.5, 0, Math.PI * 2);
       g.fillStyle = b.on ? this.hue(i) : '#555';
-      g.globalAlpha = on ? 1 : 0.5;
       g.fill();
-      g.globalAlpha = 1;
-      g.lineWidth = i === this.sel() ? 2 : 1;
-      g.strokeStyle = '#0b0b0c';
+      g.lineWidth = i === sel ? 2 : 1;
+      g.strokeStyle = i === sel && solo !== undefined ? '#fff' : '#0b0b0c';
       g.stroke();
       g.fillStyle = '#0b0b0c';
       g.font = 'bold 9px "DM Mono", monospace';
       g.fillText(String(i + 1), n.x - 2.6, n.y + 3);
+      g.globalAlpha = 1;
     });
     g.lineWidth = 1;
   }

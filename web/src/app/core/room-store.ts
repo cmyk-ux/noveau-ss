@@ -25,7 +25,7 @@ import { RoomLink } from './link';
 import { Prefs } from './prefs';
 import type { CaptureFacts } from './voice';
 import { voiceWorkerSupported } from './voice';
-import { RoomAudio, ROOM_AUDIO, VoiceSettings } from './voice-dsp';
+import { EqBand, RoomAudio, ROOM_AUDIO, VoiceSettings } from './voice-dsp';
 import type { VoiceMeter } from './voice.worker';
 import {
   focusedShare,
@@ -692,7 +692,46 @@ export class RoomStore {
   }
 
   toggleMicMonitor() {
+    this.soloAutoMonitor = false;
     this._micMonitor.set(this.session.monitorMic(!this._micMonitor()));
+  }
+
+  /** A escuta foi ligada só para o solo (desliga quando o solo acaba). */
+  private soloAutoMonitor = false;
+  private readonly _soloing = signal(false);
+  /** Uma banda do equalizador está em solo na sua escuta. */
+  readonly soloing = this._soloing.asReadonly();
+  /**
+   * Solo de banda, como segurar o fone do Pro-Q: liga a escuta se estiver desligada e toca só a faixa
+   * da banda para você. Soltar (null) volta ao normal e desliga a escuta se foi o solo que ligou.
+   */
+  soloBand(band: EqBand | null) {
+    if (band !== null) {
+      if (!this.ownMicOn()) {
+        this.toast.show('Ligue o microfone para ouvir a banda em solo.');
+        return;
+      }
+      if (!this._micMonitor()) {
+        this._micMonitor.set(this.session.monitorMic(true));
+        this.soloAutoMonitor = this._micMonitor();
+      }
+      if (!this.session.soloBand(band)) {
+        this.toast.show('O solo precisa do equalizador ligado.');
+        if (this.soloAutoMonitor) {
+          this.soloAutoMonitor = false;
+          this._micMonitor.set(this.session.monitorMic(false));
+        }
+        return;
+      }
+      this._soloing.set(true);
+      return;
+    }
+    this.session.soloBand(null);
+    this._soloing.set(false);
+    if (this.soloAutoMonitor) {
+      this.soloAutoMonitor = false;
+      this._micMonitor.set(this.session.monitorMic(false));
+    }
   }
 
   async addCamera() {

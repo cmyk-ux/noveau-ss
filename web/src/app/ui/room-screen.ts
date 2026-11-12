@@ -608,7 +608,7 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
     .split.open .caret cen-icon { transform: none; }
     .sep { width: 2px; height: 26px; margin: 0 0.2rem; border-left: 1px solid #0b0b0c; border-right: 1px solid rgb(255 255 255 / 0.06); }
     .hangup { width: 52px; }
-    .pop { position: absolute; bottom: calc(100% + 8px); left: 50%; translate: -50% 0; z-index: 20;
+    .pop { position: absolute; bottom: calc(100% + 8px); left: 50%; translate: -50% 0; z-index: 32;
       width: min(320px, calc(100vw - 1.5rem)); max-height: calc(100dvh - 9.5rem); overflow-y: auto;
       padding: 0.7rem 0.9rem 0.9rem; animation: pop-open 260ms steps(6) both; transform-origin: 50% 100%; }
     /* Menu da dock abrindo: a chapa sobe da tecla em degraus, clareia como tubo esquentando, e o conteúdo assenta depois. */

@@ -3,18 +3,53 @@
 Tudo da voz fica na janela **"sua voz"** (menu do microfone na barra de baixo → "Equalizador, ruído, eco e
 sala"). Três abas:
 
-- **equalizador**: gráfico estilo Pro-Q (analisador do microfone cru e do que vai para a sala, pontos que
-  se arrastam, roda do mouse para a largura, clique duplo põe/tira banda, clique direito apaga), até 8
-  bandas (sino, prateleira de grave/agudo, corte de grave/agudo de 6/12/24/48 dB por oitava, notch), 9
-  presets prontos e presets salvos pela pessoa, ganho final.
+- **equalizador**: gráfico estilo Pro-Q 3 (analisador do microfone cru e do que vai para a sala, pontos que
+  se arrastam, até 8 bandas: sino, prateleira de grave/agudo, corte de grave/agudo de 6/12/24/48 dB por
+  oitava, notch), **solo de banda**, **EQ dinâmico** por banda, 9 presets prontos e presets salvos pela
+  pessoa, ganho final.
 - **ruído e eco**: redução de ruído (desligada, do navegador, IA leve, IA forte) com **intensidade** de
   3 dB até a máxima, portão (automático pela IA ou com limiar manual), cancelamento de eco (desligado,
-  som do site, tudo do PC), ganho automático, "ouvir meu microfone como a sala ouve".
+  som do site, tudo do PC), ganho automático.
 - **sala e atraso**: qualidade de áudio da sala (vale para todo mundo) e a conta do atraso da voz, ao
   vivo.
 
+O botão **me ouvir** (fone) fica no topo da janela e no menu do microfone: toca para você o que vai para a
+sala, já tratado. Use fone (na caixa de som vira microfonia).
+
 Os ajustes valem no quadro seguinte (10 ms), sem republicar o microfone. Ficam no navegador
 (`noveau:voz2`; os presets em `noveau:eq-presets`). O modo antigo (`noveau:voice`) é convertido.
+
+## Equalizador estilo Pro-Q 3
+
+Lido do manual do FabFilter Pro-Q 3 e trazido o que faz sentido para voz numa chamada:
+
+- **Mouse**: clique num lugar vazio põe uma banda e já arrasta (na ponta esquerda, abaixo de 40 Hz, vira
+  corte de grave; na direita, acima de 14 kHz, corte de agudo). O arrasto é relativo: Shift deixa fino sem
+  pular. Roda: largura (Q), ou inclinação nos cortes. Ctrl + roda: ganho. Alt + roda: alcance dinâmico.
+  Alt + clique: liga/desliga a banda. Clique duplo no ponto: vai para os números. Clique direito: apaga.
+  Passando o mouse aparece a frequência, a **nota musical** (com cents) e o dB.
+- **Solo de banda** (segurar o fone da banda, como o Pro-Q): você ouve só a faixa da banda. Num sino é
+  um passa-faixa com a largura dela; numa prateleira ou corte, a parte que ela mexe (o que o corte de
+  grave tira, por exemplo). Arrastando o fone para os lados a banda anda (40 px por oitava; Shift: 5x mais
+  fino), para caçar o zumbido ou o S que arde. **Só você ouve**: o solo sai numa terceira trilha do worker
+  (a da escuta); a sala continua recebendo a voz normal. Se a escuta estava desligada, o solo liga e,
+  ao soltar, desliga de novo.
+- **EQ dinâmico** (sino e prateleiras): limiar e alcance (±24 dB). Um detector com o mesmo passa-faixa
+  do solo mede a faixa a cada 10 ms (ataque rápido, soltura ~80 ms); a banda começa a agir no limiar e
+  chega ao alcance todo 10 dB acima. Alcance negativo abaixa (S ardido, estouro de P, grave que embola
+  quando chega perto); positivo sobe. No gráfico: anel no ponto, tracejado até onde ela pode ir e um
+  traço mostrando onde está agora; a curva branca é a real naquele instante. O preset "Menos chiado de
+  S" agora é dinâmico (6,8 kHz, só age no S), e o "Perto do microfone" segura o grave dinamicamente.
+- **Analisador**: pré (cru) e pós (sala) liga/desliga, **congelar** (segura o pico de cada frequência,
+  bom para achar um zumbido), inclinação de 4,5 dB por oitava em volta de 1 kHz (como o Pro-Q: voz cai
+  nos agudos e assim a imagem fica reta), escala ±3/6/12/30 dB (sobe sozinha se uma banda passar dela).
+
+Medido no `voz-teste.mjs` (tom de 221 Hz do microfone falso): solo com a banda longe do tom -68 dB, em
+cima do tom -19 dB; a sala ficou em -15 dB durante o solo (igual a antes); banda dinâmica a -9 dB em
+cima do tom abaixou a saída de -15,4 para -21,1 dB.
+
+Ficou de fora do Pro-Q: fase linear (soma atraso; numa chamada não vale), mid/side (o microfone é
+mono), EQ Match e "spectrum grab" (pegar o pico do analisador direto).
 
 ## Atraso: de ~105 ms para ~52 ms com a IA ligada
 
@@ -122,7 +157,8 @@ Todos com RED (cada pacote vai de novo junto do próximo; perda isolada vira nad
 - `web/src/app/core/room-session.ts`: `publishMic`, `setVoice`, `followRoomAudio`, `voiceStats`,
   `route()`.
 - `web/src/app/ui/voice-panel.ts`: a janela.
-- Testes: `tools/e2e/voz-teste.mjs` (worker, 10 ms pela sala, janela, presets, IA forte sem cortar a
+- Testes: `tools/e2e/voz-teste.mjs` (worker, 10 ms pela sala, janela, me ouvir, clique cria banda, solo
+  só na escuta, EQ dinâmico, presets, IA forte sem cortar a
   voz, troca da qualidade da sala, volume acima de 100%), `tools/e2e/latencia.mjs` (atraso).
 
 Firefox e Safari não têm `MediaStreamTrackProcessor` para áudio: lá vale só o filtro do navegador, e a

@@ -11,13 +11,17 @@
 
 /// <reference lib="webworker" />
 
-import { FRAME, MAX_STRENGTH, SAMPLE_RATE, VoiceSettings, eqSections, type Biquad } from './voice-dsp';
+import { FRAME, MAX_STRENGTH, SAMPLE_RATE, VoiceSettings, bandSections, isDynamic, soloSections, type Biquad, type EqBand } from './voice-dsp';
 
 export type VoiceWorkerIn =
   | { type: 'input'; readable: ReadableStream<AudioData> }
   | { type: 'output'; writable: WritableStream<AudioData> }
   | { type: 'settings'; settings: VoiceSettings }
   | { type: 'meter'; on: boolean }
+  /** Saída extra só para você se ouvir (a sala não recebe o solo). null fecha. */
+  | { type: 'monitor'; writable: WritableStream<AudioData> | null }
+  /** Solo de uma banda do equalizador na saída de escuta (null = escuta normal). */
+  | { type: 'solo'; band: EqBand | null }
   | { type: 'stop' };
 
 export interface VoiceMeter {
@@ -33,6 +37,8 @@ export interface VoiceMeter {
   /** O que está rodando de fato (a IA forte usa a leve enquanto carrega ou se falhar). */
   engine: 'off' | 'leve' | 'forte';
   inputRate: number;
+  /** Quanto cada banda dinâmica está mexendo agora, em dB (mesma ordem do equalizador; 0 = fixa). */
+  dyn: number[];
 }
 export type VoiceWorkerOut =
   | VoiceMeter
@@ -271,9 +277,22 @@ let dfn: DeepFilter | null = null;
 let dfnLoading: Promise<void> | null = null;
 let dfnFailed = false;
 
-let sections: Biquad[] = [];
-/** Memória dos biquads (2 por seção). Mantida quando os coeficientes mudam, para não estalar. */
-let z = new Float64Array(0);
+/**
+ * Uma banda do equalizador. A memória dos biquads (2 por seção) fica quando os coeficientes mudam,
+ * para não estalar. Banda dinâmica: o detector ouve só a faixa dela, e o ganho é refeito a cada 10 ms.
+ */
+interface Stage {
+  band: EqBand;
+  secs: Biquad[];
+  z: Float64Array;
+  dyn: { det: Biquad[]; dz: Float64Array; env: number; gain: number } | null;
+}
+let stages: Stage[] = [];
+
+let monitor: WritableStreamDefaultWriter<AudioData> | null = null;
+let monitorTs = 0;
+let solo: { band: EqBand; secs: Biquad[]; z: Float64Array } | null = null;
+const soloBuf = new Float32Array(FRAME);
 let outGain = 1;
 let mixDry = 0;
 
@@ -309,13 +328,20 @@ function post(m: VoiceWorkerOut) {
 
 function applySettings(s: VoiceSettings) {
   settings = s;
-  const next = eqSections(s);
-  if (next.length !== sections.length) {
-    const nz = new Float64Array(next.length * 2);
-    nz.set(z.subarray(0, Math.min(z.length, nz.length)));
-    z = nz;
-  }
-  sections = next;
+  const bands = s.eqOn ? s.eq : [];
+  stages = bands.map((b, i) => {
+    const old = stages[i];
+    const dynamic = isDynamic(b);
+    const secs = dynamic ? bandSections({ ...b, gain: b.gain + (old?.dyn?.gain ?? 0) }) : bandSections(b);
+    // Mesma forma de antes: aproveita a memória (mexer no ganho ou na frequência não estala).
+    const z = old !== undefined && old.z.length === Math.max(secs.length, 1) * 2 && old.band.type === b.type ? old.z : new Float64Array(Math.max(secs.length, 1) * 2);
+    let dyn: Stage['dyn'] = null;
+    if (dynamic) {
+      const det = soloSections(b);
+      dyn = old?.dyn && old.band.type === b.type ? { ...old.dyn, det } : { det, dz: new Float64Array(det.length * 2), env: -120, gain: 0 };
+    }
+    return { band: b, secs, z, dyn };
+  });
   outGain = Math.pow(10, s.outDb / 20);
   mixDry = s.strength >= MAX_STRENGTH ? 0 : Math.pow(10, -s.strength / 20);
   const wantRnn = s.denoise === 'leve' || s.denoise === 'forte' || s.gate === 'auto';
@@ -339,6 +365,44 @@ function applySettings(s: VoiceSettings) {
       });
   }
   dfn?.setLimit(s.strength >= MAX_STRENGTH ? 100 : s.strength);
+}
+
+/** Passa um quadro por uma série de biquads (DF2T), no lugar. */
+function runBiquads(x: Float32Array, secs: Biquad[], z: Float64Array) {
+  for (let k = 0; k < secs.length; k++) {
+    const q = secs[k];
+    let z1 = z[2 * k];
+    let z2 = z[2 * k + 1];
+    for (let i = 0; i < x.length; i++) {
+      const v = x[i];
+      const o = q.b0 * v + z1;
+      z1 = q.b1 * v - q.a1 * o + z2;
+      z2 = q.b2 * v - q.a2 * o;
+      x[i] = o;
+    }
+    z[2 * k] = z1;
+    z[2 * k + 1] = z2;
+  }
+}
+
+const detBuf = new Float32Array(FRAME);
+/**
+ * EQ dinâmico: mede a faixa da banda e decide quanto ela mexe neste quadro. Começa a agir no limiar
+ * e chega ao alcance todo 10 dB acima dele; ataque rápido (~10 ms) e soltura de ~80 ms.
+ */
+function updateDynamic(st: Stage, y: Float32Array) {
+  const d = st.dyn!;
+  detBuf.set(y);
+  runBiquads(detBuf, d.det, d.dz);
+  let sq = 0;
+  for (let i = 0; i < FRAME; i++) sq += detBuf[i] * detBuf[i];
+  const level = dbOf(sq, FRAME);
+  d.env = level > d.env ? d.env + (level - d.env) * 0.7 : d.env + (level - d.env) * 0.12;
+  const amount = Math.min(1, Math.max(0, (d.env - st.band.thr) / 10));
+  const target = st.band.dyn * amount;
+  d.gain += (target - d.gain) * (Math.abs(target) > Math.abs(d.gain) ? 0.7 : 0.25);
+  st.secs = bandSections({ ...st.band, gain: st.band.gain + d.gain });
+  if (st.z.length !== Math.max(st.secs.length, 1) * 2) st.z = new Float64Array(Math.max(st.secs.length, 1) * 2);
 }
 
 function dbOf(sumSq: number, n: number) {
@@ -387,20 +451,23 @@ function processFrame(x: Float32Array) {
   const target = open ? 1 : 0;
   const coef = open ? 0.02 : 0.0015; // ~1 ms para abrir, ~14 ms para fechar
 
-  // 3) Equalizador (DF2T), 4) ganho, portão e limitador.
-  const out = y === x ? x : y;
-  const nSec = sections.length;
+  // Solo (só na escuta): a faixa da banda, antes do equalizador.
+  if (solo !== null && monitor !== null) {
+    soloBuf.set(y);
+    runBiquads(soloBuf, solo.secs, solo.z);
+  }
+
+  // 3) Equalizador (DF2T, banda por banda), 4) ganho, portão e limitador.
+  const eqBuf = y === x ? x : y;
+  for (const st of stages) {
+    if (st.dyn !== null) updateDynamic(st, eqBuf);
+    if (st.secs.length > 0) runBiquads(eqBuf, st.secs, st.z);
+  }
+  const out = eqBuf;
   const ceiling = 0.97;
   let outSq = 0;
   for (let i = 0; i < FRAME; i++) {
-    let v = y[i];
-    for (let k = 0; k < nSec; k++) {
-      const q = sections[k];
-      const o = q.b0 * v + z[2 * k];
-      z[2 * k] = q.b1 * v - q.a1 * o + z[2 * k + 1];
-      z[2 * k + 1] = q.b2 * v - q.a2 * o;
-      v = o;
-    }
+    let v = eqBuf[i];
     gateGain += (target - gateGain) * coef;
     v *= outGain * (s.gate === 'off' ? 1 : gateGain);
     const a = Math.abs(v);
@@ -485,6 +552,19 @@ async function pump(r: ReadableStreamDefaultReader<AudioData>) {
         data: frame.slice(),
       });
       nextTimestamp += (FRAME / SAMPLE_RATE) * 1e6;
+      if (monitor !== null) {
+        // Escuta: o mesmo som da sala, ou só a faixa da banda em solo. Sem esperar (não atrasa a sala).
+        const mf = new AudioData({
+          format: 'f32-planar',
+          sampleRate: SAMPLE_RATE,
+          numberOfFrames: FRAME,
+          numberOfChannels: 1,
+          timestamp: monitorTs,
+          data: solo !== null ? soloBuf.slice() : frame.slice(),
+        });
+        monitorTs += (FRAME / SAMPLE_RATE) * 1e6;
+        monitor.write(mf).catch(() => mf.close());
+      }
       busy += performance.now() - t0;
       try {
         await writer?.write(outFrame);
@@ -517,6 +597,7 @@ async function pump(r: ReadableStreamDefaultReader<AudioData>) {
           load: mBusy / mFrames,
           engine: last.engine,
           inputRate,
+          dyn: settings?.eqOn ? settings.eq.map((_, i) => stages[i]?.dyn?.gain ?? 0) : [],
         });
         mIn = mOut = -120;
         mVad = -1;
@@ -545,6 +626,19 @@ self.onmessage = (e: MessageEvent<VoiceWorkerIn>) => {
     case 'settings':
       applySettings(m.settings);
       break;
+    case 'monitor':
+      void monitor?.close().catch(() => undefined);
+      monitor = m.writable?.getWriter() ?? null;
+      break;
+    case 'solo':
+      if (m.band === null) solo = null;
+      else {
+        const secs = soloSections(m.band);
+        // Mesma forma: guarda a memória (arrastar a banda em solo não estala).
+        const z = solo !== null && solo.z.length === secs.length * 2 ? solo.z : new Float64Array(secs.length * 2);
+        solo = { band: m.band, secs, z };
+      }
+      break;
     case 'meter':
       meterOn = m.on;
       mIn = mOut = -120;
@@ -556,6 +650,8 @@ self.onmessage = (e: MessageEvent<VoiceWorkerIn>) => {
       reader = null;
       void writer?.close().catch(() => undefined);
       writer = null;
+      void monitor?.close().catch(() => undefined);
+      monitor = null;
       self.close();
       break;
   }

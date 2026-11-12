@@ -25,7 +25,7 @@ import { installH264Preference } from './h264';
 import { ACTIVITY_ATTR, Activity, parseActivity } from './activity';
 import { gpuEncodes, hardwareDecoders } from './stream';
 import { CaptureFacts, captureFacts, needsWorker, voiceCapture, VoiceProcessor, voicePublish, wantPtime } from './voice';
-import { DEFAULT_ROOM_AUDIO, DEFAULT_VOICE, RoomAudio, roomAudio, VoiceSettings } from './voice-dsp';
+import { DEFAULT_ROOM_AUDIO, DEFAULT_VOICE, EqBand, RoomAudio, roomAudio, VoiceSettings } from './voice-dsp';
 import type { VoiceMeter, VoiceWorkerOut } from './voice.worker';
 import { DirectMode, DirectTalk, DirectView } from './direct';
 import { keep, keepList, keepMap } from './same';
@@ -1375,15 +1375,30 @@ export class RoomSession {
       this.micMonitor.srcObject = null;
       this.micMonitor = null;
     }
-    if (!on) return false;
-    const track = this.room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track?.mediaStreamTrack;
-    if (track === undefined) return false;
+    if (!on) {
+      this.voiceProc?.monitor(false);
+      return false;
+    }
+    const pub = this.room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track?.mediaStreamTrack;
+    if (pub === undefined) return false;
+    // Com o worker, uma saída só de escuta (é por ela que o solo de banda toca só para você).
+    const track = this.voiceProc?.monitor(true) ?? pub;
     const el = new Audio();
     el.srcObject = new MediaStream([track]);
     const sink = this.room.getActiveDevice('audiooutput');
     if (sink && 'setSinkId' in el) void (el as any).setSinkId(sink).catch(() => undefined);
     void el.play().catch(() => undefined);
     this.micMonitor = el;
+    return true;
+  }
+
+  /**
+   * Solo de uma banda do equalizador: na sua escuta toca só a faixa que a banda mexe (a sala continua
+   * ouvindo a voz inteira). Precisa da escuta ligada e do worker (equalizador ligado). Devolve se deu.
+   */
+  soloBand(band: EqBand | null): boolean {
+    if (this.voiceProc === null) return false;
+    this.voiceProc.solo(band);
     return true;
   }
 

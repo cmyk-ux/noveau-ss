@@ -1,5 +1,5 @@
 import type { AudioCaptureOptions, AudioProcessorOptions, TrackProcessor, TrackPublishOptions, Track } from 'livekit-client';
-import { RoomAudioPreset, VoiceSettings, isRawChain } from './voice-dsp';
+import { EqBand, RoomAudioPreset, VoiceSettings, isRawChain } from './voice-dsp';
 import type { VoiceMeter, VoiceWorkerIn, VoiceWorkerOut } from './voice.worker';
 
 /**
@@ -83,7 +83,24 @@ class Lane {
     const proc = new P({ track, maxBufferSize: 4 });
     this.send({ type: 'input', readable: proc.readable }, [proc.readable]);
   }
+  /** Trilha só para você se ouvir (com o solo de banda, se houver). */
+  monitor: (MediaStreamTrack & { writable: WritableStream<AudioData> }) | null = null;
+  openMonitor(): MediaStreamTrack {
+    if (this.monitor === null) {
+      const G = (globalThis as unknown as { MediaStreamTrackGenerator: GeneratorCtor }).MediaStreamTrackGenerator;
+      this.monitor = new G({ kind: 'audio' });
+      this.send({ type: 'monitor', writable: this.monitor.writable }, [this.monitor.writable]);
+    }
+    return this.monitor;
+  }
+  closeMonitor() {
+    if (this.monitor === null) return;
+    this.send({ type: 'monitor', writable: null });
+    this.monitor.stop();
+    this.monitor = null;
+  }
   close() {
+    this.closeMonitor();
     this.send({ type: 'stop' });
     const w = this.worker;
     // Dá tempo de o worker fechar a trilha antes de terminar.
@@ -108,6 +125,8 @@ export class VoiceProcessor implements TrackProcessor<Track.Kind.Audio, AudioPro
   onEvent: ((m: Exclude<VoiceWorkerOut, VoiceMeter | { type: 'ready' }>) => void) | null = null;
   /** Avisa a trilha de saída nova (para pedir quadros de 10 ms nela também). */
   onOutput: ((track: MediaStreamTrack) => void) | null = null;
+  private monitoring = false;
+  private soloBand: EqBand | null = null;
   private lane: Lane | null = null;
   /** Worker carregando a IA forte, ainda sem entrada. */
   private next: Lane | null = null;
@@ -146,6 +165,29 @@ export class VoiceProcessor implements TrackProcessor<Track.Kind.Audio, AudioPro
   update(s: VoiceSettings) {
     this.settings = s;
     this.apply();
+  }
+
+  /**
+   * Escuta (você se ouvindo): uma saída a mais do worker, que a sala não recebe. Por isso o solo de
+   * banda toca só para você. Devolve a trilha para tocar, ou null.
+   */
+  monitor(on: boolean): MediaStreamTrack | null {
+    this.monitoring = on;
+    if (!on) {
+      this.lane?.closeMonitor();
+      return null;
+    }
+    return this.lane?.openMonitor() ?? null;
+  }
+
+  get monitorTrack(): MediaStreamTrack | null {
+    return this.lane?.monitor ?? null;
+  }
+
+  /** Solo de uma banda na escuta (null = escuta normal). */
+  solo(band: EqBand | null) {
+    this.soloBand = band;
+    this.lane?.send({ type: 'solo', band });
   }
 
   /** Medidores só com a janela da voz aberta. */
@@ -201,6 +243,8 @@ export class VoiceProcessor implements TrackProcessor<Track.Kind.Audio, AudioPro
     this.next = null;
     lane.send({ type: 'settings', settings: this.settings });
     lane.send({ type: 'meter', on: this.metering });
+    lane.send({ type: 'solo', band: this.soloBand });
+    if (this.monitoring) lane.openMonitor();
     lane.input(this.raw);
     const sender = this.local?.sender;
     try {
