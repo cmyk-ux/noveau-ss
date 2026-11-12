@@ -773,9 +773,13 @@ await part('celular', async () => {
 await part('reconexao', async () => {
   await baseline({ aSharing: true });
   // Só valem nesta parte: o mesmo erro em outra parte é defeito. "negotiation timed out": o LiveKit
-  // 2.22.0 às vezes perde a negociação começada durante a queda e refaz a conexão inteira; as
-  // conferências abaixo garantem que tudo volta.
+  // às vezes perde a negociação começada durante a queda e refaz a conexão inteira; as conferências
+  // abaixo garantem que tudo volta.
   C.expected.push(/^\[reconexao\] .*(ERR_INTERNET_DISCONNECTED|ERR_NETWORK_CHANGED|Failed to fetch|could not establish signal connection|websocket closed|negotiation timed out)/i);
+  // A fala e transmite. Antes da queda C tem de receber as duas coisas, senão a volta não prova nada.
+  if (await has(A, 'button[title="Ligar microfone"]')) await btn(A, 'Ligar microfone').click();
+  const both = async () => (await flowing(C, 'A', 'microphone')) && (await flowing(C, 'A', 'screen_share'));
+  ok('antes da queda: C recebe a voz e a imagem de A', (await eventually(async () => ({ ok: await both() }), 15000)).ok);
   // A identidade fica, o SID muda só numa reconexão completa: diz qual dos dois caminhos o LiveKit tomou.
   const sid0 = await C.page.evaluate(() => window.__noveau.room.localParticipant.sid);
   const cdp = await C.ctx.newCDPSession(C.page);
@@ -783,12 +787,17 @@ await part('reconexao', async () => {
   await cdp.send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
   ok('sem internet: C mostra que está reconectando', await until(C, () => document.querySelector('.plate .led.warn') !== null || document.querySelector('.plate .led.bad') !== null, undefined, 20000));
   await cdp.send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+  const back = Date.now();
   ok('internet de volta: C reconecta', await until(C, () => document.querySelector('.plate .led.ok') !== null, undefined, 30000));
   ok('C volta a ver a tela de A', await until(C, playing, 'cen-stage video', 20000));
+  // "Tocando" não basta: um vídeo congelado continua com tamanho. Confere que os bytes voltam a chegar.
+  const media = await eventually(async () => ({ ok: await both() }), 20000);
+  ok('a voz e a imagem de A voltam a chegar em C', media.ok);
+  if (media.ok) console.log(`INFO   [reconexao] voz e imagem de volta ${((Date.now() - back) / 1000).toFixed(1)} s depois da internet voltar`);
   await wait(16000); // o prazo de uma negociação perdida (15 s) passa: se ela refizer a conexão, aparece aqui
   const sid1 = await C.page.evaluate(() => window.__noveau.room.localParticipant.sid);
   console.log(`INFO   [reconexao] caminho do LiveKit: ${sid1 === sid0 ? 'retomada (mesma sessão)' : 'reconexão completa (sessão nova)'}`);
-  ok('C volta a ouvir a voz de A', (await eventually(async () => ({ ok: await flowing(C, 'A', 'microphone') }), 15000)).ok);
+  ok('16 s depois: a voz e a imagem de A continuam chegando', (await eventually(async () => ({ ok: await both() }), 15000)).ok);
 });
 
 /** Grava, a cada 25 ms, o que C mostra durante uma queda: status, se o vídeo do palco sumiu, o aviso. */
@@ -880,6 +889,11 @@ await part('sair', async () => {
   ok('A sai: B vê 2 pessoas', await until(B, () => document.querySelector('button.people-top .mono')?.textContent?.trim() === '2', undefined, 15000));
 });
 
+for (const p of Object.values(people)) {
+  // Os esperados não reprovam, mas aparecem: dá para ver se uma versão nova do LiveKit acabou com eles.
+  const known = p.errors.filter((e) => p.expected.some((re) => re.test(e)));
+  if (known.length > 0) console.log(`INFO   ${p.name}: ${known.length} erro(s) esperado(s): ${known.slice(0, 3).join(' | ').slice(0, 400)}`);
+}
 for (const p of Object.values(people)) ok(`${p.name} sem erros no console`, unexpected(p).length === 0, unexpected(p).slice(0, 3).join(' | ').slice(0, 600));
 current = 'fim';
 const failed = results.filter((r) => !r.pass);
