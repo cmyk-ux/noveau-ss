@@ -630,9 +630,10 @@ await part('voz', async () => {
   ok('"IA leve": a voz passa pelo worker (RNNoise)', await until(A, () => window.__noveau.session.voiceRunning === true && (document.querySelector('cen-voice-panel')?.textContent ?? '').includes('rodando: IA leve'), undefined, 15000));
   ok('voz de A (com IA) chega em B', (await eventually(async () => ({ ok: await flowing(B, 'A', 'microphone') }), 10000)).ok);
   ok('trocar o tratamento não republica o microfone', (await pubSid()) === sid0, String(sid0));
-  await vp.locator('button', { hasText: 'Ouvir meu microfone' }).click();
-  ok('"Ouvir meu microfone" vira "Parar de me ouvir"', await until(A, () => document.querySelector('cen-voice-panel')?.textContent?.includes('Parar de me ouvir')));
-  await vp.locator('button', { hasText: 'Parar de me ouvir' }).click();
+  await vp.locator('header button.listen').click();
+  ok('"me ouvir" (topo da janela) vira "me ouvindo"', await until(A, () => document.querySelector('cen-voice-panel header button.listen')?.textContent?.includes('me ouvindo')));
+  await vp.locator('header button.listen').click();
+  ok('"me ouvindo" volta a "me ouvir"', await until(A, () => document.querySelector('cen-voice-panel header button.listen')?.textContent?.includes('me ouvir') && !document.querySelector('cen-voice-panel header button.listen')?.textContent?.includes('me ouvindo')));
   await noise('Desligada').click();
   const r3 = await eventually(async () => {
     const s = await raw();

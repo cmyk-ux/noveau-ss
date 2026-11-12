@@ -20,6 +20,13 @@ export interface EqBand {
   q: number;
   slope: Slope;
   on: boolean;
+  /**
+   * EQ dinâmico (só sino e prateleiras, como no Pro-Q): quanto a banda ainda pode mexer, em dB, quando
+   * o som nessa faixa passa do limiar. Negativo abaixa (sibilância, estouro), positivo sobe. 0 = fixa.
+   */
+  dyn: number;
+  /** Limiar do EQ dinâmico, em dBFS, medido só na faixa da banda. */
+  thr: number;
 }
 
 export interface VoiceSettings {
@@ -54,8 +61,20 @@ export const DENOISE_LABELS: Record<Denoise, string> = {
 /** Atraso que cada redução de ruído soma à voz (medido no Chromium, veja docs/VOZ.md). */
 export const DENOISE_DELAY_MS: Record<Denoise, number> = { off: 0, navegador: 0, leve: 10, forte: 30 };
 
-export function band(type: BandType, freq: number, gain = 0, q = 0.71, slope: Slope = 12): EqBand {
-  return { type, freq, gain, q, slope, on: true };
+export function band(type: BandType, freq: number, gain = 0, q = 0.71, slope: Slope = 12, dyn = 0, thr = -30): EqBand {
+  return { type, freq, gain, q, slope, on: true, dyn, thr };
+}
+
+/** Alcance máximo do EQ dinâmico (dB, para cima ou para baixo). */
+export const MAX_DYN = 24;
+
+/** Bandas que podem ser dinâmicas (as que têm ganho). */
+export function canDyn(t: BandType): boolean {
+  return t === 'bell' || t === 'lowshelf' || t === 'highshelf';
+}
+
+export function isDynamic(b: EqBand): boolean {
+  return b.on && canDyn(b.type) && b.dyn !== 0;
 }
 
 export interface EqPreset {
@@ -114,13 +133,13 @@ export const EQ_PRESETS: EqPreset[] = [
     id: 'perto',
     name: 'Microfone colado na boca',
     hint: 'Tira o grave inchado de falar perto (efeito de proximidade) e os estouros de P e B.',
-    bands: [band('lowcut', 120, 0, 0.71, 24), band('lowshelf', 250, -4, 0.71), band('bell', 160, -2, 1.4)],
+    bands: [band('lowcut', 120, 0, 0.71, 24), band('lowshelf', 250, -4, 0.71), band('bell', 160, 0, 1.4, 12, -8, -24)],
   },
   {
     id: 'sibilancia',
-    name: 'Menos chiado de S',
-    hint: 'Abaixa a faixa onde o S e o X ardem (6 a 8 kHz).',
-    bands: [band('lowcut', 80, 0, 0.71, 12), band('bell', 6800, -5, 2.5)],
+    name: 'Menos chiado de S (dinâmico)',
+    hint: 'Só abaixa 6 a 8 kHz na hora em que um S ou X arde: o resto da voz fica com o brilho de sempre.',
+    bands: [band('lowcut', 80, 0, 0.71, 12), band('bell', 6800, 0, 2.5, 12, -9, -38)],
   },
   {
     id: 'brilho',
@@ -154,7 +173,7 @@ export function isRawChain(s: VoiceSettings): boolean {
 }
 
 export function eqActive(s: VoiceSettings): boolean {
-  return s.eqOn && s.eq.some((b) => b.on && (b.type === 'lowcut' || b.type === 'highcut' || b.type === 'notch' || b.gain !== 0));
+  return s.eqOn && s.eq.some((b) => b.on && (b.type === 'lowcut' || b.type === 'highcut' || b.type === 'notch' || b.gain !== 0 || isDynamic(b)));
 }
 
 /** Atraso que o tratamento escolhido soma (fora a rede): o que a pessoa vai sentir. */
@@ -307,6 +326,52 @@ export function bandSections(b: EqBand, fs = SAMPLE_RATE): Biquad[] {
   ];
 }
 
+/**
+ * O que o solo de uma banda deixa ouvir (como no Pro-Q): a parte do som que a banda mexe. Sino e
+ * notch: passa-faixa na frequência e largura da banda; prateleira: o lado que ela levanta ou abaixa;
+ * corte: o que está sendo cortado (o corte de grave deixa ouvir só o grave).
+ */
+export function soloSections(b: EqBand, fs = SAMPLE_RATE): Biquad[] {
+  const f = clampFreq(b.freq, fs);
+  const q = Math.min(Math.max(b.q, 0.1), 18);
+  switch (b.type) {
+    case 'bell':
+    case 'notch': {
+      const w = (2 * Math.PI * f) / fs;
+      const alpha = Math.sin(w) / (2 * Math.max(q, 0.4));
+      const c = Math.cos(w);
+      // Passa-faixa de pico 0 dB, duas vezes: a faixa fica bem marcada sem mudar o volume no centro.
+      const bp = norm(alpha, 0, -alpha, 1 + alpha, -2 * c, 1 - alpha);
+      return [bp, bp];
+    }
+    case 'lowshelf':
+      return [section('lp', f, 0.7071, fs), section('lp', f, 0.7071, fs)];
+    case 'highshelf':
+      return [section('hp', f, 0.7071, fs), section('hp', f, 0.7071, fs)];
+    case 'lowcut':
+      return [section('lp', f, 0.7071, fs), section('lp', f, 0.7071, fs)];
+    case 'highcut':
+      return [section('hp', f, 0.7071, fs), section('hp', f, 0.7071, fs)];
+  }
+}
+
+/** Faixa que o solo deixa ouvir (para pintar no gráfico), em Hz. */
+export function soloRange(b: EqBand): [number, number] {
+  const f = b.freq;
+  switch (b.type) {
+    case 'bell':
+    case 'notch': {
+      const oct = Math.asinh(1 / (2 * Math.max(b.q, 0.4))) / Math.log(2) * 2;
+      return [f / Math.pow(2, oct / 2), f * Math.pow(2, oct / 2)];
+    }
+    case 'lowshelf':
+    case 'lowcut':
+      return [20, f];
+    default:
+      return [f, 20000];
+  }
+}
+
 /** Todas as seções do equalizador, na ordem. */
 export function eqSections(s: Pick<VoiceSettings, 'eqOn' | 'eq'>, fs = SAMPLE_RATE): Biquad[] {
   if (!s.eqOn) return [];
@@ -371,6 +436,8 @@ export function cleanBand(v: unknown): EqBand | null {
     q: num(o['q'], 0.1, 18, 0.71),
     slope: SLOPES.includes(o['slope'] as Slope) ? (o['slope'] as Slope) : 12,
     on: o['on'] !== false,
+    dyn: num(o['dyn'], -MAX_DYN, MAX_DYN, 0),
+    thr: num(o['thr'], -70, 0, -30),
   };
 }
 

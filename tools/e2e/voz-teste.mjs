@@ -74,6 +74,116 @@ await wait(1500);
 ok('A: medidor de entrada e saída andando', await until(A, () => [...document.querySelectorAll('cen-voice-panel .meters i')].every((i) => parseFloat(i.style.width) > 1)));
 await shot(A, 'voz-equalizador.png');
 
+// Pro-Q: botão "me ouvir" no topo, clique no vazio cria banda, solo da banda e EQ dinâmico.
+/** RMS (dB) de uma trilha por ms milissegundos. which: 'out' (sala) ou 'monitor' (sua escuta). */
+const rms = (p, which, ms = 1500) => p.page.evaluate(async ({ which, ms }) => {
+  const s = window.__noveau.session;
+  const t = which === 'out' ? s.micTracks().out : s.voiceProc?.monitorTrack;
+  if (!t) return null;
+  const rd = new MediaStreamTrackProcessor({ track: t }).readable.getReader();
+  let sum = 0, n = 0;
+  const end = performance.now() + ms;
+  while (performance.now() < end) {
+    const { value, done } = await rd.read();
+    if (done) break;
+    const x = new Float32Array(value.numberOfFrames);
+    value.copyTo(x, { planeIndex: 0, format: 'f32-planar' });
+    value.close();
+    for (const v of x) { sum += v * v; n++; }
+  }
+  rd.cancel().catch(() => {});
+  return n === 0 ? null : 10 * Math.log10(sum / n + 1e-12);
+}, { which, ms });
+/** Frequência mais forte do som de saída (para pôr a banda em cima dela). */
+const peakHz = await A.page.evaluate(async () => {
+  const t = window.__noveau.session.micTracks().out;
+  const ctx = new AudioContext();
+  const an = ctx.createAnalyser();
+  an.fftSize = 8192;
+  ctx.createMediaStreamSource(new MediaStream([t])).connect(an);
+  const d = new Float32Array(an.frequencyBinCount);
+  const best = new Float32Array(an.frequencyBinCount).fill(-200);
+  for (let i = 0; i < 20; i++) { await new Promise((r) => setTimeout(r, 100)); an.getFloatFrequencyData(d); d.forEach((v, k) => { if (v > best[k]) best[k] = v; }); }
+  let k = 1; best.forEach((v, i) => { if (i > 2 && v > best[k]) k = i; });
+  void ctx.close();
+  return (k * ctx.sampleRate) / an.fftSize;
+});
+results.push(`INFO tom do microfone falso: ${Math.round(peakHz)} Hz`);
+
+const listen = A.page.locator('cen-voice-panel header button.listen');
+await listen.click();
+ok('A: "me ouvir" no topo da janela liga a escuta', await until(A, () => document.querySelector('cen-voice-panel header button.listen')?.getAttribute('aria-pressed') === 'true'));
+ok('A: escuta passa pelo tratamento (trilha da escuta existe)', await until(A, () => window.__noveau.session.voiceProc?.monitorTrack?.readyState === 'live'));
+await listen.click();
+ok('A: "me ouvir" desliga', await until(A, () => document.querySelector('cen-voice-panel header button.listen')?.getAttribute('aria-pressed') === 'false' && !window.__noveau.session.voiceProc?.monitorTrack));
+
+// Clique num lugar vazio do gráfico: banda nova, já escolhida.
+await A.page.selectOption('cen-voice-panel select[aria-label="Preset do equalizador"]', 'natural').catch(() => {});
+const nBefore = await A.page.evaluate(() => JSON.parse(localStorage.getItem('noveau:voz2')).eq.length);
+const box = await A.page.locator('cen-voice-panel canvas').boundingBox();
+// x de uma frequência no gráfico (escala log 20 Hz a 20 kHz)
+const xOfHz = (f) => box.x + ((Math.log10(f) - Math.log10(20)) / 3) * box.width;
+await A.page.mouse.move(xOfHz(peakHz * 3.1), box.y + box.height * 0.3);
+ok('A: leitura de frequência/nota ao passar o mouse', await until(A, () => /Hz · [A-G]#?\d/.test(document.querySelector('cen-voice-panel .readout')?.textContent ?? '')));
+await A.page.mouse.down();
+await A.page.mouse.move(xOfHz(peakHz), box.y + box.height * 0.5, { steps: 6 });
+await A.page.mouse.up();
+const made = await A.page.evaluate(() => JSON.parse(localStorage.getItem('noveau:voz2')).eq);
+const nb = made[made.length - 1];
+ok('A: clique no vazio cria uma banda e arrasta junto', made.length === nBefore + 1 && nb.type === 'bell' && Math.abs(Math.log2(nb.freq / peakHz)) < 0.35, `${nBefore} → ${made.length} bandas, nova em ${nb?.freq} Hz`);
+await shot(A, 'voz-nova-banda.png');
+
+// Solo: estreita a banda longe do tom (só um sopro passa) e depois em cima do tom.
+const idx = made.length - 1;
+const solo = A.page.locator('cen-voice-panel button.solo');
+const outBefore = await rms(A, 'out');
+await A.page.fill('cen-voice-panel .row.edit label:has-text("Q") input', '8');
+await A.page.locator('cen-voice-panel .row.edit label:has-text("Q") input').dispatchEvent('change');
+await A.page.fill('cen-voice-panel .row.edit label:has-text("Hz") input', String(Math.round(Math.min(18000, peakHz * 6))));
+await A.page.locator('cen-voice-panel .row.edit label:has-text("Hz") input').dispatchEvent('change');
+const sb = await solo.boundingBox();
+await A.page.mouse.move(sb.x + sb.width / 2, sb.y + sb.height / 2);
+await A.page.mouse.down();
+ok('A: segurar o fone da banda põe em solo (escuta liga sozinha)', await until(A, () => window.__noveau.session.voiceProc?.monitorTrack?.readyState === 'live' && document.querySelector('cen-voice-panel button.solo.on') !== null));
+await wait(300);
+const soloOff = await rms(A, 'monitor');
+const outDuring = await rms(A, 'out');
+// Arrasta o fone para os lados até o tom: a faixa segue o mouse.
+const octs = Math.log2(peakHz / Math.min(18000, peakHz * 6));
+await A.page.mouse.move(sb.x + sb.width / 2 + octs * 40, sb.y + sb.height / 2, { steps: 8 });
+await wait(400);
+const soloOn = await rms(A, 'monitor');
+const fNow = await A.page.evaluate((idx) => JSON.parse(localStorage.getItem('noveau:voz2')).eq[idx].freq, idx);
+await shot(A, 'voz-solo.png');
+await A.page.mouse.up();
+ok('A: solo deixa passar só a faixa (fora do tom quase nada, em cima do tom quase tudo)', soloOff !== null && soloOn !== null && soloOn - soloOff > 15, `fora ${soloOff?.toFixed(1)} dB, em cima ${soloOn?.toFixed(1)} dB (banda em ${fNow} Hz)`);
+ok('A: arrastar o fone muda a frequência da banda', Math.abs(Math.log2(fNow / peakHz)) < 0.3, `${fNow} Hz`);
+ok('A: a sala não ouve o solo', outDuring !== null && outBefore !== null && Math.abs(outDuring - outBefore) < 3, `sala antes ${outBefore?.toFixed(1)} dB, durante ${outDuring?.toFixed(1)} dB`);
+ok('A: soltar o fone sai do solo e desliga a escuta que ele ligou', await until(A, () => document.querySelector('cen-voice-panel button.solo.on') === null && !window.__noveau.session.voiceProc?.monitorTrack));
+
+// EQ dinâmico em cima do tom: limiar baixo, alcance -9 dB: a banda abaixa sozinha.
+await A.page.fill('cen-voice-panel .row.edit label:has-text("Q") input', '1');
+await A.page.locator('cen-voice-panel .row.edit label:has-text("Q") input').dispatchEvent('change');
+await A.page.getByRole('button', { name: 'dinâmica', exact: true }).click();
+await A.page.fill('cen-voice-panel .dynrow label:has-text("limiar") input', '-70');
+await A.page.locator('cen-voice-panel .dynrow label:has-text("limiar") input').dispatchEvent('change');
+await A.page.fill('cen-voice-panel .dynrow label:has-text("alcance") input', '-9');
+await A.page.locator('cen-voice-panel .dynrow label:has-text("alcance") input').dispatchEvent('change');
+ok('A: banda dinâmica age sozinha (medidor desce)', await until(A, (idx) => parseFloat((document.querySelector('cen-voice-panel .dynrow .val')?.textContent ?? '0').replace(',', '.').replace('−', '-')) < -3, idx),
+  await A.page.evaluate(() => document.querySelector('cen-voice-panel .dynrow .val')?.textContent ?? ''));
+const outDyn = await rms(A, 'out');
+ok('A: com a dinâmica o tom sai mais baixo para a sala', outDyn !== null && outBefore !== null && outBefore - outDyn > 2, `antes ${outBefore?.toFixed(1)} dB, agora ${outDyn?.toFixed(1)} dB`);
+await shot(A, 'voz-dinamica.png');
+// Escala ±30, congelar e pré/pós: só não podem quebrar o desenho.
+await A.page.getByRole('button', { name: '±30' }).click();
+await A.page.getByRole('button', { name: 'congelar' }).click();
+await wait(800);
+await shot(A, 'voz-escala-congelar.png');
+await A.page.getByRole('button', { name: 'congelar' }).click();
+await A.page.getByRole('button', { name: '±12' }).click();
+await A.page.locator('cen-voice-panel .row.edit button[title="Apagar banda"]').click();
+
+
 // Preset pronto e salvar um preset próprio.
 await A.page.selectOption('cen-voice-panel select[aria-label="Preset do equalizador"]', 'callout');
 ok('A: o seletor mostra o preset escolhido', await until(A, () => document.querySelector('cen-voice-panel select[aria-label="Preset do equalizador"]')?.selectedOptions[0]?.value === 'callout'));
@@ -156,6 +266,15 @@ ok('B: de volta a 100%, toca direto no elemento', !direct.ctx && direct.els.leng
 // Fecha a janela: medidores param.
 await A.page.locator('cen-voice-panel button.close').click();
 ok('A: janela fecha', await until(A, () => document.querySelector('cen-voice-panel') === null));
+
+// O "me ouvir" também está no menu do microfone.
+await A.page.locator('button[aria-label="Escolher microfone"]').click();
+ok('A: "me ouvir" no menu do microfone', await A.page.locator('.pop button.listen').waitFor({ timeout: 5000 }).then(() => true, () => false));
+await A.page.locator('.pop button.listen').click();
+ok('A: menu do microfone liga a escuta', await until(A, () => window.__noveau.session.voiceProc?.monitorTrack?.readyState === 'live'));
+await A.page.locator('.pop button.listen').click();
+ok('A: e desliga', await until(A, () => !window.__noveau.session.voiceProc?.monitorTrack));
+await A.page.keyboard.press('Escape');
 
 for (const [name, p] of Object.entries(people)) ok(`${name} sem erros no console`, p.errors.length === 0, p.errors.slice(0, 3).join(' | '));
 console.log(results.join('\n'));

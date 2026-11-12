@@ -27,7 +27,13 @@ import { PhoneLinkPanel } from './phone-link';
     @if (section() !== 'camera' && !isPhoneDevice) {
       <p class="label">sua voz</p>
       <p class="hint">{{ voiceSummary() }}</p>
-      <button class="btn wide" (click)="store.openVoice(true)">Equalizador, ruído, eco e sala</button>
+      <div class="pair">
+        <button type="button" class="btn listen" [class.on]="store.micMonitor()" [attr.aria-pressed]="store.micMonitor()" [disabled]="!store.ownMicOn()"
+          (click)="store.toggleMicMonitor()" [title]="store.ownMicOn() ? 'Ouvir o que vai para a sala, já tratado (use fone: na caixa vira microfonia)' : 'Ligue o microfone para se ouvir'">
+          <cen-icon name="headphones" [size]="14" /> {{ store.micMonitor() ? 'me ouvindo' : 'me ouvir' }}
+        </button>
+        <button class="btn wide" (click)="store.openVoice(true)">Equalizador, ruído, eco e sala</button>
+      </div>
     }
     @if (section() === 'mic' && store.canPublish()) {
       <p class="label">celular como microfone</p>
@@ -97,6 +103,8 @@ import { PhoneLinkPanel } from './phone-link';
       word-break: break-all; }
     .copy:hover { color: var(--accent-hi); }
     .live { color: var(--ok); margin-left: 0.5rem; }
+    .pair { display: grid; grid-template-columns: auto 1fr; gap: 0.4rem; }
+    .listen { display: inline-flex; align-items: center; gap: 0.35rem; }
   `,
 })
 export class DevicesPanel {
