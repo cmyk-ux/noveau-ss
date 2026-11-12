@@ -41,6 +41,8 @@ export interface ShareRequest {
   studio: StudioBits | null;
   /** Baixar fps/resolução sozinho quando o processador do PC aperta (jogo pesado). */
   adaptToLoad: boolean;
+  /** Aba em que o seletor do navegador abre (padrão: janelas). */
+  surface?: 'window' | 'monitor' | 'browser';
 }
 
 export interface ShareCallbacks {
@@ -121,7 +123,16 @@ function displayMediaOptions(req: ShareRequest): DisplayMediaStreamOptions {
     // teto, ele usaria o tamanho da tela onde está o navegador e reduziria um monitor maior).
     // A captura pede o divisor do monitor logo acima do pedido (144 Hz: 72 para mandar 60; ver
     // monitor.ts); o codificador continua com teto no pedido (maxFramerate em videoPublishOptions).
-    video: { width: { max: CAPTURE_MAX.width }, height: { max: CAPTURE_MAX.height }, frameRate: captureRateFor(req.plan.frameRate) },
+    // O seletor abre na aba de janelas. No Windows 11 24H2+ a captura de TELA INTEIRA do Chromium fica
+    // presa a ~48 fps num monitor de 144 Hz (60 num de 240), seja qual for o pedido e com qualquer flag;
+    // a de JANELA acompanha o monitor (medido no PC do Pedro em 12/11/2026: tela 48,1 fps, janela 144,1,
+    // 1920x1080, Brave 157). A tela inteira continua no seletor. Ver DESEMPENHO.md, "Nona rodada".
+    video: {
+      width: { max: CAPTURE_MAX.width },
+      height: { max: CAPTURE_MAX.height },
+      frameRate: captureRateFor(req.plan.frameRate),
+      displaySurface: req.surface ?? 'window',
+    },
     audio,
     selfBrowserSurface: 'include',
     surfaceSwitching: 'include',

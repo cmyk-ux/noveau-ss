@@ -75,8 +75,9 @@ const SWEEP_SECONDS = 3;
               como qualquer pessoa. Em {{ seconds }} s mostra o tamanho e o fps que chegam.
             </p>
             <p class="hint">
-              Escolha a <strong>tela inteira</strong> onde está esta janela. Durante o teste uma animação cobre a página, para a
-              tela ter movimento em todo quadro (o navegador só captura quando a tela muda).
+              Pela <strong>janela</strong>: escolha esta janela do navegador (é como compartilhar a janela de um jogo). Pela
+              <strong>tela inteira</strong>: escolha a tela onde está esta janela. Durante o teste uma animação cobre a página,
+              para ter movimento em todo quadro (o navegador só captura quando a imagem muda).
             </p>
             <p class="hint mono">Ajustes da sala: {{ settingsText }}</p>
             <p class="hint">No fim, confere quantos quadros a captura entrega pedindo outros ritmos (~15 s a mais).</p>
@@ -87,7 +88,8 @@ const SWEEP_SECONDS = 3;
                   [value]="secret()" (input)="secret.set($any($event.target).value)" />
               </div>
             }
-            <button class="btn primary wide" (click)="run()">Começar o teste</button>
+            <button class="btn primary wide" (click)="run('window')">Testar pela janela</button>
+            <button class="btn wide" (click)="run('monitor')">Testar pela tela inteira</button>
           }
           @case ('running') {
             <p class="lead">{{ sweeping() ? 'Conferindo a captura em outros ritmos…' : 'Medindo… ' + left() + ' s' }}</p>
@@ -107,7 +109,8 @@ const SWEEP_SECONDS = 3;
               </table>
               @for (n of v.notes; track n) { <p class="hint">{{ n }}</p> }
             }
-            <button class="btn primary wide" (click)="run()">Testar de novo</button>
+            <button class="btn primary wide" (click)="run('window')">Testar pela janela</button>
+            <button class="btn wide" (click)="run('monitor')">Testar pela tela inteira</button>
           }
         }
         <video #view class="view" [class.on]="state() === 'running'" muted playsinline autoplay></video>
@@ -157,7 +160,7 @@ export class TestPage {
     if (this.secret() === '') requiresSecret().then((x) => this.needsSecret.set(x), () => undefined);
   }
 
-  async run() {
+  async run(surface: 'window' | 'monitor') {
     this.verdict.set(null);
     this.error.set('');
     this.left.set(SECONDS);
@@ -185,6 +188,7 @@ export class TestPage {
           plan,
           preferredCodec: this.prefs.codec(),
           includeAudio: false,
+          surface,
           studio: null,
           maxCompatibility: this.prefs.maxCompatibility(),
           adaptToLoad: this.prefs.adaptToLoad(),
@@ -197,7 +201,10 @@ export class TestPage {
       this.sweeping.set(true);
       const sweep = await this.sweepCapture(sender, plan.frameRate);
       this.sweeping.set(false);
-      this.verdict.set(judge(readings, plan.frameRate, planSize(plan).height, plan.resolution, monitorHz(), share, sweep));
+      const picked = (sender.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.track?.mediaStreamTrack.getSettings() as
+        | (MediaTrackSettings & { displaySurface?: string })
+        | undefined)?.displaySurface ?? '';
+      this.verdict.set(judge(readings, plan.frameRate, planSize(plan).height, plan.resolution, monitorHz(), share, sweep, picked));
       this.state.set('done');
     } catch (e) {
       this.error.set(e instanceof ScreenShareCancelledError ? 'O compartilhamento foi cancelado.' : String((e as Error)?.message ?? e));
@@ -325,7 +332,7 @@ function avg(xs: number[]): number {
   return xs.length === 0 ? 0 : Math.round(xs.reduce((a, b) => a + b, 0) / xs.length);
 }
 
-function judge(all: Reading[], wantFps: number, planHeight: number, resolution: string, hz: number, share: ShareResult | null, sweep: Sweep[]): Verdict {
+function judge(all: Reading[], wantFps: number, planHeight: number, resolution: string, hz: number, share: ShareResult | null, sweep: Sweep[], surface: string): Verdict {
   const r = all.slice(-SETTLED);
   const last = r[r.length - 1] ?? all[all.length - 1];
   const capH = Number(last?.captureSize.split('x')[1] ?? 0);
@@ -353,6 +360,10 @@ function judge(all: Reading[], wantFps: number, planHeight: number, resolution: 
   else if (!fpsOk && sentFps < Math.min(captureFps, fpsTarget) * 0.85) notes.push(`A captura entrega ${captureFps} fps, mas saem ${sentFps}: o codificador perde quadros.`);
   else if (!fpsOk) notes.push(`Saem ${sentFps} fps, mas chegam ${gotFps}: perda no caminho (rede ou servidor).`);
   if (hz > 0 && hz < wantFps) notes.push(`Este monitor roda a ${hz} Hz: a captura de tela não passa disso.`);
+  if (!fpsOk && surface === 'monitor')
+    notes.push(
+      'No Windows 11 a captura da tela inteira tem teto no navegador (~48 fps num monitor de 144 Hz). Teste pela janela: compartilhando a janela do jogo (em "janela sem bordas") a captura acompanha o monitor.',
+    );
   // Varredura: se pedir mais à captura dá mais quadros, o limite era o ritmo pedido; se todos os
   // pedidos dão o mesmo, é a própria captura do navegador (cópia de cada quadro da placa).
   const best = sweep.reduce<Sweep | null>((a, b) => (a === null || b.got > a.got ? b : a), null);
@@ -377,6 +388,7 @@ function judge(all: Reading[], wantFps: number, planHeight: number, resolution: 
       { label: 'travadas', value: String(freezes), bad: freezes > 0 },
       { label: 'monitor', value: hz > 0 ? `${hz} Hz` : '?' },
       { label: 'teto do codificador', value: share === null ? '?' : formatBitrate(share.bitrate) },
+      { label: 'compartilhado', value: surface === 'monitor' ? 'tela inteira' : surface === 'window' ? 'janela' : surface === 'browser' ? 'aba' : '?' },
       { label: 'captura pedida', value: `${captureRateFor(wantFps, hz)} fps` },
       ...sweep.map((x) => ({ label: `captura pedindo ${x.asked}`, value: `${x.got} fps`, bad: x.got < Math.min(x.asked, wantFps) * 0.85 })),
     ],

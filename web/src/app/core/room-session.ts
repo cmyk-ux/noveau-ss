@@ -1445,6 +1445,11 @@ export class RoomSession {
     return true;
   }
 
+  shareSurface(): string {
+    const t = this.room.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.track?.mediaStreamTrack;
+    return (t?.getSettings() as (MediaTrackSettings & { displaySurface?: string }) | undefined)?.displaySurface ?? '';
+  }
+
   shareReport() {
     return this.senderReport(Track.Source.ScreenShare);
   }
