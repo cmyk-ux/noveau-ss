@@ -6,3 +6,4 @@
 web/.angular
 deploy
 *.md
+web/vendor

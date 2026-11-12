@@ -92,6 +92,11 @@ function remote(p, who, source) {
       const pub = r.getTrackPublication(source);
       if (!pub) return { exists: false, person: true };
       const t = pub.track;
+      // Volume que chega no som: o ganho do Web Audio quando a faixa passa por ele (acima de 100%,
+      // iPhone); senão o próprio elemento de áudio (mudo = 0).
+      const els = t?.attachedElements ?? [];
+      const elVol = els.length > 0 ? Math.max(...els.map((e) => (e.muted ? 0 : e.volume))) : null;
+      const vol = t && t.gainNode ? t.gainNode.gain.value : elVol;
       return {
         exists: true,
         subscribed: pub.isSubscribed,
@@ -99,7 +104,8 @@ function remote(p, who, source) {
         enabled: pub.isEnabled,
         muted: pub.isMuted,
         allowed: pub.isAllowed,
-        gain: t && t.gainNode ? Math.round(t.gainNode.gain.value * 1000) / 1000 : null,
+        gain: vol === null ? null : Math.round(vol * 1000) / 1000,
+        webAudio: Boolean(t && t.gainNode),
         level: t ? (t.elementVolume ?? null) : null,
         width: pub.dimensions?.width ?? 0,
         height: pub.dimensions?.height ?? 0,
@@ -268,6 +274,14 @@ await part('volume', async () => {
   const g5 = await gainIs(B, 'A', 'screen_share_audio', 1);
   ok('fader em 100%: ganho 1,0', g5.ok, JSON.stringify(g5.last?.s));
   ok('fader em 100%: menu mostra 100%', (await eventually(async () => (await menu.locator('cen-volume .readout').innerText()).trim() === '100%', 2500)).ok);
+  ok('até 100% o som toca direto no elemento (sem Web Audio)', (await remote(B, 'A', 'screen_share_audio')).webAudio === false);
+  // Acima de 100% (posição 168 = 150%, depois do trecho travado em 100%): passa pelo ganho do Web Audio.
+  await menu.locator('cen-volume input[type=range]').evaluate((el) => { el.value = '168'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+  const g6 = await gainIs(B, 'A', 'screen_share_audio', 1.5);
+  ok('fader em 150%: o som passa pelo ganho do Web Audio a 1,5', g6.ok && g6.last?.s?.webAudio === true, JSON.stringify(g6.last?.s));
+  await menu.locator('cen-volume input[type=range]').evaluate((el) => { el.value = '100'; el.dispatchEvent(new Event('input', { bubbles: true })); });
+  const g7 = await gainIs(B, 'A', 'screen_share_audio', 1);
+  ok('de volta a 100%: sai do Web Audio e o elemento toca a 1,0', g7.ok && g7.last?.s?.webAudio === false, JSON.stringify(g7.last?.s));
   await B.page.keyboard.press('Escape');
   ok('Esc fecha o menu de volume', await until(B, () => document.querySelector('.volume-menu') === null));
   // Botão direito no palco abre o mesmo menu
@@ -499,8 +513,16 @@ async function applyNow(panel) {
   return true;
 }
 
+/** Volume que B escolheu para a tela de A (1 = 100%), pelo store. */
+const shareVolumeB = (level) => B.page.evaluate((level) => {
+  const a = [...window.__noveau.room.remoteParticipants.values()].find((p) => p.name === 'A' && !p.attributes?.phoneOf);
+  window.__noveau.store.setVolume('share', a.identity, level);
+}, level);
+
 await part('qualidade', async () => {
   await baseline({ aSharing: true });
+  // B ouve a tela de A acima de 100%: depois do reinício o som chega numa faixa nova.
+  await shareVolumeB(1.5);
   const panel = await streamPanel(A);
   await chipsAfter(panel, 'resolução máxima').locator('.chip', { hasText: '720p' }).click();
   await chipsAfter(panel, 'quadros por segundo').locator('.chip', { hasText: '30fps' }).click();
@@ -519,6 +541,10 @@ await part('qualidade', async () => {
   }, 20000);
   ok('B recebe VP9 em até 720p depois de aplicar', r.ok, JSON.stringify(r.last?.s));
   ok('B continua vendo a tela de A depois de reiniciar', await until(B, playing, 'cen-stage video', 15000));
+  // O som da tela chega numa faixa nova: tem de nascer nos 150% que B escolheu (acima de 100% o
+  // elemento recusaria o volume; route() passa pelo Web Audio).
+  const boosted = await gainIs(B, 'A', 'screen_share_audio', 1.5, 8000);
+  ok('som da tela de A continua a 150% em B depois do reinício (faixa nova)', boosted.ok && boosted.last?.s?.webAudio === true, JSON.stringify(boosted.last?.s));
   // Volta ao automático
   const p2 = await streamPanel(A);
   await chipsAfter(p2, 'resolução máxima').locator('.chip', { hasText: 'Auto' }).click();
@@ -526,6 +552,7 @@ await part('qualidade', async () => {
   await chipsAfter(p2, 'codec').locator('.chip', { hasText: 'AUTO' }).click().catch(() => undefined);
   await applyNow(p2);
   ok('volta ao automático e B continua vendo', await until(B, playing, 'cen-stage video', 15000));
+  await shareVolumeB(1);
 });
 
 await part('som-da-tela', async () => {
@@ -551,32 +578,43 @@ await part('som-da-tela', async () => {
 });
 
 await part('voz', async () => {
+  // O tratamento da voz fica na janela "sua voz" (submenu do microfone → "Equalizador, ruído, eco e
+  // sala"). Trocar a redução de ruído não republica o microfone: só o worker muda (ou a captura reabre).
+  if (!(await has(A, 'button[title="Desligar microfone"]'))) await btn(A, 'Ligar microfone').click();
   await A.page.locator('button[aria-label="Escolher microfone"]').click();
-  const panel = A.page.locator('cen-devices-panel');
-  await panel.waitFor();
-  await panel.locator('button.item', { hasText: 'Filtro do navegador' }).click();
-  const r1 = await eventually(async () => {
-    const s = await A.page.evaluate(() => window.__noveau.room.localParticipant.getTrackPublication('microphone')?.track?.mediaStreamTrack?.getSettings());
-    return { ok: s?.noiseSuppression === true && s?.echoCancellation === true, s };
-  });
-  ok('"Filtro do navegador": microfone sai com supressão de ruído do navegador', r1.ok, JSON.stringify(r1.last?.s));
-  // Trocar o tratamento republica o microfone (faixa nova): B leva um instante para receber a nova.
+  const menu = A.page.locator('cen-devices-panel');
+  await menu.waitFor();
+  ok('lista de microfones aparece', (await menu.locator('button.item').count()) >= 1);
+  await A.page.getByRole('button', { name: 'Equalizador, ruído, eco e sala' }).click();
+  ok('janela "sua voz" abre', await until(A, () => document.querySelector('cen-voice-panel') !== null));
+  const vp = A.page.locator('cen-voice-panel');
+  await vp.getByRole('tab', { name: 'ruído e eco' }).click();
+  const noise = (label) => vp.locator('p.label', { hasText: 'redução de ruído' }).locator('xpath=following-sibling::div[contains(@class,"chips")][1]').locator('.chip', { hasText: label });
+  /** O que a captura do microfone entrega (antes do tratamento do worker). */
+  const raw = () => A.page.evaluate(() => window.__noveau.session.micTracks().raw?.getSettings() ?? null);
+  const pubSid = () => A.page.evaluate(() => window.__noveau.room.localParticipant.getTrackPublication('microphone')?.trackSid ?? null);
+  const sid0 = await pubSid();
+  await noise('Do navegador').click();
+  const r1 = await eventually(async () => { const s = await raw(); return { ok: s?.noiseSuppression === true, s }; });
+  ok('"Do navegador": a captura sai com a supressão de ruído do navegador', r1.ok, JSON.stringify(r1.last?.s));
   ok('voz de A continua chegando em B', (await eventually(async () => ({ ok: await flowing(B, 'A', 'microphone') }), 10000)).ok);
-  await panel.locator('button.item', { hasText: 'Redução de ruído por IA' }).click();
-  const r2 = await eventually(async () => ({ ok: (await A.page.evaluate(() => window.__noveau.room.localParticipant.getTrackPublication('microphone')?.track?.getProcessor?.()?.name)) === 'noveau-rnnoise' }));
-  ok('"Redução de ruído por IA": RNNoise ligado no microfone', r2.ok);
+  await noise('IA leve').click();
+  ok('"IA leve": a voz passa pelo worker (RNNoise)', await until(A, () => window.__noveau.session.voiceRunning === true && (document.querySelector('cen-voice-panel')?.textContent ?? '').includes('rodando: IA leve'), undefined, 15000));
   ok('voz de A (com IA) chega em B', (await eventually(async () => ({ ok: await flowing(B, 'A', 'microphone') }), 10000)).ok);
-  await panel.locator('button', { hasText: 'Ouvir meu microfone' }).click();
-  ok('"Ouvir meu microfone" vira "Parar de me ouvir"', await until(A, () => document.querySelector('cen-devices-panel')?.textContent?.includes('Parar de me ouvir')));
-  await panel.locator('button', { hasText: 'Parar de me ouvir' }).click();
-  await panel.locator('button.item', { hasText: 'Sem tratamento' }).click();
+  ok('trocar o tratamento não republica o microfone', (await pubSid()) === sid0, String(sid0));
+  await vp.locator('button', { hasText: 'Ouvir meu microfone' }).click();
+  ok('"Ouvir meu microfone" vira "Parar de me ouvir"', await until(A, () => document.querySelector('cen-voice-panel')?.textContent?.includes('Parar de me ouvir')));
+  await vp.locator('button', { hasText: 'Parar de me ouvir' }).click();
+  await noise('Desligada').click();
   const r3 = await eventually(async () => {
-    const s = await A.page.evaluate(() => window.__noveau.room.localParticipant.getTrackPublication('microphone')?.track?.mediaStreamTrack?.getSettings());
-    return { ok: s?.echoCancellation === false && s?.noiseSuppression === false && s?.autoGainControl === false, s };
+    const s = await raw();
+    const worker = await A.page.evaluate(() => window.__noveau.session.voiceRunning);
+    return { ok: s?.echoCancellation === false && s?.noiseSuppression === false && s?.autoGainControl === false && worker === false, s, worker };
   });
-  ok('"Sem tratamento": sem eco/ruído/ganho do navegador', r3.ok, JSON.stringify(r3.last?.s));
-  ok('lista de microfones aparece', (await panel.locator('button.item').count()) >= 4);
-  await A.page.keyboard.press('Escape');
+  ok('"Desligada" (eco e ganho já desligados): voz crua, sem worker', r3.ok, JSON.stringify(r3.last));
+  ok('voz crua chega em B', (await eventually(async () => ({ ok: await flowing(B, 'A', 'microphone') }), 10000)).ok);
+  await vp.locator('button.close[title="Fechar"]').click();
+  ok('janela "sua voz" fecha no ×', await until(A, () => document.querySelector('cen-voice-panel') === null));
 });
 
 await part('direta', async () => {

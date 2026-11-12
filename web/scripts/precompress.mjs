@@ -4,7 +4,7 @@
 // comprime ~15-20% melhor que o gzip, mas é lento: por isso é feito aqui, uma vez, e não por pedido.
 //
 // Uso: node scripts/precompress.mjs dist/noveau-ss/browser
-import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { extname, join } from 'node:path';
 import { brotliCompressSync, constants, gzipSync } from 'node:zlib';
 
@@ -24,6 +24,8 @@ function walk(dir) {
       continue;
     }
     if (!TEXT.has(extname(entry.name)) || statSync(file).size < MIN_BYTES) continue;
+    // Já veio comprimido (o DeepFilterNet, feito uma vez no scripts/vendor-dfn.mjs).
+    if (existsSync(file + '.br')) continue;
     const raw = readFileSync(file);
     const br = brotliCompressSync(raw, {
       params: {

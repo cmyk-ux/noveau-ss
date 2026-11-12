@@ -6,6 +6,9 @@ FROM node:22-slim AS web
 WORKDIR /src/web
 COPY web/package.json web/package-lock.json ./
 RUN npm ci
+# DeepFilterNet (IA forte da voz): numa camada só dele, para não baixar 53 MB a cada build.
+COPY web/scripts/vendor-dfn.mjs scripts/
+RUN node scripts/vendor-dfn.mjs
 COPY web/ ./
 RUN npm run build
 

@@ -6,6 +6,9 @@
 /out-tsc
 /bazel-out
 
+# DeepFilterNet baixado pelo scripts/vendor-dfn.mjs
+/vendor
+
 # Node
 /node_modules
 npm-debug.log

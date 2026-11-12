@@ -236,7 +236,9 @@ function indexStatic(root) {
         walk(file);
         continue;
       }
-      if (entry.name.endsWith('.br') || entry.name.endsWith('.gz')) continue;
+      // X.br / X.gz são versões comprimidas de X; sem o X ao lado, é um arquivo de verdade (o
+      // modelo da IA forte é um .tar.gz).
+      if (/\.(br|gz)$/.test(entry.name) && existsSync(file.slice(0, -3))) continue;
       const st = statSync(file);
       const variant = (ext) => (existsSync(file + ext) ? { file: file + ext, size: statSync(file + ext).size } : null);
       out.set('/' + relative(root, file).split(sep).join('/'), {
@@ -510,6 +512,42 @@ async function diagRoute(req, res) {
   }
 }
 
+// ---------- Qualidade de áudio da sala: quem está na sala escolhe, vale para o microfone de todos.
+// Fica nos metadados da sala (o LiveKit avisa todo mundo, e quem entra depois já recebe).
+const ROOM_AUDIO = new Set(['instantaneo', 'musica', 'economia']);
+const roomAudioRate = new Map(); // sala -> último horário de troca
+async function roomAudioRoute(req, res) {
+  try {
+    const auth = String(req.headers.authorization ?? '');
+    const claims = await verifier.verify(auth.startsWith('Bearer ') ? auth.slice(7) : '').catch(() => null);
+    const room = claims?.video?.room;
+    if (room === undefined) throw new HttpError(401, 'Entre numa sala para mudar o áudio.');
+    const body = await readJson(req);
+    const preset = String(body.preset ?? '');
+    if (!ROOM_AUDIO.has(preset)) throw new HttpError(400, 'Qualidade de áudio desconhecida.');
+    // Cada troca faz todo mundo republicar o microfone: no máximo uma a cada 2 s por sala.
+    const last = roomAudioRate.get(room) ?? 0;
+    if (Date.now() - last < 2000) throw new HttpError(429, 'Espere um instante para trocar de novo.');
+    roomAudioRate.set(room, Date.now());
+    const [current] = await rooms.listRooms([room]);
+    if (current === undefined) throw new HttpError(404, 'A sala não está aberta.');
+    let meta = {};
+    try {
+      meta = JSON.parse(current.metadata || '{}');
+    } catch {
+      meta = {};
+    }
+    meta.audio = { preset, by: String(claims.name ?? '').slice(0, 40), at: Date.now() };
+    await rooms.updateRoomMetadata(room, JSON.stringify(meta));
+    console.log(`[audio] ${meta.audio.by} mudou o áudio da sala para ${preset}`);
+    send(res, 200, { ok: true });
+  } catch (e) {
+    const status = e instanceof HttpError ? e.status : 500;
+    if (status === 500) console.error('[audio]', e);
+    if (!res.headersSent) send(res, status, { error: status === 500 ? 'Erro no servidor.' : e.message });
+  }
+}
+
 // ---------- OBS por WHIP (veja obs.mjs)
 const obs = createObs({
   livekitHttpUrl: LIVEKIT_HTTP_URL,
@@ -537,6 +575,7 @@ const server = createServer(async (req, res) => {
   if (path === '/api/daw/pair' && req.method === 'POST') return dawPair(req, res);
   if (path === '/api/clips' || path.startsWith('/api/clips/')) return clipRoute(req, res, path);
   if (path === '/api/diag' && req.method === 'POST') return diagRoute(req, res);
+  if (path === '/api/room/audio' && req.method === 'POST') return roomAudioRoute(req, res);
   const redirectRoute = redirects[`${req.method} ${path}`];
   if (redirectRoute !== undefined) return redirectRoute(req, res);
   const route = routes[`${req.method} ${path}`];
