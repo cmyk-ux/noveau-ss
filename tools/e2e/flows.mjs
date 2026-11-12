@@ -54,11 +54,16 @@ await tileA.locator('button.mute').click({ timeout: 10000 });
 ok('C mutou a tela de A: o botão mostra "Ativar o som"', await until(C, () => document.querySelector('cen-share-tile button.mute.on[title="Ativar o som"]') !== null, undefined, 1000));
 await tileA.locator('button.mute').click({ timeout: 10000 });
 ok('C desmutou a tela de A: o botão volta a "Mutar"', await until(C, () => document.querySelector('cen-share-tile button.mute.on') === null, undefined, 1000));
-// O mudo tem de continuar mudo quando o LiveKit refaz o ganho (ex.: "Ativar áudio"). Antes o ganho
-// novo nascia em 100% e a voz mutada voltava a tocar.
+// O mudo tem de continuar mudo quando o LiveKit refaz o ganho ou o elemento (ex.: "Ativar áudio").
+// Antes o ganho novo nascia em 100% e a voz mutada voltava a tocar.
 const micGain = () => C.page.evaluate(() => {
   const a = [...window.__noveau.room.remoteParticipants.values()].find((p) => p.name === 'A' || p.identity.startsWith('A'));
-  return a?.getTrackPublication('microphone')?.track?.gainNode?.gain.value ?? null;
+  const t = a?.getTrackPublication('microphone')?.track;
+  if (t === undefined) return null;
+  // Acima de 100% (e no iPhone) o volume é um ganho do Web Audio; até 100%, o volume do elemento.
+  if (t.gainNode !== undefined) return t.gainNode.gain.value;
+  const els = t.attachedElements;
+  return els.length === 0 ? null : Math.max(...els.map((el) => (el.muted ? 0 : el.volume)));
 });
 await C.page.locator('button.people-top').click();
 const rowMicA = C.page.locator('li.strip').filter({ has: C.page.locator('.name', { hasText: /^A$/ }) });

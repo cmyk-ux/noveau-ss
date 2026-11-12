@@ -178,3 +178,13 @@ export function controlPhone(roomToken: string, what: { cam?: boolean; mic?: boo
 export function requestPhoneToken(code: string, holder: string): Promise<{ token: string; url: string; name: string; identity: string }> {
   return post('/api/phone/token', { code, holder }, 'Não foi possível conectar o celular.');
 }
+
+/** Muda a qualidade de áudio da sala (vale para o microfone de todo mundo). */
+export async function setRoomAudio(roomToken: string, preset: string): Promise<void> {
+  const res = await fetch('/api/room/audio', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${roomToken}` },
+    body: JSON.stringify({ preset }),
+  });
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error ?? 'Não foi possível mudar o áudio da sala.');
+}

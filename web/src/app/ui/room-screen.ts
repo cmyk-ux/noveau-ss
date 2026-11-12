@@ -1,5 +1,5 @@
 import { DiagEvent, parseSendHealth } from '../core/diag';
-import { Component, DestroyRef, ElementRef, computed, effect, inject, input, output, signal, viewChild } from '@angular/core';
+import { Component, DestroyRef, ElementRef, computed, effect, inject, input, output, signal, untracked, viewChild } from '@angular/core';
 import { IS_IOS, IS_MOBILE } from '../core/device';
 import { Prefs } from '../core/prefs';
 import { Invites } from '../core/invites';
@@ -9,6 +9,7 @@ import { RoomStore } from '../core/room-store';
 import { shortLimitation } from '../core/stats';
 import { Toast } from '../core/toast';
 import { DevicesPanel } from './devices-panel';
+import { VoicePanel } from './voice-panel';
 import { Icon } from './icon';
 import { PeoplePanel } from './people-panel';
 import { ShareTile } from './share-tile';
@@ -29,7 +30,7 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
 
 @Component({
   selector: 'cen-room-screen',
-  imports: [Icon, Stage, ShareTile, VolumeSlider, StatsPanel, PeoplePanel, StreamPanel, DevicesPanel, DawPanel, ObsPanel, CamPip, SelfCam, LiveStrip, Timecode, Countdown],
+  imports: [Icon, Stage, ShareTile, VolumeSlider, StatsPanel, PeoplePanel, StreamPanel, DevicesPanel, VoicePanel, DawPanel, ObsPanel, CamPip, SelfCam, LiveStrip, Timecode, Countdown],
   host: {
     '(document:fullscreenchange)': 'isFullscreen.set(fullscreenActive())',
     '(document:keydown.escape)': 'closeAll()',
@@ -315,6 +316,7 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
           </div>
         }
         <cen-stats-panel />
+        @if (store.voiceOpen()) { <cen-voice-panel /> }
         <!-- Você se vendo (só com a sua câmera ligada; dá para parar de ver). -->
         <cen-self-cam />
         @if (volumeMenu(); as m) {
@@ -872,6 +874,10 @@ export class RoomScreen {
     };
     window.addEventListener('resize', onResize);
     document.addEventListener('visibilitychange', onVisible);
+    // A janela da voz abre por cima do submenu do microfone: fecha o submenu.
+    effect(() => {
+      if (this.store.voiceOpen()) untracked(() => this.menu.set(null));
+    });
     // Tem alguém transmitindo: não deixa a tela apagar.
     effect(() => {
       if (this.store.focused() !== null || this.store.shares().length > 0) void this.keepAwake();

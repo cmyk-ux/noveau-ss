@@ -2,8 +2,10 @@
 import {
   ConnectionState,
   createLocalAudioTrack,
+  LocalAudioTrack,
   Participant,
   ParticipantKind,
+  RemoteAudioTrack,
   RemoteParticipant,
   RemoteTrackPublication,
   Room,
@@ -17,12 +19,14 @@ import {
 import type { ClipSource } from './clips';
 import { ShareCallbacks, ShareRequest, ShareResult, startShare, stopShare, stopShareAudio } from './share';
 import { Channel, isSilent, Mixer, Volume } from './volume';
-import { IS_MOBILE } from './device';
+import { IS_IOS, IS_MOBILE } from './device';
 import { installStereoReceive } from './stereo';
 import { installH264Preference } from './h264';
 import { ACTIVITY_ATTR, Activity, parseActivity } from './activity';
 import { gpuEncodes, hardwareDecoders } from './stream';
-import { RnnoiseProcessor, rnnoiseSupported, voiceCapture, voicePublish, VoiceMode } from './voice';
+import { CaptureFacts, captureFacts, needsWorker, voiceCapture, VoiceProcessor, voicePublish, wantPtime } from './voice';
+import { DEFAULT_ROOM_AUDIO, DEFAULT_VOICE, RoomAudio, roomAudio, VoiceSettings } from './voice-dsp';
+import type { VoiceMeter, VoiceWorkerOut } from './voice.worker';
 import { DirectMode, DirectTalk, DirectView } from './direct';
 import { keep, keepList, keepMap } from './same';
 import type { Probe } from './diag';
@@ -150,6 +154,45 @@ export interface RoomSnapshot {
   direct: DirectView | null;
   /** Quem está falando só comigo agora (segurando o botão) ou querendo uma conversa a dois. */
   whispers: string[];
+  /** Qualidade de áudio da sala (vale para o microfone de todo mundo) e quem escolheu. */
+  audio: RoomAudioView;
+}
+
+export interface VoiceStats {
+  /** Ida e volta até o servidor (ms). */
+  rttMs: number | null;
+  /** Pacotes de voz por segundo saindo agora (100 = quadros de 10 ms; só conta falando). */
+  packetsPerSec: number | null;
+  /** Cada voz que chega: quanto ela espera na fila antes de tocar. */
+  people: { identity: string; name: string; jitterMs: number | null; rttMs: number | null; boosted: boolean }[];
+}
+
+export interface RoomAudioView {
+  preset: RoomAudio;
+  by: string | null;
+}
+
+/** Metadados da sala (escritos pelo servidor em /api/room/audio). */
+function parseRoomAudio(metadata: string | undefined): RoomAudioView {
+  try {
+    const m = JSON.parse(metadata || '{}') as { audio?: { preset?: string; by?: string } };
+    return { preset: roomAudio(m.audio?.preset).id, by: typeof m.audio?.by === 'string' ? m.audio.by : null };
+  } catch {
+    return { preset: DEFAULT_ROOM_AUDIO, by: null };
+  }
+}
+
+/**
+ * AudioContext que só existe para o LiveKit aceitar um processador no microfone (ele exige um,
+ * mas o nosso não usa: a voz é tratada num Worker). Fica suspenso, sem abrir saída de som.
+ */
+let dormant: AudioContext | null = null;
+function dormantContext(): AudioContext {
+  if (dormant === null || dormant.state === 'closed') {
+    dormant = new AudioContext({ sampleRate: 48000 });
+    void dormant.suspend().catch(() => undefined);
+  }
+  return dormant;
 }
 
 interface LiveShare {
@@ -380,7 +423,11 @@ export class RoomSession {
     readonly room: Room = new Room({
       adaptiveStream: false,
       dynacast: true,
-      webAudioMix: true,
+      // O som dos outros toca direto pelo elemento de áudio do WebRTC. Com webAudioMix cada voz
+      // passava por um AudioContext a mais (mais um buffer de saída e uma fila entre relógios).
+      // Só quem está acima de 100% de volume passa pelo Web Audio (veja route()). No iPhone/iPad o
+      // volume do elemento não muda por código (sempre 1): lá continua tudo no Web Audio.
+      webAudioMix: IS_IOS,
       // O LiveKit sai da sala no 'beforeunload', que o Chrome dispara também ao clicar num link de
       // download (clipe). Quem sai da sala de verdade é o 'pagehide', no RoomStore.
       disconnectOnPageLeave: false,
@@ -482,6 +529,7 @@ export class RoomSession {
       me: keep(prev.me, next.me),
       direct: keep(prev.direct, next.direct),
       whispers: keep(prev.whispers, next.whispers),
+      audio: keep(prev.audio, next.audio),
     };
     if ((Object.keys(s) as (keyof RoomSnapshot)[]).every((k) => s[k] === prev[k])) return;
     this.last = s;
@@ -533,11 +581,17 @@ export class RoomSession {
         changed();
       })
       .on(RoomEvent.AudioPlaybackStatusChanged, () => this.update('view'))
+      // Qualidade de áudio da sala mudou: o microfone republica com o Opus novo.
+      .on(RoomEvent.RoomMetadataChanged, () => {
+        this.followRoomAudio();
+        changed();
+      })
       .on(RoomEvent.Disconnected, changed);
   }
 
   async connect(url: string, token: string) {
     await this.room.connect(url, token, { autoSubscribe: true });
+    this.micAudio = parseRoomAudio(this.room.metadata).preset;
     this.emit();
     void this.publishDecoders();
   }
@@ -816,6 +870,9 @@ export class RoomSession {
 
   async disconnect() {
     this.monitorMic(false);
+    this.voiceProc = null;
+    void this.boost?.close().catch(() => undefined);
+    this.boost = null;
     window.clearInterval(this.statsTimer);
     window.clearTimeout(this.txTimer);
     document.removeEventListener('visibilitychange', this.onVisibility);
@@ -995,26 +1052,39 @@ export class RoomSession {
     this.emit();
   }
 
-  /** Como o microfone é tratado (veja voice.ts). Vale na próxima vez que ele for publicado. */
-  private voiceMode: VoiceMode = 'ia';
+  /** Como o microfone é tratado (veja voice.ts e voice-dsp.ts). */
+  private voice: VoiceSettings = DEFAULT_VOICE;
+  private voiceProc: VoiceProcessor | null = null;
   private micMonitor: HTMLAudioElement | null = null;
-  /** A redução de ruído por IA não carregou e o microfone foi com o filtro do navegador. */
-  onVoiceFallback: (() => void) | null = null;
+  /** Medidores do worker da voz (só com a janela da voz aberta). */
+  private metering = false;
+  onVoiceMeter: ((m: VoiceMeter) => void) | null = null;
+  /** A IA forte não carregou ou o PC não deu conta: o store volta para a leve e avisa. */
+  onVoiceEvent: ((m: Exclude<VoiceWorkerOut, VoiceMeter | { type: 'ready' }>) => void) | null = null;
+  /** O que a captura entregou (eco do PC inteiro disponível?, taxa). */
+  voiceFacts: CaptureFacts | null = null;
+  onVoiceFacts: ((f: CaptureFacts) => void) | null = null;
+  /** Qualidade de áudio com que o microfone foi publicado (a da sala pode mudar depois). */
+  private micAudio: RoomAudio = DEFAULT_ROOM_AUDIO;
+  /** Operações no microfone uma de cada vez (ligar, trocar tratamento, republicar). */
+  private micQueue: Promise<unknown> = Promise.resolve();
+  private serial<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.micQueue.then(fn, fn);
+    this.micQueue = run.catch(() => undefined);
+    return run;
+  }
 
   /**
    * Liga/desliga o microfone, um pedido de cada vez. Ligar demora (cria a trilha, carrega a redução
    * de ruído, publica); antes, um segundo clique nesse meio-tempo corria junto com o primeiro e o
    * microfone ficava no estado errado (ou publicado duas vezes).
    */
-  setMicrophone(on: boolean, mode?: VoiceMode): Promise<void> {
-    const run = this.micQueue.then(() => this.applyMicrophone(on, mode));
-    this.micQueue = run.catch(() => undefined);
-    return run;
+  setMicrophone(on: boolean, settings?: VoiceSettings): Promise<void> {
+    if (settings !== undefined) this.voice = settings;
+    return this.serial(() => this.applyMicrophone(on));
   }
-  private micQueue: Promise<unknown> = Promise.resolve();
 
-  private async applyMicrophone(on: boolean, mode?: VoiceMode) {
-    if (mode !== undefined) this.voiceMode = mode;
+  private async applyMicrophone(on: boolean) {
     const lp = this.room.localParticipant;
     if (on && lp.getTrackPublication(Track.Source.Microphone)?.track === undefined) await this.publishMic();
     else await lp.setMicrophoneEnabled(on);
@@ -1032,56 +1102,165 @@ export class RoomSession {
 
   /**
    * Cria a trilha do microfone com o tratamento escolhido e publica. Não usa o setMicrophoneEnabled
-   * do LiveKit na primeira vez porque ele não aceita bitrate próprio nem processador de áudio
-   * antes de publicar (a voz sairia crua por um instante).
+   * do LiveKit na primeira vez porque ele não aceita bitrate próprio nem processador antes de
+   * publicar (a voz sairia crua por um instante).
    */
   private async publishMic() {
-    const mode = this.voiceMode;
     const lp = this.room.localParticipant;
     const deviceId = this.room.getActiveDevice('audioinput');
-    const track = await createLocalAudioTrack({ ...voiceCapture(mode), ...(deviceId ? { deviceId } : {}) });
-    if (mode === 'ia') {
-      let proc: RnnoiseProcessor | null = null;
-      try {
-        if (!rnnoiseSupported()) throw new Error('sem AudioWorklet');
-        proc = new RnnoiseProcessor();
-        // O LiveKit exige um AudioContext na trilha antes do processador (ao publicar ele troca pelo da sala).
-        track.setAudioContext(proc.context);
-        await track.setProcessor(proc);
-      } catch {
-        await proc?.destroy();
-        await track.restartTrack(voiceCapture('navegador'));
-        this.onVoiceFallback?.();
-      }
-    }
+    const preset = roomAudio(parseRoomAudio(this.room.metadata).preset);
+    const track = await createLocalAudioTrack({ ...voiceCapture(this.voice), ...(deviceId ? { deviceId } : {}) });
+    this.noteFacts(track);
+    if (needsWorker(this.voice)) await this.attachVoice(track);
+    wantPtime(track.mediaStreamTrack, preset.ptime);
+    wantPtime(this.voiceProc?.processedTrack, preset.ptime);
     try {
-      await lp.publishTrack(track, { ...voicePublish(mode), source: Track.Source.Microphone });
+      await lp.publishTrack(track, { ...voicePublish(preset), source: Track.Source.Microphone });
+      this.micAudio = preset.id;
     } catch (e) {
       await track.stopProcessor().catch(() => undefined);
+      this.voiceProc = null;
       track.stop();
       throw e;
     }
   }
 
-  /** Troca o tratamento do microfone; se ele estiver no ar, republica na hora. */
-  setVoiceMode(mode: VoiceMode): Promise<void> {
-    // Na mesma fila do liga/desliga: trocar o modo republica a trilha.
-    const run = this.micQueue.then(() => this.applyVoiceMode(mode));
-    this.micQueue = run.catch(() => undefined);
-    return run;
+  private noteFacts(track: LocalAudioTrack) {
+    // A captura crua (com processador, `mediaStreamTrack` é a trilha tratada).
+    const raw = (track as unknown as { _mediaStreamTrack: MediaStreamTrack })._mediaStreamTrack ?? track.mediaStreamTrack;
+    this.voiceFacts = captureFacts(raw);
+    this.onVoiceFacts?.(this.voiceFacts);
   }
 
-  private async applyVoiceMode(mode: VoiceMode) {
-    if (mode === this.voiceMode) return;
-    this.voiceMode = mode;
-    const lp = this.room.localParticipant;
-    const pub = lp.getTrackPublication(Track.Source.Microphone);
-    if (pub?.track === undefined) return;
-    const wasOn = !pub.isMuted;
-    this.monitorMic(false);
-    await lp.unpublishTrack(pub.track, true);
-    if (wasOn) await this.publishMic();
-    this.emit();
+  private async attachVoice(track: LocalAudioTrack) {
+    const proc = new VoiceProcessor(this.voice);
+    proc.onMeter = (m) => this.onVoiceMeter?.(m);
+    proc.onEvent = (m) => this.onVoiceEvent?.(m);
+    // A IA forte entrou num worker novo, com outra trilha de saída: quadros de 10 ms nela também, e
+    // quem estava se ouvindo passa a ouvir a nova.
+    proc.onOutput = (t) => {
+      wantPtime(t, roomAudio(this.micAudio).ptime);
+      if (this.micMonitor !== null) this.monitorMic(true);
+    };
+    proc.meter(this.metering);
+    if (!(track as unknown as { audioContext?: AudioContext }).audioContext) track.setAudioContext(dormantContext());
+    await track.setProcessor(proc);
+    this.voiceProc = proc;
+    wantPtime(proc.processedTrack, roomAudio(this.micAudio).ptime);
+  }
+
+  /**
+   * Troca o tratamento da voz com o microfone no ar, sem republicar: o equalizador, a intensidade e o
+   * portão valem no quadro seguinte; eco/ganho/filtro do navegador reabrem a captura.
+   */
+  async setVoice(next: VoiceSettings) {
+    const prev = this.voice;
+    this.voice = next;
+    await this.serial(async () => {
+      const pub = this.room.localParticipant.getTrackPublication(Track.Source.Microphone);
+      const track = pub?.track instanceof LocalAudioTrack ? pub.track : undefined;
+      if (track === undefined) return;
+      const capture = (v: VoiceSettings) => JSON.stringify(voiceCapture(v));
+      if (capture(prev) !== capture(next)) {
+        const deviceId = this.room.getActiveDevice('audioinput');
+        await track.restartTrack({ ...voiceCapture(next), ...(deviceId ? { deviceId } : {}) });
+        this.noteFacts(track);
+      }
+      const need = needsWorker(next);
+      if (need && this.voiceProc === null) await this.attachVoice(track);
+      else if (!need && this.voiceProc !== null) {
+        this.voiceProc = null;
+        await track.stopProcessor();
+        wantPtime(track.mediaStreamTrack, roomAudio(this.micAudio).ptime);
+      } else this.voiceProc?.update(next);
+    });
+    if (this.micMonitor !== null) this.monitorMic(true);
+  }
+
+  /** Microfone antes e depois do tratamento, para o analisador da janela da voz. */
+  micTracks(): { raw: MediaStreamTrack | null; out: MediaStreamTrack | null } {
+    const t = this.room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
+    if (!(t instanceof LocalAudioTrack)) return { raw: null, out: null };
+    const raw = (t as unknown as { _mediaStreamTrack: MediaStreamTrack })._mediaStreamTrack ?? null;
+    return { raw, out: t.mediaStreamTrack };
+  }
+
+  /** Medidores da voz ligados (janela da voz aberta). */
+  meterVoice(on: boolean) {
+    this.metering = on;
+    this.voiceProc?.meter(on);
+  }
+
+  /** Quanto o tratamento soma, para a janela mostrar o que está rodando de fato. */
+  get voiceRunning(): boolean {
+    return this.voiceProc !== null;
+  }
+
+  private prevSend: { packets: number; at: number } | null = null;
+  private readonly prevRecv = new WeakMap<Track, { delay: number; count: number }>();
+  /**
+   * Leitura para estimar o atraso da voz: ida até o servidor, tamanho real do quadro do Opus e a
+   * fila (jitter buffer) de cada voz que chega. Só com a janela da voz aberta, a cada 2 s.
+   */
+  async voiceStats(): Promise<VoiceStats> {
+    const out: VoiceStats = { rttMs: null, packetsPerSec: null, people: [] };
+    const mic = this.room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
+    const sender = mic instanceof LocalAudioTrack ? mic.sender : undefined;
+    if (sender !== undefined) {
+      const report = await sender.getStats().catch(() => null);
+      report?.forEach((v) => {
+        if (v.type === 'remote-inbound-rtp' && typeof v.roundTripTime === 'number' && v.roundTripTime > 0) out.rttMs = v.roundTripTime * 1000;
+        if (v.type === 'candidate-pair' && v.nominated && typeof v.currentRoundTripTime === 'number') out.rttMs ??= v.currentRoundTripTime * 1000;
+        if (v.type === 'outbound-rtp') {
+          const prev = this.prevSend;
+          if (prev !== null && v.timestamp > prev.at && v.packetsSent >= prev.packets) out.packetsPerSec = ((v.packetsSent - prev.packets) * 1000) / (v.timestamp - prev.at);
+          this.prevSend = { packets: v.packetsSent, at: v.timestamp };
+        }
+      });
+    }
+    for (const p of this.room.remoteParticipants.values()) {
+      if (phoneOf(p) !== null || isObs(p)) continue;
+      const t = p.getTrackPublication(Track.Source.Microphone)?.track;
+      if (!(t instanceof RemoteAudioTrack) || t.receiver === undefined) continue;
+      const report = await t.receiver.getStats().catch(() => null);
+      let jitterMs: number | null = null;
+      let rtt: number | null = null;
+      report?.forEach((v) => {
+        if (v.type === 'inbound-rtp') {
+          const prev = this.prevRecv.get(t);
+          const delay = v.jitterBufferDelay ?? 0;
+          const count = v.jitterBufferEmittedCount ?? 0;
+          if (prev !== undefined && count > prev.count) jitterMs = ((delay - prev.delay) / (count - prev.count)) * 1000;
+          else if (count > 0) jitterMs = (delay / count) * 1000;
+          this.prevRecv.set(t, { delay, count });
+        }
+        if (v.type === 'candidate-pair' && v.nominated && typeof v.currentRoundTripTime === 'number') rtt = v.currentRoundTripTime * 1000;
+      });
+      out.people.push({ identity: p.identity, name: displayName(p), jitterMs, rttMs: rtt, boosted: this.boosted.has(t) });
+      out.rttMs ??= rtt;
+    }
+    return out;
+  }
+
+  /** A sala mudou a qualidade de áudio: republica o microfone com o Opus novo (sem mexer no mudo). */
+  private followRoomAudio() {
+    const want = parseRoomAudio(this.room.metadata).preset;
+    if (want === this.micAudio) return;
+    this.micAudio = want;
+    void this.serial(async () => {
+      const lp = this.room.localParticipant;
+      const pub = lp.getTrackPublication(Track.Source.Microphone);
+      if (pub?.track === undefined) return;
+      const wasOn = !pub.isMuted;
+      const monitoring = this.micMonitor !== null;
+      this.monitorMic(false);
+      await lp.unpublishTrack(pub.track, true);
+      this.voiceProc = null;
+      await this.publishMic();
+      if (!wasOn) await lp.setMicrophoneEnabled(false);
+      if (monitoring) this.monitorMic(true);
+      this.emit();
+    }).catch(() => undefined);
   }
 
   /**
@@ -1127,6 +1306,13 @@ export class RoomSession {
 
   async switchDevice(kind: MediaDeviceKind, id: string) {
     await this.room.switchActiveDevice(kind, id);
+    if (kind === 'audiooutput' && this.boost !== null && 'setSinkId' in this.boost) {
+      await (this.boost as unknown as { setSinkId(id: string): Promise<void> }).setSinkId(id).catch(() => undefined);
+    }
+    if (kind === 'audioinput') {
+      const t = this.room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
+      if (t instanceof LocalAudioTrack) this.noteFacts(t);
+    }
     this.emit();
   }
 
@@ -1333,6 +1519,7 @@ export class RoomSession {
       me: this.readMe(),
       direct: this.direct.view(),
       whispers: this.direct.whisperingToMe(),
+      audio: parseRoomAudio(this.room.metadata),
       ...(() => {
         const viewers = viewersByShare(this.collectWatchers(), shares.map((s) => s.view.id));
         return { viewers, watchers: new Map([...viewers].map(([k, v]) => [k, v.length])) };
@@ -1484,8 +1671,42 @@ export class RoomSession {
     const level = !audible || isSilent(v) ? SILENT_GAIN : v.level;
     if (this.tuned.get(track) === level) return;
     this.tuned.set(track, level);
-    // Com webAudioMix o volume é um ganho do Web Audio, que passa de 100%.
-    (track as any).setVolume(level);
+    this.route(track as RemoteAudioTrack, level);
+  }
+
+  /** AudioContext só para quem está acima de 100% (o elemento de áudio vai até 1). */
+  private boost: AudioContext | null = null;
+  private readonly boosted = new WeakSet<Track>();
+  /**
+   * Até 100% o som toca direto no elemento de áudio (o caminho mais curto do WebRTC). Acima disso
+   * passa por um ganho do Web Audio, que custa uns 10-20 ms a mais só para essa pessoa.
+   */
+  private route(track: RemoteAudioTrack, level: number) {
+    if (IS_IOS) return track.setVolume(level);
+    const els = track.attachedElements as HTMLMediaElement[];
+    if (level > 1) {
+      if (!this.boosted.has(track)) {
+        if (this.boost === null || this.boost.state === 'closed') {
+          this.boost = new AudioContext({ latencyHint: 'interactive' });
+          const sink = this.room.getActiveDevice('audiooutput');
+          if (sink && sink !== 'default' && 'setSinkId' in this.boost) {
+            void (this.boost as unknown as { setSinkId(id: string): Promise<void> }).setSinkId(sink).catch(() => undefined);
+          }
+        }
+        if (this.boost.state !== 'running') void this.boost.resume().catch(() => undefined);
+        track.setAudioContext(this.boost);
+        for (const el of els) {
+          el.muted = true;
+          el.volume = 0;
+        }
+        this.boosted.add(track);
+      }
+    } else if (this.boosted.has(track)) {
+      track.setAudioContext(undefined);
+      for (const el of els) el.muted = false;
+      this.boosted.delete(track);
+    }
+    track.setVolume(level);
   }
 
   private collectParticipants(activities: Map<string, Activity>): PersonView[] {
@@ -1533,6 +1754,7 @@ function emptySnapshot(): RoomSnapshot {
     me: { cam: false, mic: false, phone: null },
     direct: null,
     whispers: [],
+    audio: { preset: DEFAULT_ROOM_AUDIO, by: null },
   };
 }
 
