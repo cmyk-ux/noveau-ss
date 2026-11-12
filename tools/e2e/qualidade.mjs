@@ -3,6 +3,8 @@
 // quadro) no lugar do getDisplayMedia.
 // Uso: BASE=http://127.0.0.1:3001 node tools/e2e/qualidade.mjs [codec] [resolução] [segundos]
 //   codec: auto | h264 | vp8 | vp9 | av1 | h265      resolução: auto | source | p1440 | p1080 | p720
+//   FALHA_OFERTA=1: o primeiro createOffer de quem transmite falha como no Chrome com a lista de codecs
+//   recusada ("Duplicate payload type"); confere que a tela abre mesmo assim (h264.ts).
 import { createRequire } from 'node:module';
 import { browserArgs } from './voz.mjs';
 const { chromium } = createRequire(import.meta.url)('playwright');
@@ -14,7 +16,7 @@ const browser = await chromium.launch({ args: browserArgs() });
 async function person(name, sender) {
   const ctx = await browser.newContext({ viewport: { width: 1600, height: 900 }, permissions: ['microphone', 'camera'] });
   await ctx.addInitScript(
-    ({ sender, codec, res }) => {
+    ({ sender, codec, res, failOffer }) => {
       try {
         localStorage.setItem('noveau:voice', 'cru');
         localStorage.setItem('cenaculum:volume-hint', 'yes');
@@ -33,6 +35,18 @@ async function person(name, sender) {
       window.RTCPeerConnection.prototype = PC.prototype;
       Object.setPrototypeOf(window.RTCPeerConnection, PC);
       if (!sender) return;
+      if (failOffer) {
+        const offer = PC.prototype.createOffer;
+        let failed = false;
+        PC.prototype.createOffer = function (...a) {
+          const ours = this.getTransceivers().some((t) => t.sender.track?.kind === 'video');
+          if (ours && !failed) {
+            failed = true;
+            return Promise.reject(new DOMException('Duplicate payload type in codec list', 'InvalidAccessError'));
+          }
+          return offer.apply(this, a);
+        };
+      }
       navigator.mediaDevices.getDisplayMedia = async () => {
         const c = document.createElement('canvas');
         c.width = 2560;
@@ -56,11 +70,12 @@ async function person(name, sender) {
         return c.captureStream(60);
       };
     },
-    { sender, codec: CODEC, res: RES },
+    { sender, codec: CODEC, res: RES, failOffer: process.env.FALHA_OFERTA === '1' },
   );
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
+  page.on('console', (m) => { if (/\[h264\]/.test(m.text())) console.log(`[${name}]`, m.text().slice(0, 160)); });
   await page.goto(`${BASE}/room/qualidade#${KEY}`);
   await page.fill('#nickname', name);
   await page.click('button[type=submit]');
