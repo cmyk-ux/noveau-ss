@@ -467,7 +467,8 @@ async function dawPair(req, res) {
 const DIAG_FILE = process.env.DIAG_FILE ?? '';
 const DIAG_MAX_BYTES = 10 * 1024 * 1024;
 // my-capture: quem transmite conta que a captura do navegador dele ficou curta (jogo ocupando a placa).
-const DIAG_CAUSES = new Set(['their-net', 'their-pc', 'their-idle', 'my-net', 'my-pc', 'my-decoder', 'my-capture', 'unknown']);
+// my-shrink: o controle de qualidade do navegador de quem transmite encolheu a tela com banda sobrando.
+const DIAG_CAUSES = new Set(['their-net', 'their-pc', 'their-idle', 'my-net', 'my-pc', 'my-decoder', 'my-capture', 'my-shrink', 'unknown']);
 const diagRate = new Map(); // identidade -> { minute, count }
 
 async function diagRoute(req, res) {
@@ -501,7 +502,9 @@ async function diagRoute(req, res) {
       console.log(
         rec.cause === 'my-capture'
           ? `[diag] ${rec.viewer} transmitindo: captura em ${rec.fpsCapturados} de ${rec.fpsPedidos} fps (cpu ${rec.cpuMeu || '?'})`
-          : `[diag] ${rec.viewer} viu ${rec.freezes} travada(s) em ${rec.streamer}: ${rec.cause}`,
+          : rec.cause === 'my-shrink'
+            ? `[diag] ${rec.viewer} transmitindo: o navegador encolheu a tela para ${rec.tamanho} (planejado ${rec.planejado}p, alvo ${rec.alvoMbps} Mbps, ${rec.codec}); passou a manter a resolução`
+            : `[diag] ${rec.viewer} viu ${rec.freezes} travada(s) em ${rec.streamer}: ${rec.cause}`,
       );
     }
     if (DIAG_FILE !== '' && lines.length > 0) {

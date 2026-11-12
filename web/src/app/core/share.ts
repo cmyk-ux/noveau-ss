@@ -15,6 +15,7 @@ import { UploadGuard, UploadState } from './upload-guard';
 import { LOW_LAYER_MAX_FPS, ShareHealth, ShareWatch, StatsFeed, sourceAudioLevel } from './stats';
 import { StudioBits, StudioSender } from './studio';
 import { CodecGuard } from './codec-guard';
+import { ShrinkEvent, ShrinkGuard } from './shrink-guard';
 
 /** Envio do som em modo estúdio (sem compressão), se estiver ativo. */
 let studio: StudioSender | null = null;
@@ -52,6 +53,8 @@ export interface ShareCallbacks {
   onUpload: (s: UploadState) => void;
   /** O codec saía no processador e trocamos para um da placa de vídeo. */
   onCodecSwitch?: (s: CodecSwitch) => void;
+  /** O navegador encolheu a tela sozinho com bits de sobra; passou para "manter resolução". */
+  onShrinkFix?: (e: ShrinkEvent) => void;
 }
 
 export interface CodecSwitch {
@@ -72,6 +75,8 @@ export interface ShareResult {
   upload: UploadGuard;
   /** Vigia que troca de codec se o navegador codificar no processador. */
   guard: CodecGuard;
+  /** Vigia que desfaz o encolhimento da imagem pelo controle de qualidade do navegador. */
+  shrink: ShrinkGuard;
   /** Codec escolhido roda na placa de vídeo (segundo o navegador). */
   gpu: boolean;
   /** 'monitor' (tela inteira), 'window' (janela) ou 'browser' (aba). */
@@ -416,7 +421,11 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
     feed,
   );
   guard.start();
-  return { codec, bitrate, resolution: encoded, audio: audioState, watch, surface, governor, upload, guard, gpu: probes[codec]?.gpu === true };
+  // Vigia: o controle de qualidade do navegador pode encolher a tela até 320x180 com banda sobrando
+  // (visto com H.264 na NVIDIA). Aí a tela passa a manter a resolução. Ver shrink-guard.ts.
+  const shrink = new ShrinkGuard(video, (e) => cb.onShrinkFix?.(e), feed);
+  shrink.start();
+  return { codec, bitrate, resolution: encoded, audio: audioState, watch, surface, governor, upload, guard, shrink, gpu: probes[codec]?.gpu === true };
 }
 
 export async function stopShareAudio(room: Room) {

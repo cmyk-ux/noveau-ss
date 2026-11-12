@@ -981,6 +981,8 @@ export class RoomScreen {
         return 'decodificador do seu navegador';
       case 'my-capture':
         return 'captura da sua tela';
+      case 'my-shrink':
+        return 'navegador encolhendo sua tela';
       default:
         return 'sem causa clara';
     }

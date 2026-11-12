@@ -129,7 +129,9 @@ export class StatsPanel {
         row('encoder', `${s.encoder}${s.gpu === null ? '' : s.gpu ? ' · GPU' : ' · CPU'}`, s.gpu === false),
         row('tempo por quadro', `${s.encodeMs} ms`, s.encodeMs > 1000 / Math.max(s.fps, 1)),
         ...this.loadRows(),
-        row('limitado por', describeLimitation(s.limitation)),
+        // "bandwidth" com bits de sobra para o tamanho que sai é o controle de qualidade do navegador
+        // encolhendo a imagem, não a rede (ver shrink-guard.ts).
+        row('limitado por', spareBits(s) ? 'controle de qualidade do navegador (não é a rede)' : describeLimitation(s.limitation), spareBits(s)),
         row('sustentado', h?.sustained === true ? describeLimitation(h.reason) : 'não', h?.sustained === true),
         row('mudanças de tamanho', String(s.resolutionChanges), s.resolutionChanges > 0),
         row('quadros gigantes', String(s.hugeFrames), s.hugeFrames > 0),
@@ -137,6 +139,7 @@ export class StatsPanel {
         ...this.uploadRows(),
         ...soundRows(await this.store.sendingAudioStats()),
         ...this.tipRows(s),
+        ...(spareBits(s) ? [row('dica', 'o navegador encolheu a imagem sozinho; em ~6 s a tela passa a manter a resolução', true)] : []),
       ],
     };
   }
@@ -207,4 +210,10 @@ export class StatsPanel {
       ],
     };
   }
+}
+
+/** Limitado por "banda" com mais de 0,3 bit por pixel por quadro no alvo: sobra bits, não é a rede. */
+function spareBits(s: { limitation: string; width: number; height: number; fps: number; targetBitrate: number }): boolean {
+  const px = s.width * s.height * Math.max(30, s.fps);
+  return s.limitation === 'bandwidth' && px > 0 && s.targetBitrate / px > 0.3;
 }

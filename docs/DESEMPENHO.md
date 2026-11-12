@@ -265,3 +265,26 @@ Teste (`tools/e2e/captura.mjs`, fonte sintética 1280x720 muito mexida, 60 fps p
    travando no segundo monitor com o jogo em janela sem borda, que somem com o jogo em tela cheia (fórum
    do Brave, "Video Playback Stuttering Dual Monitor"; Chromium 387478829). Sem aviso de captura curta
    na faixa de cima e com fps baixo, compare "Números ao vivo" dos dois lados.
+
+## Sexta rodada (12/11/2026): tela saindo a 320x180 com 7 Mbps
+
+Rhenan (H.264 na NVIDIA, 120 fps pedidos, "Ceder" desligado) mandava **320x180** com alvo de 7,3 Mbps e
+"limitado por: bandwidth", 1 mudança de tamanho; quem assistia recebia 480x270 a ~200 kbps. Perda 0%.
+
+- Não é a rede: o alvo do codificador para a camada era 7,3 Mbps (~2 bits por pixel por quadro a
+  320x180; uma redução de verdade por banda fica em ~0,05-0,15).
+- É o QualityScaler do WebRTC. Com `maintain-framerate` (o nosso) ele reduz a resolução em degraus de 3/5
+  quando o QP passa do limiar (H.264: 24..37, `QualityScalingExperiment`, ligado por padrão fora do iOS),
+  até o piso de 320x180. Só liga com uma camada ativa (`is_quality_scaling_allowed` em
+  `webrtc_video_engine.cc`: um SSRC, ou o LiveKit pausando as outras). Para o codificador da placa
+  (`RTCVideoEncoder`) o Chrome não dá limiar para H.264, então vale o do experimento se o QP for
+  "confiável"; se não for, entra o `BandwidthQualityScaler`. Em stats, adaptação por qualidade aparece
+  como "bandwidth" (`send_statistics_proxy.cc`).
+- Correção: `ShrinkGuard` (regra 22). Trocar para `maintain-resolution` tira o limite de pixels na hora
+  (`FilterRestrictionsByDegradationPreference` em `video_stream_adapter.cc`); faltando banda de verdade,
+  aí ele corta quadros, e a cópia menor do simulcast e o vigia da subida continuam valendo.
+- Aqui o OpenH264 não encolhe nem com 2 Mbps fixos, então o teste (`captura.mjs encolhe`) finge os
+  números do Rhenan no getStats e confere o vigia, a troca no sender e o diário.
+- O mesmo print mostrava "captura de Rhenan7: ~60 de 120 fps" na área de trabalho: era o conteúdo
+  (vídeo de 60). 50 e 60 entraram nos ritmos de conteúdo que não acusam (`CONTENT_RATES`).
+

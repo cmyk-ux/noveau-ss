@@ -2,6 +2,7 @@
 import { LoadGovernor, LoadState } from './load';
 import { UploadGuard, UploadState } from './upload-guard';
 import { CodecGuard } from './codec-guard';
+import { ShrinkGuard } from './shrink-guard';
 import { CAPTURE_FIX, Diagnostics, captureAdvice, encodeSendHealth, fpsStep } from './diag';
 import { DestroyRef, Injectable, computed, effect, inject, signal } from '@angular/core';
 import {
@@ -121,6 +122,7 @@ export class RoomStore {
   private captureWarned = false;
   private uploadGuard: UploadGuard | null = null;
   private codecGuard: CodecGuard | null = null;
+  private shrinkGuard: ShrinkGuard | null = null;
   private readonly _upload = signal<UploadState | null>(null);
   /** Diário de problemas da tela que estou assistindo. */
   readonly diag = new Diagnostics(() => this.token);
@@ -790,11 +792,17 @@ export class RoomStore {
               `Troquei para ${c.to.toUpperCase()} na placa de vídeo para o seu PC não perder FPS.`,
           );
         },
+        onShrinkFix: (e) => {
+          console.info('[tela] mantendo a resolução', e);
+          this.diag.noteShrink({ who: this.prefs.name() || 'você', ...e, codec: this._encoder()?.codec ?? '' });
+        },
       },
     );
     this.captureWarned = false;
     this.codecGuard?.stop();
     this.codecGuard = r.guard;
+    this.shrinkGuard?.stop();
+    this.shrinkGuard = r.shrink;
     this.watch = r.watch;
     this.governor = r.governor;
     this.uploadGuard?.stop();
@@ -866,6 +874,8 @@ export class RoomStore {
   private forgetShare() {
     this.codecGuard?.stop();
     this.codecGuard = null;
+    this.shrinkGuard?.stop();
+    this.shrinkGuard = null;
     this.governor?.stop();
     this.governor = null;
     this.uploadGuard?.stop();
