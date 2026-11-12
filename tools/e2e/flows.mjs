@@ -2,7 +2,7 @@
 // conversa direta. Uso: node tools/e2e/flows.mjs (site em BASE, padrão http://127.0.0.1:3000).
 // Sai com código 1 se algo falhar.
 import { createRequire } from 'node:module';
-import { browserArgs } from './voz.mjs';
+import { browserArgs, fakeMonitor } from './voz.mjs';
 // Playwright de onde estiver (do projeto ou instalado globalmente).
 const { chromium } = createRequire(import.meta.url)('playwright');
 const BASE = process.env.BASE ?? 'http://127.0.0.1:3000';
@@ -14,6 +14,7 @@ const people = {};
 for (const name of ['A', 'B', 'C']) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, permissions: ['microphone', 'camera'] });
   await ctx.addInitScript(() => { try { localStorage.setItem('noveau:voice', 'cru'); localStorage.setItem('cenaculum:volume-hint', 'yes'); localStorage.setItem('noveau:e2e', '1'); } catch {} });
+  await ctx.addInitScript(fakeMonitor, { width: 1920, height: 1080 });
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
@@ -42,8 +43,12 @@ await click(A, 'Compartilhar tela');
 ok('B vê a tela de A no palco', await until(B, playing, 'cen-stage video'));
 ok('C vê a tela de A no palco', await until(C, playing, 'cen-stage video'));
 ok('A vê "sua tela está no ar" (não vai pro palco)', await until(A, () => document.body.innerText.includes('Sua tela está no ar.')));
-// B liga a câmera: vira grade com 2 telas para C
+// B liga a câmera: C continua na tela de A (o foco não é roubado) e recebe o aviso; a grade é um clique.
 await click(B, 'Ligar câmera');
+ok('C continua na tela de A, com o aviso da câmera de B', await until(C, () =>
+  document.querySelectorAll('cen-share-tile').length === 0 && (document.querySelector('.toast')?.textContent ?? '').includes('B ligou a câmera')));
+await C.page.locator('cen-stage').hover();
+await C.page.locator('button[title="Ver todas as telas"]').click({ timeout: 10000 });
 ok('C vê a grade com 2 telas', await until(C, () => document.querySelectorAll('cen-share-tile').length === 2));
 ok('vídeos da grade tocando para C', await until(C, () => [...document.querySelectorAll('cen-share-tile video')].filter((v) => v.videoWidth > 0).length >= 2));
 // C muta o som da tela de A pela grade: o botão tem de mudar na hora (antes só mudava no próximo

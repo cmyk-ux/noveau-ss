@@ -379,6 +379,11 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
   // Vigia: se o navegador estiver codificando no processador (OpenH264, libvpx, libaom), republica a
   // mesma captura com um codec que a placa codifica. Quem assiste vê um piscar; o jogo volta a ter FPS.
   let current = codec;
+  // Numa reconexão completa o LiveKit republica a tela num sender novo, sem as camadas de tempo
+  // (elas foram ligadas direto no sender). A leitura seguinte põe de volta; nos outros codecs nada muda.
+  feed.add(() => {
+    if (current === 'vp8') void addTemporalLayers(video);
+  });
   const soft = new Set<Codec>();
   const guard = new CodecGuard(
     video,

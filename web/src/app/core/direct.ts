@@ -61,6 +61,12 @@ export class DirectTalk {
   private micOpenedForTalk = false;
   /** O que o servidor já sabe (permissões e atributo), aplicado em ordem. */
   private applied: DirectAim | null = null;
+  /**
+   * A conexão caiu e voltou: não dá para confiar no que o servidor sabe. Numa retomada ele guardou
+   * o atributo; numa reconexão completa perdeu, e o LiveKit reenvia sozinho as últimas permissões.
+   * Enquanto true, o próximo passo reenvia o atributo e as permissões mesmo que pareçam iguais.
+   */
+  private stale = false;
   private permsSig = 'all';
   private queue: Promise<void> = Promise.resolve();
 
@@ -140,7 +146,10 @@ export class DirectTalk {
 
   /** A cada mudança na sala: entra/sai de conversas a dois e acerta as permissões. */
   sync() {
-    if (this.room.state !== ConnectionState.Connected) {
+    // Reconectando: a conversa continua de pé (o servidor também a mantém). Antes ela era zerada
+    // aqui só do nosso lado: o servidor continuava com o atributo e as permissões fechadas e, na
+    // volta, ninguém mais ouvia a pessoa nem via a conversa acabar (uma conversa "fantasma").
+    if (this.room.state === ConnectionState.Disconnected) {
       if (this.aim !== null || this.applied !== null) {
         this.aim = null;
         this.applied = null;
@@ -150,6 +159,7 @@ export class DirectTalk {
       }
       return;
     }
+    if (this.room.state !== ConnectionState.Connected) return;
     const me = this.room.localParticipant.identity;
     const pointsAtMe = (id: string) => {
       const a = parseDirect(this.room.remoteParticipants.get(id)?.attributes);
@@ -180,6 +190,13 @@ export class DirectTalk {
     this.applyPermissions(this.applied);
   }
 
+  /** A sala voltou de uma queda: leva o servidor de novo até o estado atual. */
+  reconnected() {
+    this.stale = true;
+    this.permsSig = '';
+    this.queue = this.queue.then(() => this.converge()).catch(() => undefined);
+  }
+
   private set(next: Aim | null) {
     const before = this.aim;
     this.aim = next;
@@ -191,7 +208,8 @@ export class DirectTalk {
   private async converge() {
     if (this.room.state !== ConnectionState.Connected) return;
     const want = this.aim === null ? null : { to: this.aim.to, mode: this.aim.mode };
-    if (encode(want) === encode(this.applied) && (want === null || this.micLiveOrOpened())) return;
+    if (!this.stale && encode(want) === encode(this.applied) && (want === null || this.micLiveOrOpened())) return;
+    this.stale = false;
     const lp = this.room.localParticipant;
     if (want !== null) {
       // Fecha o microfone para os outros ANTES de soltar o som: segura a voz (silêncio) até o

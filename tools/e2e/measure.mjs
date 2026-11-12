@@ -3,7 +3,7 @@
 // Uso: node tools/e2e/measure.mjs <rótulo>   (site em BASE, padrão http://127.0.0.1:3000; LiveKit local em --dev)
 // Opções: SECONDS=30 PANEL=1 (painel de pessoas aberto) CAM=1 (B liga a câmera: grade) SHOT=arquivo (fotos)
 import { createRequire } from 'node:module';
-import { browserArgs } from './voz.mjs';
+import { browserArgs, fakeMonitor } from './voz.mjs';
 // Playwright de onde estiver (do projeto ou instalado globalmente).
 const { chromium } = createRequire(import.meta.url)('playwright');
 
@@ -19,6 +19,7 @@ const people = [];
 for (const name of PEOPLE) {
   const ctx = await browser.newContext({ viewport: { width: 1440, height: 900 }, permissions: ['microphone', 'camera'] });
   await ctx.addInitScript(() => { try { localStorage.setItem('noveau:voice', 'cru'); localStorage.setItem('cenaculum:volume-hint', 'yes'); } catch {} });
+  await ctx.addInitScript(fakeMonitor, { width: 1920, height: 1080 });
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));

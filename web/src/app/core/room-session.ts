@@ -42,6 +42,48 @@ import type { Probe } from './diag';
 const SILENT_GAIN = 1e-5;
 export type FocusedStats = Probe;
 
+/**
+ * O que o LiveKit guarda de cada faixa de som (campos internos, mas estáveis). gainNode só existe
+ * quando a faixa passa pelo Web Audio: no iPhone (webAudioMix) ou acima de 100% (route()).
+ */
+type Gained = { gainNode?: GainNode; elementVolume?: number; setVolume(v: number): void };
+
+/**
+ * O LiveKit cria o ganho do Web Audio em 100% e só depois desce até o volume guardado, numa rampa
+ * lenta (setTargetAtTime com constante de 0,1 s: ~0,5 s até ficar inaudível). Medido com tudo no Web
+ * Audio: uma voz mutada tocava em volume cheio por meio segundo toda vez que esse ganho nascia de novo
+ * (a pessoa republicou o microfone, reconectou, você clicou em "Ativar áudio"), e o som de uma tela
+ * nova começava 5x mais alto que os 20% padrão. Ganho que acabou de nascer vai direto ao volume
+ * guardado, antes de tocar qualquer amostra. Sem Web Audio (o normal fora do iPhone) o elemento de
+ * áudio já nasce no volume certo, porque o volume é guardado antes do attach().
+ */
+function gainOf(v: Volume, audible: boolean) {
+  return !audible || isSilent(v) ? SILENT_GAIN : v.level;
+}
+
+function snapGain(track: Track) {
+  const t = track as unknown as Gained;
+  if (t.gainNode === undefined || t.elementVolume === undefined) return;
+  t.gainNode.gain.cancelScheduledValues(0);
+  t.gainNode.gain.value = t.elementVolume;
+}
+
+/**
+ * Mudança de volume pedida (mutar, fader, esconder): rampa curta em vez da do LiveKit. Mutar fica
+ * mudo em 15 ms (antes ~0,5 s), sem estalo; o fader anda em 60 ms.
+ */
+function rampGain(track: Track, level: number) {
+  const t = track as unknown as Gained;
+  t.setVolume(level); // guarda o volume (o LiveKit reaplica quando refaz o ganho)
+  const g = t.gainNode;
+  if (g === undefined) return;
+  const now = g.context.currentTime;
+  const from = g.gain.value;
+  g.gain.cancelScheduledValues(0);
+  g.gain.setValueAtTime(from, now);
+  g.gain.linearRampToValueAtTime(level, now + (level === SILENT_GAIN ? 0.015 : 0.06));
+}
+
 // O som do OBS (WHIP) chega sem a marca de estéreo; veja stereo.ts.
 installStereoReceive();
 // H.264 da tela e da câmera na placa de vídeo, não no OpenH264 (ver h264.ts).
@@ -259,17 +301,23 @@ export function isWaitingForCamera(s: RoomSnapshot, cameraOffered: boolean) {
 
 /**
  * Foco: com uma tela só, ela fica em foco. Com várias, o foco fica onde estava; se a tela em
- * foco sumir, volta para a grade (null), como no Discord.
+ * foco sumir, volta para a grade (null).
  */
 function keepFocus(ids: string[], current: string | null) {
   if (current !== null && ids.includes(current)) return current;
   return ids.length === 1 ? ids[0] : null;
 }
 
-/** Quando a primeira tela aparece, ela ganha o foco; com várias, o foco fica onde estava. */
-function focusIfOnly(ids: string[], arriving: string, _current: string | null) {
-  // Chegou outra tela: mostra todas em grade, como o Discord.
-  return ids.length === 1 && ids[0] === arriving ? arriving : null;
+/**
+ * Apareceu mais uma tela (ou câmera). Quem está assistindo uma tela continua nela, escolhida ou não:
+ * alguém ligar a câmera ou começar outra transmissão não tira você do jogo que está vendo (a nova
+ * aparece na barra de baixo e num aviso com "ver"). O Discord também nunca troca o foco sozinho.
+ * Só uma câmera em foco automático (era a única coisa no ar) dá lugar à grade, para a tela que chegou
+ * aparecer.
+ */
+function focusOnArrival(ids: string[], current: string | null, keep: boolean) {
+  if (keep && current !== null && ids.includes(current)) return current;
+  return ids.length === 1 ? ids[0] : null;
 }
 
 /**
@@ -386,6 +434,8 @@ async function webcamPlan() {
 
 export class RoomSession {
   private focusedShareId: string | null = null;
+  /** O foco atual foi escolhido por você (clicou na tela), não automático por ser a única. */
+  private focusChosen = false;
   private readonly hidden = new Set<string>();
   private readonly listeners = new Set<(s: RoomSnapshot) => void>();
   private readonly mixer = new Mixer();
@@ -566,14 +616,23 @@ export class RoomSession {
       .on(RoomEvent.LocalTrackUnpublished, changed)
       .on(RoomEvent.TrackPublished, (pub, p) => {
         // A câmera do celular conta como a câmera do dono dele.
-        if (isVisual(pub.source)) this.focusedShareId = focusIfOnly(this.liveIds(), phoneOf(p) ?? p.identity, this.focusedShareId);
+        if (isVisual(pub.source)) this.arrived(phoneOf(p) ?? p.identity);
         this.micMovedToPhone(pub, p);
         changed();
       })
       .on(RoomEvent.TrackUnpublished, changed)
-      .on(RoomEvent.TrackSubscribed, (track, _pub, p) => {
+      .on(RoomEvent.TrackSubscribed, (track, pub, p) => {
         cushion(track, isObs(p));
-        if (track.kind === Track.Kind.Audio) this.audioContainer.appendChild(track.attach());
+        if (track.kind === Track.Kind.Audio) {
+          // O volume vai antes de ligar o som: o elemento já nasce nele, e mudo continua mudo. O
+          // elemento só vai até 100% (acima disso o navegador recusa); o resto vem de route().
+          const level = this.levelOf(p, pub.source);
+          if (level !== undefined) (track as RemoteAudioTrack).setVolume(IS_IOS ? level : Math.min(level, 1));
+          this.audioContainer.appendChild(track.attach());
+          // No iPhone (webAudioMix) o ganho nasce em 100% e desceria numa rampa de ~0,5 s: vai direto.
+          snapGain(track);
+          if (level !== undefined) this.tune(track, level);
+        }
         changed();
       })
       .on(RoomEvent.TrackUnsubscribed, (track) => {
@@ -581,6 +640,13 @@ export class RoomSession {
         changed();
       })
       .on(RoomEvent.AudioPlaybackStatusChanged, () => this.update('view'))
+      // Voltou de uma queda: a conversa direta reenvia o que o servidor pode ter perdido, e quem
+      // assiste conta de novo o que decodifica na placa (some numa reconexão completa).
+      .on(RoomEvent.Reconnected, () => {
+        this.direct.reconnected();
+        void this.publishDecoders();
+        changed();
+      })
       // Qualidade de áudio da sala mudou: o microfone republica com o Opus novo.
       .on(RoomEvent.RoomMetadataChanged, () => {
         this.followRoomAudio();
@@ -881,8 +947,16 @@ export class RoomSession {
   }
 
   async unlockAudio() {
-    await this.room.startAudio();
+    // startAudio refaz o ganho de cada som na hora (nascendo em 100%); o ajuste vem antes de tocar.
+    const started = this.room.startAudio();
+    this.snapAllGains();
+    await started;
+    this.snapAllGains();
     this.emit();
+  }
+
+  private snapAllGains() {
+    for (const p of this.room.remoteParticipants.values()) for (const pub of p.audioTrackPublications.values()) if (pub.track) snapGain(pub.track);
   }
 
   /** Minha tela no palco (desligado por padrão, para não pesar em quem transmite). */
@@ -890,32 +964,60 @@ export class RoomSession {
   setMyOnStage(on: boolean) {
     if (this.myOnStage === on) return;
     this.myOnStage = on;
-    if (!on && this.live.some((s) => s.view.isLocal && s.view.id === this.focusedShareId)) this.focusedShareId = null;
+    if (!on && this.live.some((s) => s.view.isLocal && s.view.id === this.focusedShareId)) this.setFocus(null, false);
     this.emit();
   }
 
   focusShare(id: string) {
     if (!this.myOnStage && this.live.some((s) => s.view.id === id && s.view.isLocal)) return;
-    this.focusedShareId = id;
+    this.setFocus(id, true);
     this.emit();
   }
 
   /** Esconde uma tela só para você: para de baixar o vídeo e de tocar o som dela. */
   hideShare(id: string) {
     this.hidden.add(id);
-    if (this.focusedShareId === id) this.focusedShareId = null;
+    if (this.focusedShareId === id) this.setFocus(null, false);
     this.emit();
   }
 
+  /**
+   * Volta a mostrar uma tela escondida. Com o foco automático (sobrou uma tela só quando você
+   * escondeu a outra), volta para a grade com as duas; com o foco escolhido por você, ele fica.
+   */
   showShare(id: string) {
-    this.hidden.delete(id);
+    if (!this.hidden.delete(id)) return;
+    if (!this.focusChosen) this.setFocus(null, false);
     this.emit();
   }
 
   /** Volta para a grade com todas as telas. */
   unfocus() {
-    this.focusedShareId = null;
+    this.setFocus(null, false);
     this.emit();
+  }
+
+  /** Avisa que chegou uma tela ou câmera enquanto você assiste outra (id, nome, tipo). */
+  onShareArrived: ((id: string, name: string, kind: 'screen' | 'camera') => void) | null = null;
+
+  /** Chegou uma tela ou câmera nova: decide o foco (focusOnArrival) e avisa se ela ficou de fora. */
+  private arrived(id: string) {
+    const before = new Set(this.stageIds(this.live));
+    const shares = this.collectShares();
+    const ids = this.stageIds(shares);
+    const current = this.focusedShareId;
+    const watchingScreen = this.live.find((s) => s.view.id === current)?.view.kind === 'screen';
+    const next = focusOnArrival(ids, current, this.focusChosen || watchingScreen);
+    if (next !== current) this.setFocus(next, false);
+    const share = shares.find((s) => s.view.id === id);
+    if (next !== null && next !== id && share !== undefined && !before.has(id) && ids.includes(id)) {
+      this.onShareArrived?.(id, share.view.ownerName, share.view.kind === 'camera' ? 'camera' : 'screen');
+    }
+  }
+
+  private setFocus(id: string | null, chosen: boolean) {
+    this.focusedShareId = id;
+    this.focusChosen = id !== null && chosen;
   }
 
   /** Solta o vídeo de um elemento que vai sumir. */
@@ -1473,14 +1575,16 @@ export class RoomSession {
 
   private settle(): RoomSnapshot {
     if (statusOf(this.room.state) === 'disconnected') {
-      this.focusedShareId = null;
+      this.setFocus(null, false);
       this.live = [];
       return emptySnapshot();
     }
     this.direct.sync();
     const shares = this.collectShares();
     this.live = shares;
-    this.focusedShareId = keepFocus(this.stageIds(shares), this.focusedShareId);
+    const focus = keepFocus(this.stageIds(shares), this.focusedShareId);
+    // A tela escolhida acabou: o próximo foco é automático.
+    if (focus !== this.focusedShareId) this.setFocus(focus, false);
     this.followFocus(shares);
     this.mix();
     this.publishWatching();
@@ -1633,31 +1737,45 @@ export class RoomSession {
     return mine !== undefined && mine !== '' && p !== this.room.localParticipant && p.attributes?.['discordId'] === mine;
   }
 
+  /**
+   * Volume de cada som de cada pessoa. Passa por todas as faixas de som (não só a primeira de cada
+   * tipo): quando alguém troca o modo do microfone, a faixa nova chega antes da antiga sair, e só a
+   * primeira recebia o volume. A nova tocava em 100% mesmo com a pessoa mutada.
+   */
   private mix() {
-    const me = this.room.localParticipant;
     for (const p of this.room.remoteParticipants.values()) {
-      const id = p.identity;
-      // Microfone do celular de alguém: é a voz dele, com o volume dele. O do meu celular não toca
-      // aqui (eu me ouviria), e o de quem já saiu da sala também não.
-      const of = phoneOf(p);
-      if (of !== null) {
-        const owner = this.room.remoteParticipants.get(of);
-        const audible = of !== me.identity && owner !== undefined && !this.isMyOtherDevice(owner) && this.direct.audible(of);
-        this.tune(p, Track.Source.Microphone, this.mixer.read('mic', of), audible);
-        continue;
+      for (const pub of p.audioTrackPublications.values()) {
+        const level = pub.track === undefined ? undefined : this.levelOf(p, pub.source);
+        if (pub.track !== undefined && level !== undefined) this.tune(pub.track, level);
       }
-      // O microfone do meu outro aparelho não toca aqui: eu me ouviria com atraso (e daria eco).
-      // (No OBS o "microfone" é o som da tela, tratado logo abaixo.)
-      // Conversa direta: só a voz da outra pessoa; e quem fala direto com outra pessoa não toca aqui.
-      if (!isObs(p)) this.tune(p, Track.Source.Microphone, this.mixer.read('mic', id), !this.isMyOtherDevice(p) && this.direct.audible(id));
-      // Na grade, o som de todas as telas toca (cada uma com seu volume); em foco, só a dela.
-      this.tune(
-        p,
-        screenAudioSource(p),
+    }
+  }
+
+  /** O ganho de um som (mudo, foco, escondida, conversa direta); undefined = não é um som que o mixer controla. */
+  private levelOf(p: RemoteParticipant, source: Track.Source): number | undefined {
+    const me = this.room.localParticipant;
+    const id = p.identity;
+    // Microfone do celular de alguém: é a voz dele, com o volume dele. O do meu celular não toca
+    // aqui (eu me ouviria), e o de quem já saiu da sala também não.
+    const of = phoneOf(p);
+    if (of !== null) {
+      if (source !== Track.Source.Microphone) return undefined;
+      const owner = this.room.remoteParticipants.get(of);
+      const audible = of !== me.identity && owner !== undefined && !this.isMyOtherDevice(owner) && this.direct.audible(of);
+      return gainOf(this.mixer.read('mic', of), audible);
+    }
+    // O microfone do meu outro aparelho não toca aqui: eu me ouviria com atraso (e daria eco).
+    // (No OBS o "microfone" é o som da tela, tratado logo abaixo.)
+    // Conversa direta: só a voz da outra pessoa; e quem fala direto com outra pessoa não toca aqui.
+    if (source === Track.Source.Microphone && !isObs(p)) return gainOf(this.mixer.read('mic', id), !this.isMyOtherDevice(p) && this.direct.audible(id));
+    // Na grade, o som de todas as telas toca (cada uma com seu volume); em foco, só a dela.
+    if (source === screenAudioSource(p)) {
+      return gainOf(
         this.mixer.read('share', id),
         !this.isMyObs(p) && !this.hidden.has(id) && (this.focusedShareId === null || id === this.focusedShareId),
       );
     }
+    return undefined;
   }
 
   /**
@@ -1665,10 +1783,7 @@ export class RoomSession {
    * 0 (veja SILENT_GAIN): o LiveKit reaplica sozinho o volume guardado quando refaz o ganho.
    */
   private readonly tuned = new WeakMap<Track, number>();
-  private tune(p: RemoteParticipant, source: Track.Source, v: Volume, audible: boolean) {
-    const track = p.getTrackPublication(source)?.track;
-    if (track === undefined || track.kind !== Track.Kind.Audio) return;
-    const level = !audible || isSilent(v) ? SILENT_GAIN : v.level;
+  private tune(track: Track, level: number) {
     if (this.tuned.get(track) === level) return;
     this.tuned.set(track, level);
     this.route(track as RemoteAudioTrack, level);
@@ -1680,9 +1795,11 @@ export class RoomSession {
   /**
    * Até 100% o som toca direto no elemento de áudio (o caminho mais curto do WebRTC). Acima disso
    * passa por um ganho do Web Audio, que custa uns 10-20 ms a mais só para essa pessoa.
+   * Onde existe esse ganho (acima de 100%, ou no iPhone), rampGain troca a rampa lenta do LiveKit
+   * (~0,5 s) por uma curta: o mudo fecha em 15 ms.
    */
   private route(track: RemoteAudioTrack, level: number) {
-    if (IS_IOS) return track.setVolume(level);
+    if (IS_IOS) return rampGain(track, level);
     const els = track.attachedElements as HTMLMediaElement[];
     if (level > 1) {
       if (!this.boosted.has(track)) {
@@ -1706,7 +1823,7 @@ export class RoomSession {
       for (const el of els) el.muted = false;
       this.boosted.delete(track);
     }
-    track.setVolume(level);
+    rampGain(track, level);
   }
 
   private collectParticipants(activities: Map<string, Activity>): PersonView[] {
@@ -1764,7 +1881,12 @@ function statusOf(state: ConnectionState): RoomStatus {
       return 'connecting';
     case ConnectionState.Connected:
       return 'connected';
+    // SignalReconnecting é a retomada rápida: o LiveKit perdeu o canal de controle (WebSocket) e
+    // está voltando; a imagem e o som costumam continuar chegando. Antes ela caía no "default" e
+    // virava "desconectado": o palco sumia, aparecia "Conexão perdida" e a página da call do
+    // Discord tirava a pessoa da sala (parando a tela dela para todo mundo) por uma piscada de rede.
     case ConnectionState.Reconnecting:
+    case ConnectionState.SignalReconnecting:
       return 'reconnecting';
     default:
       return 'disconnected';
