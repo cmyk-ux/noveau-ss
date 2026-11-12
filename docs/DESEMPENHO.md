@@ -131,3 +131,46 @@ Qualidade:
   o Opus precisa para música; a Xiph considera 128 kbps em estéreo "praticamente transparente"
   ([Opus Recommended Settings](https://wiki.xiph.org/Opus_Recommended_Settings)). O modo estúdio (sem
   compressão) continua.
+
+## Quarta rodada (12/11/2026): a qualidade da tela
+
+Depois do PR #28 a tela passou a sair em VP8, com imagem ruim, FPS baixo e travadas no jogo. A causa
+vinha de antes e ficou exposta quando o automático mudou de ordem.
+
+- **O H.264 nunca ia para a placa de vídeo.** No Chrome (e no Brave e no Edge) do Windows e do Mac, só
+  os perfis Baseline (`42001f`), Main (`4d001f`) e High (`6400xx`) vão para a placa. O "Constrained
+  Baseline" (`42e01f`) vai sempre para o OpenH264, no processador, numa thread só
+  (`kPlatformH264CbpEncoding` vem desligado). O LiveKit 1.13.11 responde com o `42e01f` primeiro
+  (conferido rodando o servidor). E o teste do site perguntava "H.264 na placa?" sem perfil, o que o
+  navegador lê como `42e01f`: a resposta era sempre não.
+  - Consequência: num PC sem H.265 na placa, ou numa sala com alguém sem decodificador de H.265
+    (Firefox, iPhone, Linux), a reserva da tela era VP8 por software em resolução cheia, e a sala
+    inteira passava para ela.
+  - Agora (`core/h264.ts`): ao criar a faixa de envio, o site diz ao navegador para oferecer só High e
+    Baseline (`setCodecPreferences`). O LiveKit aceita os dois e o navegador codifica na placa (no
+    getStats aparece `MediaFoundationVideoEncodeAccelerator` ou `D3D12VideoEncodeAccelerator`). O
+    teste de capacidade pergunta pelo perfil que vai ser usado.
+  - Quem assiste: o LiveKit entrega o vídeo no H.264 que cada um negociou, mesmo com outro perfil, e o
+    decodificador lê o perfil do vídeo. O Firefox decodifica com o OpenH264, que aceita o "Constrained
+    High" desde a 1.5 (o que os codificadores de chamada mandam, sem quadros B).
+- **Ordem do automático:** AV1 da placa se todos na sala decodificam AV1 na placa (no Windows o Chrome
+  não usa a placa para AV1 em chamada), senão **H.264 da placa**, senão H.265, VP9 ou AV1 da placa (com
+  reserva H.264), e só sem placa nenhuma VP8. O H.264 da placa vai com a cópia menor para quem não
+  aguenta e nunca obriga a sala a trocar de codec. H.265 continua no menu.
+- **Captura sempre no tamanho original.** O Chrome captura numa thread que ele limita a meio núcleo:
+  depois de cada quadro, espera o dobro do tempo que o quadro levou (`desktop_capture_device.cc`). Com
+  um teto de resolução na captura (720p, 1080p, 1440p), essa thread converte a tela inteira e depois
+  ainda reduz (`ARGBToI420` + `I420Scale`): mais trabalho por quadro, menos quadros por segundo,
+  principalmente com o jogo disputando o processador. No tamanho original ela só entrega o quadro.
+  Agora a captura pede só um teto de 7680x4320 e o tamanho escolhido é aplicado no codificador
+  (`scaleResolutionDownBy`, `EncoderScale` em `share.ts`), também na reserva. O "Ceder se o PC apertar"
+  baixa os quadros na captura e a resolução no codificador.
+
+Medição (LiveKit local, Chromium sem placa, tela sintética 2560x1440 a 60 fps, `tools/e2e/qualidade.mjs`):
+
+| Pedido | Captura | Saindo | Quem assiste recebe |
+| --- | --- | --- | --- |
+| H.264, 720p, 30 s | 2560x1440 | 1280x720 a 59 fps (escala 2) + 853x480 (escala 3), perfil `42001f` | 1280x720 a 56 fps em todas as leituras, 0 travadas |
+
+Sem placa de vídeo o perfil fica Baseline (`42001f`): é o que o OpenH264 aceita. Com placa, o High
+aparece na lista do navegador e vai primeiro.

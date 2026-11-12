@@ -19,6 +19,7 @@ import { ShareCallbacks, ShareRequest, ShareResult, startShare, stopShare, stopS
 import { Channel, isSilent, Mixer, Volume } from './volume';
 import { IS_MOBILE } from './device';
 import { installStereoReceive } from './stereo';
+import { installH264Preference } from './h264';
 import { ACTIVITY_ATTR, Activity, parseActivity } from './activity';
 import { gpuEncodes, hardwareDecoders } from './stream';
 import { RnnoiseProcessor, rnnoiseSupported, voiceCapture, voicePublish, VoiceMode } from './voice';
@@ -39,6 +40,8 @@ export type FocusedStats = Probe;
 
 // O som do OBS (WHIP) chega sem a marca de estéreo; veja stereo.ts.
 installStereoReceive();
+// H.264 da tela e da câmera na placa de vídeo, não no OpenH264 (ver h264.ts).
+installH264Preference();
 
 const DEVICE_TOPIC = 'device';
 const GUARD_TICK_MS = 2000;
