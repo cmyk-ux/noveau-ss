@@ -2,7 +2,7 @@
 // conversa direta. Uso: node tools/e2e/flows.mjs (site em BASE, padrão http://127.0.0.1:3000).
 // Sai com código 1 se algo falhar.
 import { createRequire } from 'node:module';
-import { browserArgs } from './voz.mjs';
+import { browserArgs, fakeMonitor } from './voz.mjs';
 // Playwright de onde estiver (do projeto ou instalado globalmente).
 const { chromium } = createRequire(import.meta.url)('playwright');
 const BASE = process.env.BASE ?? 'http://127.0.0.1:3000';
@@ -14,6 +14,7 @@ const people = {};
 for (const name of ['A', 'B', 'C']) {
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, permissions: ['microphone', 'camera'] });
   await ctx.addInitScript(() => { try { localStorage.setItem('noveau:voice', 'cru'); localStorage.setItem('cenaculum:volume-hint', 'yes'); localStorage.setItem('noveau:e2e', '1'); } catch {} });
+  await ctx.addInitScript(fakeMonitor, { width: 1920, height: 1080 });
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));

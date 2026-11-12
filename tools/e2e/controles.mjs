@@ -9,7 +9,7 @@
 //
 // O site expõe a sala em window.__noveau só com localStorage "noveau:e2e" = "1" (o teste liga isso).
 import { createRequire } from 'node:module';
-import { browserArgs } from './voz.mjs';
+import { browserArgs, fakeMonitor } from './voz.mjs';
 const { chromium, devices } = createRequire(import.meta.url)('playwright');
 
 const BASE = process.env.BASE ?? 'http://127.0.0.1:3000';
@@ -40,6 +40,7 @@ async function join(name, { mobile = false, voice = 'cru' } = {}) {
       localStorage.setItem('noveau:e2e', '1');
     } catch {}
   }, voice);
+  await ctx.addInitScript(fakeMonitor, { width: 1920, height: 1080 });
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
@@ -175,6 +176,8 @@ const has = async (p, sel) => (await p.page.locator(sel).count()) > 0;
  */
 async function baseline({ aSharing = false } = {}) {
   for (const p of [A, B, C]) {
+    // Nada pela metade (a tela reiniciando, a câmera ligando): espera terminar antes de olhar as teclas.
+    await until(p, () => !window.__noveau.store.busy(), undefined, 30000);
     await p.page.keyboard.press('Escape').catch(() => undefined);
     if (await has(p, 'button[title="Desligar câmera"]')) await btn(p, 'Desligar câmera').click().catch(() => undefined);
     if (p !== A && (await has(p, 'button[title="Parar de compartilhar"]'))) await btn(p, 'Parar de compartilhar').click().catch(() => undefined);
@@ -423,11 +426,14 @@ await part('camera', async () => {
   await swapKey();
   ok('trocar de novo: a tela volta para o palco', (await eventually(async () => (await C.page.evaluate(() => document.querySelector('cen-stage video')?.videoWidth ?? 0)) === before)).ok);
   // Retorno da própria câmera em A
+  // As teclas do retorno só aparecem com o mouse em cima da janelinha.
   const mirror = A.page.locator('cen-self-cam button[aria-pressed]');
+  await A.page.locator('cen-self-cam .win').hover();
   const was = await mirror.getAttribute('aria-pressed');
   await mirror.click();
-  ok('retorno: espelhar liga/desliga', (await mirror.getAttribute('aria-pressed')) !== was);
+  ok('retorno: espelhar liga/desliga', (await eventually(async () => (await mirror.getAttribute('aria-pressed')) !== was, 2500)).ok);
   await mirror.click();
+  await A.page.locator('cen-self-cam .win').hover();
   await A.page.locator('cen-self-cam button[title^="Parar de ver a sua câmera"]').click();
   ok('retorno: parar de ver some a janelinha', await until(A, () => document.querySelector('cen-self-cam .win') === null && document.querySelector('cen-self-cam .chip') !== null));
   await A.page.locator('cen-self-cam .chip').click();
@@ -452,9 +458,9 @@ await part('faixa', async () => {
   await A.page.locator('cen-live-strip .mine-key').click().catch(() => undefined);
   // C: com duas telas, a foto de quem transmite abre a prévia e "assistir" foca
   await btn(B, 'Compartilhar tela').click();
-  ok('C vê 2 telas', await until(C, () => document.querySelectorAll('cen-share-tile').length === 2, undefined, 20000));
-  await C.page.locator('cen-share-tile').filter({ hasText: /\bA\b/ }).click();
-  ok('C foca A', await until(C, playing, 'cen-stage video'));
+  // Assistindo a tela de A, C continua nela quando B começa (aviso com "ver").
+  ok('B começa a transmitir: C vê o aviso', await until(C, () => (document.querySelector('.toast')?.textContent ?? '').includes('B começou a transmitir'), undefined, 20000));
+  ok('C continua na tela de A', await C.page.evaluate(() => document.querySelectorAll('cen-share-tile').length === 0 && (document.querySelector('.now')?.textContent ?? '').includes('tela de A')));
   const faceB = C.page.locator('cen-live-strip .face').filter({ hasText: 'B' });
   await faceB.hover();
   ok('passar o mouse na foto de B abre o cartão', await until(C, () => document.querySelector('cen-live-strip .card[role=tooltip]') !== null, undefined, 4000));
@@ -475,6 +481,23 @@ async function streamPanel(p) {
   return p.page.locator('cen-stream-panel');
 }
 const chipsAfter = (panel, label) => panel.locator('p.label', { hasText: label }).locator('xpath=following-sibling::div[contains(@class,"chips")][1]');
+/**
+ * Com a tela no ar, mudar um ajuste mostra "Aplicar agora" (no quadro seguinte, não no mesmo clique):
+ * espera ele aparecer e clica. Contar logo depois do clique dava 0 e o ajuste nunca era aplicado.
+ */
+async function applyNow(panel) {
+  const b = panel.locator('.apply button');
+  const shown = await b.waitFor({ state: 'visible', timeout: 3000 }).then(() => true, () => false);
+  if (!shown) return false;
+  await b.click();
+  // Aplicar reinicia a transmissão (para e começa de novo). Até ela voltar, a tecla da tela mostra
+  // "Compartilhar tela": seguir antes disso fazia o teste clicar nela no meio do reinício.
+  await panel.page().waitForFunction(() => {
+    const st = window.__noveau.store;
+    return !st.busy() && st.sharing() && st.liveSignature() !== null;
+  }, null, { timeout: 30000, polling: 150 });
+  return true;
+}
 
 await part('qualidade', async () => {
   await baseline({ aSharing: true });
@@ -501,7 +524,7 @@ await part('qualidade', async () => {
   await chipsAfter(p2, 'resolução máxima').locator('.chip', { hasText: 'Auto' }).click();
   await chipsAfter(p2, 'quadros por segundo').locator('.chip', { hasText: '60fps' }).click();
   await chipsAfter(p2, 'codec').locator('.chip', { hasText: 'AUTO' }).click().catch(() => undefined);
-  if ((await p2.locator('.apply button').count()) === 1) await p2.locator('.apply button').click();
+  await applyNow(p2);
   ok('volta ao automático e B continua vendo', await until(B, playing, 'cen-stage video', 15000));
 });
 
@@ -509,21 +532,21 @@ await part('som-da-tela', async () => {
   await baseline({ aSharing: true });
   const panel = await streamPanel(A);
   await panel.locator('label.switch', { hasText: 'Compartilhar o áudio' }).click();
-  if ((await panel.locator('.apply button').count()) === 1) await panel.locator('.apply button').click();
+  ok('desligar o som mostra "Aplicar agora"', await applyNow(panel));
   ok('sem áudio: B não tem mais som da tela de A', (await eventually(async () => (await remote(B, 'A', 'screen_share_audio')).exists === false, 15000)).ok);
   ok('sem áudio: "com som" some da barra de B', await until(B, () => !(document.querySelector('.now')?.textContent ?? '').includes('com som')));
   const p2 = await streamPanel(A);
   await p2.locator('label.switch', { hasText: 'Compartilhar o áudio' }).click();
   // Estúdio 16-bit
   await p2.locator('.chip', { hasText: 'Estúdio 16-bit' }).click();
-  if ((await p2.locator('.apply button').count()) === 1) await p2.locator('.apply button').click();
+  await applyNow(p2);
   ok('estúdio: B vê a etiqueta do som de estúdio', await until(B, () => (document.querySelector('.now')?.textContent ?? '').includes('estúdio 16-bit'), undefined, 15000));
   await B.page.locator('button.people-top').click();
   ok('estúdio: B tem o som de estúdio tocando (buffer cheio)', await until(B, () => /buffer \d+ \/ \d+ ms/.test(document.querySelector('cen-people-panel .rack')?.textContent ?? '') && !(document.querySelector('cen-people-panel .rack')?.textContent ?? '').includes('carregando'), undefined, 15000));
   await B.page.locator('button.people-top').click();
   const p3 = await streamPanel(A);
   await p3.locator('.chip', { hasText: 'Opus 192k' }).click();
-  if ((await p3.locator('.apply button').count()) === 1) await p3.locator('.apply button').click();
+  ok('voltar ao Opus mostra "Aplicar agora"', await applyNow(p3));
   ok('Opus de novo: som da tela de A volta para B', (await eventually(async () => (await remote(B, 'A', 'screen_share_audio')).exists === true, 15000)).ok);
 });
 
@@ -537,11 +560,12 @@ await part('voz', async () => {
     return { ok: s?.noiseSuppression === true && s?.echoCancellation === true, s };
   });
   ok('"Filtro do navegador": microfone sai com supressão de ruído do navegador', r1.ok, JSON.stringify(r1.last?.s));
-  ok('voz de A continua chegando em B', await flowing(B, 'A', 'microphone'));
+  // Trocar o tratamento republica o microfone (faixa nova): B leva um instante para receber a nova.
+  ok('voz de A continua chegando em B', (await eventually(async () => ({ ok: await flowing(B, 'A', 'microphone') }), 10000)).ok);
   await panel.locator('button.item', { hasText: 'Redução de ruído por IA' }).click();
   const r2 = await eventually(async () => ({ ok: (await A.page.evaluate(() => window.__noveau.room.localParticipant.getTrackPublication('microphone')?.track?.getProcessor?.()?.name)) === 'noveau-rnnoise' }));
   ok('"Redução de ruído por IA": RNNoise ligado no microfone', r2.ok);
-  ok('voz de A (com IA) chega em B', await flowing(B, 'A', 'microphone'));
+  ok('voz de A (com IA) chega em B', (await eventually(async () => ({ ok: await flowing(B, 'A', 'microphone') }), 10000)).ok);
   await panel.locator('button', { hasText: 'Ouvir meu microfone' }).click();
   ok('"Ouvir meu microfone" vira "Parar de me ouvir"', await until(A, () => document.querySelector('cen-devices-panel')?.textContent?.includes('Parar de me ouvir')));
   await panel.locator('button', { hasText: 'Parar de me ouvir' }).click();
@@ -605,7 +629,8 @@ await part('topo', async () => {
   await B.page.locator('.cursor-ctl button').click();
   ok('cursor: a tecla acende', await until(B, () => document.querySelector('.cursor-ctl.on') !== null));
   const sb = await B.page.locator('cen-stage').boundingBox();
-  for (let i = 0; i < 8; i++) { await B.page.mouse.move(sb.x + 100 + i * 20, sb.y + 100 + i * 10); await wait(60); }
+  // No meio do palco: fora da imagem (nas faixas pretas) o cursor some de propósito.
+  for (let i = 0; i < 8; i++) { await B.page.mouse.move(sb.x + sb.width / 2 + i * 12, sb.y + sb.height / 2 + i * 6); await wait(60); }
   ok('cursor: C vê o cursor de B na tela de A', await until(C, () => document.querySelector('cen-cursor-layer')?.children.length > 0, undefined, 5000));
   await B.page.locator('.cursor-ctl button').click();
   // Diagnóstico e números ao vivo
@@ -667,7 +692,13 @@ await part('celular', async () => {
   await btn(A, 'Desligar câmera').click();
   ok('A desliga a câmera do celular pela tecla', await until(P, () => document.querySelector('.keys .key.lit') === null, undefined, 10000));
   ok('C deixa de ver a câmera do celular', await until(C, () => document.querySelector('cen-cam-pip') === null, undefined, 10000));
-  if ((await A.page.locator('cen-devices-panel').count()) === 0) await A.page.locator('button[aria-label="Escolher câmera"]').click();
+  // Clicar na tecla da câmera fecha o menu, mas ele ainda fica na página uns instantes saindo (animação):
+  // contar o menu dava "aberto" e o clique caía no que estava sumindo. O aria-expanded muda na hora.
+  const camMenu = A.page.locator('button[aria-label="Escolher câmera"]');
+  if ((await camMenu.getAttribute('aria-expanded')) !== 'true') {
+    await until(A, () => document.querySelector('footer .pop') === null, undefined, 3000);
+    await camMenu.click();
+  }
   await A.page.locator('cen-devices-panel button', { hasText: /Desconectar/ }).first().click();
   ok('desconectar o celular: ele sai da sala', await until(A, () => !(document.querySelector('cen-self-cam')?.textContent ?? '').includes('celular') && document.body.innerText.includes('Usar o celular'), undefined, 10000));
   await A.page.keyboard.press('Escape');

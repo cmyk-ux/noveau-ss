@@ -47,3 +47,43 @@ export function browserArgs() {
     `--use-file-for-fake-audio-capture=${fakeVoice()}`,
   ];
 }
+
+/**
+ * Monitor falso de tamanho comum (ex.: 1920x1080) para a captura de tela.
+ *
+ * O dispositivo falso do Chromium (--use-fake-device-for-media-stream) só entrega alguns tamanhos
+ * fixos e, quando o pedido não traz um tamanho "ideal", cai no menor deles: 96x96. O app pede só um
+ * teto (7680x4320) para receber o monitor no tamanho original, que é o que um Chrome de verdade faz;
+ * no falso, a tela inteira virava um quadradinho de 96x96 (cursor, cliques e medidas perdiam o
+ * sentido). Aqui o teste acrescenta o tamanho do "monitor" como ideal na captura e em cada
+ * applyConstraints da faixa de tela (e das cópias dela), sem tirar os tetos que o app pediu.
+ * Uso: ctx.addInitScript(fakeMonitor, { width: 1920, height: 1080 }).
+ */
+export function fakeMonitor({ width, height }) {
+  const md = navigator.mediaDevices;
+  if (!md || typeof md.getDisplayMedia !== 'function') return;
+  const screens = new WeakSet();
+  const sized = (v) => {
+    const o = v && typeof v === 'object' ? v : {};
+    const w = o.width && typeof o.width === 'object' ? o.width : {};
+    const h = o.height && typeof o.height === 'object' ? o.height : {};
+    return { ...o, width: { ...w, ideal: width }, height: { ...h, ideal: height } };
+  };
+  const capture = md.getDisplayMedia.bind(md);
+  md.getDisplayMedia = async (c = {}) => {
+    const s = await capture({ ...c, video: c.video === false ? false : sized(c.video) });
+    for (const t of s.getVideoTracks()) screens.add(t);
+    return s;
+  };
+  const T = MediaStreamTrack.prototype;
+  const apply = T.applyConstraints;
+  T.applyConstraints = function (c) {
+    return apply.call(this, screens.has(this) ? sized(c) : c);
+  };
+  const clone = T.clone;
+  T.clone = function () {
+    const t = clone.call(this);
+    if (screens.has(this)) screens.add(t);
+    return t;
+  };
+}

@@ -95,6 +95,20 @@ LiveKit (Room) ──eventos──► RoomSession ──RoomSnapshot──► Ro
 14. **H.264 só nos perfis que vão para a placa.** `installH264Preference()` (`core/h264.ts`) tira o
     `42e01f` da oferta de toda faixa de vídeo que o site publica. Qualquer teste de capacidade de H.264
     pergunta pelo perfil (`h264ContentTypes()`), nunca só `video/H264`.
+15. **Som novo nasce no volume certo.** O LiveKit cria o ganho de cada som em 100% e desce numa rampa
+    de ~0,5 s até o volume guardado: quem estava mutado tocava alto toda vez que o ganho nascia de
+    novo (faixa nova, "Ativar áudio", reconexão). Em `TrackSubscribed` o volume vai antes do `attach()`
+    e `snapGain()` põe o ganho no valor na hora; depois de `startAudio()` também (`unlockAudio`).
+    Mudanças pedidas usam `rampGain()` (15 ms para mudo, 60 ms no fader). O mixer passa por todas as
+    faixas de som de cada pessoa: numa republicação a nova chega antes da antiga sair.
+16. **Reconectando não é desconectado.** `SignalReconnecting` (retomada: só o canal de controle caiu, a
+    mídia segue) e `Reconnecting` viram `'reconnecting'`; só `Disconnected` limpa o palco. Estado que o
+    servidor guarda (atributos, permissões de faixa) não é zerado do nosso lado durante a queda; na
+    volta (`RoomEvent.Reconnected`) reenvia o que pode ter se perdido (`DirectTalk.reconnected()`,
+    `hwdec`). Testes: `simulateScenario('signal-reconnect' | 'full-reconnect')` na parte `queda-sinal`.
+17. **O foco não é roubado.** Quem assiste uma tela continua nela quando chega outra tela ou câmera
+    (`focusOnArrival`); aparece um aviso com "ver" (`onShareArrived`). Só uma câmera em foco automático
+    dá lugar à grade. Voltar a ver uma tela escondida volta para a grade se o foco era automático.
 
 ## Atributos dos participantes
 
@@ -106,7 +120,7 @@ vai mudar.
 | `watching` | cada pessoa (`room-session.ts`) | troca de foco/grade |
 | `tx` | quem transmite (`room-store.ts` → `publishSendHealth`) | perda/teto/CPU mudam de faixa; no máximo 1 a cada 5 s |
 | `act` | quem transmite (`activity.ts`) | começa/para de transmitir, troca de janela |
-| `hwdec` | cada pessoa, ao entrar | uma vez |
+| `hwdec` | cada pessoa, ao entrar | ao entrar e ao voltar de uma queda |
 | `direct` | cada pessoa (`direct.ts`) | conversa direta começa/acaba |
 | `discordId`, `avatar`, `guest`, `invitedBy`, `device` | servidor, no token | nunca |
 | `phoneOf`, `phoneOfDiscord`, `ctl` | servidor (`phone.mjs`) | celular liga/desliga câmera ou microfone |
@@ -134,6 +148,11 @@ com o Chromium.
   câmera junto da tela, reiniciar a tela, painel de pessoas, conversa direta, mutar a tela (o botão
   tem de mudar em até 1 s), voz mutada continua muda depois de "Ativar áudio", dois cliques rápidos
   no microfone, erros no console.
+- `BASE=http://127.0.0.1:3001 node tools/e2e/controles.mjs`: clica em todos os controles da sala e
+  confere o efeito de verdade (ganho do Web Audio, inscrição e camada no servidor, codec e tamanho que
+  chegam, permissões da conversa direta), inclusive quedas de sinal e reconexão completa simuladas.
+  Cada parte começa do mesmo ponto (`baseline`), então uma falha não derruba as outras. `ONLY=tela,volume`
+  roda só essas partes; `SHOTS=pasta` guarda a tela de cada um quando uma parte quebra.
 - `BASE=http://127.0.0.1:3001 node tools/e2e/qualidade.mjs [codec] [resolução] [segundos]`: o que a
   tela manda de verdade (codec e perfil do H.264, tamanho e fps de cada camada, quem codifica) e o que
   quem assiste recebe. A tela é sintética (2560x1440 a 60 fps).
