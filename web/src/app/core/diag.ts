@@ -14,9 +14,37 @@ export interface SendHealth {
   max: number;
   /** Uso do processador: nominal, fair, serious, critical ou "". */
   cpu: string;
-  /** Por que o navegador está segurando a qualidade: cpu, bandwidth, none. */
+  /**
+   * Por que o navegador está segurando a qualidade: cpu, bandwidth, none; ou 'capture' (a captura
+   * entrega bem menos quadros que o pedido) e 'encoder' (o codificador perde quadros).
+   */
   lim: string;
+  /** Com lim 'capture' ou 'encoder': quadros por segundo que saem (em degraus) e os pedidos. */
+  cf?: number;
+  wf?: number;
 }
+
+/**
+ * Quadros por segundo em degraus, para o atributo "tx" (vai para a sala inteira e não deve mudar a
+ * cada leitura): de 5 em 5 até 60, de 10 em 10 acima.
+ */
+export function fpsStep(n: number): number {
+  if (n <= 0) return 0;
+  return n < 60 ? Math.max(5, Math.round(n / 5) * 5) : Math.round(n / 10) * 10;
+}
+
+/** O que dizer a quem transmite e a quem assiste quando a captura não acompanha. */
+export function captureAdvice(cpu: string): string {
+  const cpuBusy = cpu === 'serious' || cpu === 'critical';
+  return cpuBusy
+    ? 'O jogo está usando quase todo o processador (e provavelmente a placa de vídeo) e o navegador não consegue copiar a tela mais rápido.'
+    : 'O jogo está usando a placa de vídeo inteira e o navegador fica esperando para copiar cada quadro da tela (o processador está com folga).';
+}
+
+export const CAPTURE_FIX =
+  'Para ter fps cheio: limite o FPS do jogo um pouco abaixo do que ele faz hoje (no próprio jogo, ou "Taxa máxima de quadros" no painel da NVIDIA, ' +
+  'ou "Frame Rate Target Control"/Chill no AMD), de preferência num múltiplo do fps da transmissão (120 para 60). ' +
+  'Ou transmita pelo OBS (captura de jogo, rodando como administrador), na tecla OBS da sala.';
 
 export function encodeSendHealth(h: SendHealth): string {
   return JSON.stringify(h);
@@ -32,7 +60,7 @@ export function parseSendHealth(raw: string | null): SendHealth | null {
   }
 }
 
-export type Cause = 'their-net' | 'their-pc' | 'their-idle' | 'my-net' | 'my-pc' | 'my-decoder' | 'unknown';
+export type Cause = 'their-net' | 'their-pc' | 'their-idle' | 'my-net' | 'my-pc' | 'my-decoder' | 'my-capture' | 'unknown';
 
 export interface DiagEvent {
   id: number;
@@ -147,11 +175,19 @@ export function classify(
         : `A conexão de ${who} com o servidor está ruim. Trava para todo mundo.`,
     };
   }
-  // 2) O PC de quem transmite não dá conta de capturar/codificar.
-  if (tx !== null && (tx.cpu === 'serious' || tx.cpu === 'critical' || tx.lim === 'cpu')) {
+  // 2) A captura de quem transmite não acompanha (jogo ocupando a placa de vídeo dele).
+  if (tx !== null && tx.lim === 'capture' && (tx.cf ?? 0) > 0) {
+    return {
+      cause: 'their-pc',
+      text: `O navegador de ${who} está capturando só ~${tx.cf} de ${tx.wf ?? '?'} quadros por segundo. ${captureAdvice(tx.cpu)} Não é a internet nem o seu PC.`,
+    };
+  }
+  // 3) O PC de quem transmite não dá conta de codificar. ("serious" é 75-90% do processador, o normal
+  //    de qualquer jogo, e agora chega sempre, mesmo com o "Ceder" desligado: só "critical" conta.)
+  if (tx !== null && (tx.cpu === 'critical' || tx.lim === 'cpu' || tx.lim === 'encoder')) {
     return { cause: 'their-pc', text: `O PC de ${who} está no limite (processador). A imagem sai com menos quadros.` };
   }
-  // 3) A minha rede: perda que chega até mim (os reenvios do servidor não chegaram a tempo).
+  // 4) A minha rede: perda que chega até mim (os reenvios do servidor não chegaram a tempo).
   if (d.lossPct >= 0.3 || BAD_QUALITY.has(myQuality)) {
     return {
       cause: 'my-net',
@@ -160,7 +196,7 @@ export function classify(
         : 'Sua conexão com o servidor está ruim. Só você trava.',
     };
   }
-  // 4) Um pacote se perdeu de vez e a imagem esperou um quadro inteiro novo (os quadros seguintes
+  // 5) Um pacote se perdeu de vez e a imagem esperou um quadro inteiro novo (os quadros seguintes
   //    dependiam dele e foram jogados fora). Uma perda só já basta, mesmo que a % pareça zero.
   if (w !== null && w.lost > 0 && (w.plis > 0 || w.dropped > 0)) {
     const theirs = tx !== null && tx.l >= 0.1;
@@ -173,7 +209,7 @@ export function classify(
   }
   if (w !== null && w.fpsBefore >= 5) {
     const codec = w.codec === '' ? '' : ` (${w.codec})`;
-    // 5) Chegou tudo, mas o meu navegador pediu quadro-chave: o decodificador não conseguiu ler
+    // 6) Chegou tudo, mas o meu navegador pediu quadro-chave: o decodificador não conseguiu ler
     //    um quadro. Sem perda nenhuma, isso é o decodificador (comum com H.265 na placa de vídeo).
     if (w.plis > 0) {
       return {
@@ -181,14 +217,14 @@ export function classify(
         text: `Seu navegador não conseguiu decodificar um quadro de ${who}${codec} e teve de esperar um quadro inteiro novo. Chegou tudo, então é o decodificador, não a rede.`,
       };
     }
-    // 6) Os quadros chegaram e ficaram presos sem ser decodificados.
+    // 7) Os quadros chegaram e ficaram presos sem ser decodificados.
     if (w.stuck >= Math.max(3, w.fpsBefore * w.freezeSec * 0.5)) {
       return {
         cause: 'my-decoder',
         text: `Os quadros de ${who} chegaram, mas o decodificador do seu navegador${codec} engasgou com eles.`,
       };
     }
-    // 7) Nada chegou durante a pausa, sem perda: quem transmite parou de mandar quadros.
+    // 8) Nada chegou durante a pausa, sem perda: quem transmite parou de mandar quadros.
     if (w.arrivedDuring <= w.fpsBefore * w.freezeSec * 0.2) {
       return {
         cause: 'their-idle',
@@ -196,7 +232,7 @@ export function classify(
       };
     }
   }
-  // 8) O meu PC: chegou tudo, sem pedir quadro-chave, mas o navegador descartou quadros ao mostrar.
+  // 9) O meu PC: chegou tudo, sem pedir quadro-chave, mas o navegador descartou quadros ao mostrar.
   if (d.dropped > 0) {
     return {
       cause: 'my-pc',
@@ -328,6 +364,21 @@ export class Diagnostics {
       dropped: Math.max(0, now.dropped - base.dropped),
       codec: now.codec,
     };
+  }
+
+  /**
+   * Quem transmite: a captura ficou curta (ou voltou). Entra no diário e vai para o servidor uma vez
+   * por episódio, com o que se sabe do envio, para a gente ver em que jogos, placas e telas acontece.
+   */
+  noteCapture(e: { who: string; cf: number; wf: number; cpu: string; metrics: DiagEvent['metrics'] }) {
+    if (this.sender === undefined) return;
+    this.add(
+      'my-capture',
+      e.who,
+      `Sua tela está saindo a ~${e.cf} de ${e.wf} fps: a captura do navegador não pega mais quadros. ${captureAdvice(e.cpu)} ${CAPTURE_FIX}`,
+      1,
+      { fpsCapturados: e.cf, fpsPedidos: e.wf, cpuMeu: e.cpu, ...e.metrics },
+    );
   }
 
   private add(cause: Cause, who: string, text: string, count: number, metrics: DiagEvent['metrics']) {

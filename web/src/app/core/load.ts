@@ -4,17 +4,27 @@
 // "fair", "serious" ou "critical". Pela especificação, uma página que está capturando a tela
 // continua recebendo esses avisos mesmo sem foco, então funciona com o jogo em primeiro plano.
 //
-// Ao apertar ("serious"), baixa só os quadros por segundo; a resolução só cai em "critical".
+// Só cede no "critical" (o processador inteiro acima de ~90% por alguns segundos). O "serious" é o
+// uso entre ~75% e ~90% (services/device/public/cpp/compute_pressure/cpu_pressure_converter.cc), e é
+// o normal de qualquer jogo: antes o "serious" já baixava os quadros, e a tela descia para 30 fps em
+// quase todo jogo, mesmo com a captura e o codificador dando conta (era um dos "não passa de 30").
 // Os quadros caem na própria captura (applyConstraints só com frameRate): menos quadros capturados =
 // menos cópia e menos codificação. A resolução cai no codificador (scaleResolutionDownBy), nunca na
 // captura: reduzir na captura faz o Chrome converter a tela inteira e depois reduzir, na mesma thread
 // que ele limita a meio núcleo (desktop_capture_device.cc), ou seja, a captura fica MAIS cara.
-// Quando o PC alivia por um tempo, sobe um degrau de volta até a qualidade total.
+// Quando o PC alivia por um tempo, sobe um degrau de volta até a qualidade total; se voltar ao limite
+// logo depois de subir, espera o dobro antes de tentar de novo (não fica indo e voltando).
+//
+// Com o "Ceder" desligado o vigia continua lendo o uso do processador, só não mexe em nada: a leitura
+// vai para o diagnóstico (números ao vivo e o atributo "tx"), para dizer se a captura curta é o
+// processador ou a placa de vídeo.
 
 export type Pressure = 'nominal' | 'fair' | 'serious' | 'critical';
 
 export interface LoadState {
   supported: boolean;
+  /** "Ceder quando o PC apertar" ligado (desligado = só lê o uso do processador). */
+  active: boolean;
   pressure: Pressure | null;
   /** 0 = qualidade total. */
   step: number;
@@ -30,9 +40,14 @@ interface Step {
 }
 
 const TICK_MS = 1000;
-const CRITICAL_AFTER_MS = 3000;
-const SERIOUS_AFTER_MS = 6000;
+/** No limite por este tempo (tela de carregamento passa antes disso) para descer um degrau. */
+const CRITICAL_AFTER_MS = 5000;
 const RECOVER_AFTER_MS = 20000;
+const RECOVER_MAX_MS = 160000;
+/** Voltou ao limite até este tempo depois de subir: a próxima subida espera o dobro. */
+const BOUNCE_MS = 30000;
+/** Este tempo sem chegar ao limite zera a espera. */
+const CALM_MS = 120000;
 
 function stepsFor(fps: number): Step[] {
   const raw: Step[] = [
@@ -58,6 +73,10 @@ export class LoadGovernor {
   private pressure: Pressure | null = null;
   private since = performance.now();
   private lastChange = performance.now();
+  /** Última vez que o processador esteve no limite. */
+  private lastCritical = -Infinity;
+  private lastRaise = -Infinity;
+  private recoverMs = RECOVER_AFTER_MS;
   private observer: Observer | null = null;
   private timer?: number;
   private stopped = false;
@@ -70,12 +89,19 @@ export class LoadGovernor {
     private readonly onChange: (s: LoadState) => void,
     /** Reduz a imagem no codificador (1 = normal). */
     private readonly scaleTo: (factor: number) => void,
+    /** false = só lê o uso do processador, sem mexer na transmissão. */
+    private readonly act = true,
   ) {
     this.steps = stepsFor(fps);
   }
 
   static supported(): boolean {
     return 'PressureObserver' in globalThis;
+  }
+
+  /** Quadros por segundo que a captura deve entregar agora (o degrau atual). */
+  fps(): number {
+    return this.steps[this.step].fps;
   }
 
   start() {
@@ -87,12 +113,20 @@ export class LoadGovernor {
     this.observer = new Ctor((records) => {
       const last = records[records.length - 1];
       if (last === undefined || last.state === this.pressure) return;
+      const now = performance.now();
+      if (last.state === 'critical') {
+        // Voltou ao limite logo depois de subir um degrau: a próxima subida espera o dobro.
+        if (now - this.lastRaise < BOUNCE_MS) this.recoverMs = Math.min(RECOVER_MAX_MS, this.recoverMs * 2);
+        this.lastCritical = now;
+      } else if (this.pressure === 'critical') {
+        this.lastCritical = now;
+      }
       this.pressure = last.state;
-      this.since = performance.now();
+      this.since = now;
       this.report(true);
     });
     this.observer.observe('cpu', { sampleInterval: 1000 }).catch(() => this.report(false));
-    this.timer = window.setInterval(() => this.tick(), TICK_MS);
+    if (this.act) this.timer = window.setInterval(() => this.tick(), TICK_MS);
     this.track.addEventListener('ended', () => this.stop(), { once: true });
     this.report(true);
   }
@@ -107,19 +141,18 @@ export class LoadGovernor {
   private tick() {
     if (this.stopped || this.pressure === null) return;
     const now = performance.now();
-    const held = now - this.since;
     const quiet = now - this.lastChange;
-    if (this.pressure === 'critical' && quiet >= CRITICAL_AFTER_MS) this.move(+1);
-    // "Pesado" só tira quadros; resolução só cai se chegar a "no limite".
-    else if (this.pressure === 'serious' && held >= SERIOUS_AFTER_MS && quiet >= SERIOUS_AFTER_MS && this.fpsOnly(this.step + 1))
-      this.move(+1);
-    else if ((this.pressure === 'nominal' || this.pressure === 'fair') && held >= RECOVER_AFTER_MS && quiet >= RECOVER_AFTER_MS)
+    if (this.pressure === 'critical') {
+      this.lastCritical = now;
+      if (now - this.since >= CRITICAL_AFTER_MS && quiet >= CRITICAL_AFTER_MS) this.move(+1);
+      return;
+    }
+    // Longe do limite há bastante tempo: a espera volta ao normal.
+    if (now - this.lastCritical >= CALM_MS) this.recoverMs = RECOVER_AFTER_MS;
+    if (this.step > 0 && now - this.lastCritical >= this.recoverMs && quiet >= this.recoverMs) {
+      this.lastRaise = now;
       this.move(-1);
-  }
-
-  private fpsOnly(step: number): boolean {
-    const s = this.steps[step];
-    return s !== undefined && s.scale === 1;
+    }
   }
 
   private move(delta: number) {
@@ -141,7 +174,15 @@ export class LoadGovernor {
   private report(supported: boolean) {
     const s = this.steps[this.step];
     const even = (n: number) => Math.max(2, Math.round(n / s.scale / 2) * 2);
-    this.onChange({ supported, pressure: this.pressure, step: this.step, width: even(this.size.width), height: even(this.size.height), fps: s.fps });
+    this.onChange({
+      supported,
+      active: this.act,
+      pressure: this.pressure,
+      step: this.step,
+      width: even(this.size.width),
+      height: even(this.size.height),
+      fps: s.fps,
+    });
   }
 }
 

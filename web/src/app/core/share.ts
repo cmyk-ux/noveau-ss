@@ -12,7 +12,7 @@ import {
 import { Codec, CodecChoice, cappedBitrate, encoderProbes, hardwareOnly, LADDER, parseDecoders, pickCodec, planSize, probeEncoders, StreamPlan, Size } from './stream';
 import { CAPTURE_MAX, LoadGovernor, LoadState } from './load';
 import { UploadGuard, UploadState } from './upload-guard';
-import { ShareHealth, ShareWatch, StatsFeed, sourceAudioLevel } from './stats';
+import { LOW_LAYER_MAX_FPS, ShareHealth, ShareWatch, StatsFeed, sourceAudioLevel } from './stats';
 import { StudioBits, StudioSender } from './studio';
 import { CodecGuard } from './codec-guard';
 
@@ -68,7 +68,7 @@ export interface ShareResult {
   resolution: Size;
   audio: 'published' | 'refused' | 'not-requested';
   watch: ShareWatch;
-  governor: LoadGovernor | null;
+  governor: LoadGovernor;
   upload: UploadGuard;
   /** Vigia que troca de codec se o navegador codificar no processador. */
   guard: CodecGuard;
@@ -224,7 +224,7 @@ function videoPublishOptions(req: ShareRequest, codec: Codec, maxBitrate: number
   // só para quem não está aguentando (rede ou PC), em vez de travar; quem aguenta continua no máximo.
   // AV1/VP9 já saem com camadas de tempo (L1T3), que fazem o mesmo cortando quadros.
   const adaptive = req.plan.maxBitrate === 0 && (codec === 'vp8' || codec === 'h264') && Math.max(size.width, size.height) >= 960;
-  const lowFps = Math.min(req.plan.frameRate, 60);
+  const lowFps = Math.min(req.plan.frameRate, LOW_LAYER_MAX_FPS);
   return {
     source: Track.Source.ScreenShare,
     videoCodec: codec,
@@ -372,13 +372,12 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
   const feed = new StatsFeed(() => video.sender);
   // A reserva (backupCodec) aparece sozinha quando alguém precisa: a cada leitura confere o tamanho.
   feed.add(() => scale.apply());
-  const watch = new ShareWatch({ onChange: cb.onHealth }, feed);
+  // O vigia do processador existe sempre: com o "Ceder" desligado ele só lê o uso (para o diagnóstico
+  // dizer se a captura curta é o processador ou a placa de vídeo), sem mexer na transmissão.
+  const governor = new LoadGovernor(video.mediaStreamTrack, encoded, req.plan.frameRate, cb.onLoad, (f) => scale.setLoad(f), req.adaptToLoad);
+  governor.start();
+  const watch = new ShareWatch({ onChange: cb.onHealth, want: () => governor.fps() }, feed);
   watch.start();
-  let governor: LoadGovernor | null = null;
-  if (req.adaptToLoad) {
-    governor = new LoadGovernor(video.mediaStreamTrack, encoded, req.plan.frameRate, cb.onLoad, (f) => scale.setLoad(f));
-    governor.start();
-  }
   const upload = new UploadGuard(() => video.sender, bitrate, cb.onUpload, feed);
   upload.start();
   // Vigia: se o navegador estiver codificando no processador (OpenH264, libvpx, libaom), republica a

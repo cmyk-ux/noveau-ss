@@ -466,7 +466,8 @@ async function dawPair(req, res) {
 // arquivo JSONL (um registro por linha), que gira em 10 MB.
 const DIAG_FILE = process.env.DIAG_FILE ?? '';
 const DIAG_MAX_BYTES = 10 * 1024 * 1024;
-const DIAG_CAUSES = new Set(['their-net', 'their-pc', 'their-idle', 'my-net', 'my-pc', 'my-decoder', 'unknown']);
+// my-capture: quem transmite conta que a captura do navegador dele ficou curta (jogo ocupando a placa).
+const DIAG_CAUSES = new Set(['their-net', 'their-pc', 'their-idle', 'my-net', 'my-pc', 'my-decoder', 'my-capture', 'unknown']);
 const diagRate = new Map(); // identidade -> { minute, count }
 
 async function diagRoute(req, res) {
@@ -497,7 +498,11 @@ async function diagRoute(req, res) {
         ...metrics,
       };
       lines.push(JSON.stringify(rec));
-      console.log(`[diag] ${rec.viewer} viu ${rec.freezes} travada(s) em ${rec.streamer}: ${rec.cause}`);
+      console.log(
+        rec.cause === 'my-capture'
+          ? `[diag] ${rec.viewer} transmitindo: captura em ${rec.fpsCapturados} de ${rec.fpsPedidos} fps (cpu ${rec.cpuMeu || '?'})`
+          : `[diag] ${rec.viewer} viu ${rec.freezes} travada(s) em ${rec.streamer}: ${rec.cause}`,
+      );
     }
     if (DIAG_FILE !== '' && lines.length > 0) {
       const { appendFile, rename, stat } = await import('node:fs/promises');

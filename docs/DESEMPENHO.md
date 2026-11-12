@@ -174,3 +174,94 @@ Medição (LiveKit local, Chromium sem placa, tela sintética 2560x1440 a 60 fps
 
 Sem placa de vídeo o perfil fica Baseline (`42001f`): é o que o OpenH264 aceita. Com placa, o High
 aparece na lista do navegador e vai primeiro.
+
+## Quinta rodada (12/11/2026): jogo preso abaixo de 30 fps
+
+Com qualquer jogo a tela não passava de ~30 fps (no print, 720p a 18 fps), mesmo com 60 ou 120 no menu
+e o "Ceder quando o PC apertar" desligado. A área de trabalho ia a 60-120.
+
+**Números de uma transmissão de verdade** (Vintin transmitindo, placa NVIDIA, "Números ao vivo"):
+captura 47 de 120 fps, enviando 47, codificador `SimulcastEncoderAdapter` com dois
+`MediaFoundationVideoEncodeAccelerator (NVIDIA H.264 Encoder MFT)`, sem limitação, 0% de perda. Quem
+assistia recebia 18 fps a 28 Mbps sem nenhum pacote perdido (outro momento, cena mais pesada). Ou seja:
+o codificador da placa e a rede davam conta; quem segurava os quadros era a **captura**.
+
+### Por que a captura do navegador cai com o jogo aberto (conferido no código do Chromium e do WebRTC)
+
+- A captura de tela roda no processo do navegador, numa thread só (`desktopCaptureThread`,
+  `content/browser/media/capture/desktop_capture_device.cc`). Depois de cada quadro ela agenda o próximo
+  para `max(2 × duração da última captura, 1/fps pedido)` (`kDefaultMaximumCpuConsumptionPercentage =
+  50`). A duração é tempo de relógio, inclusive a espera pela placa de vídeo.
+- No Windows, a tela inteira usa o Desktop Duplication (DXGI); só no Windows 11 24H2 em diante a tela
+  usa o Windows Graphics Capture (`IsWgcEnabledForScreenCapture`). Janela usa o WGC. Nos dois casos o
+  quadro é copiado para uma textura que o processador lê e o código **espera a cópia terminar**
+  (`DxgiTextureStaging::CopyFromTexture`: `CopyResource` + `Map`; `WgcCaptureSession::ProcessFrame`:
+  `CopySubresourceRegion` + `Map` sem `DO_NOT_WAIT`). Depois ainda copia e converte (ARGB → I420) na
+  mesma thread.
+- Com o jogo usando a placa inteira (~99%), a cópia entra na fila atrás dos quadros do jogo e a espera
+  cresce. Aí a regra de cima dobra: 27 ms de espera viram um quadro a cada ~55 ms, ~18 fps. Sem jogo a
+  placa responde na hora e a mesma captura chega a 60-120.
+- O Chrome não pede prioridade na placa de vídeo (não chama `D3DKMTSetProcessSchedulingPriorityClass`
+  nem `SetGPUThreadPriority` fora de testes). O OBS só consegue isso rodando como administrador (fix do
+  OBS 24.0.3), e o Looking Glass só como SYSTEM. A página que está capturando não é rebaixada pelo
+  navegador (`FrameCapturingMediaStreamVoter` vota prioridade `kUserBlocking`), então não é isso.
+- Existe no Chromium um caminho que deixa o quadro na placa (sem a espera do `Map`): `kWebRtcAllowWgcUsingTexture`
+  ("Deliver texture from WGC desktop capturer", junho de 2026) e `kZeroCopyDesktopCapture`. Os dois vêm
+  **desligados** e não aparecem em `chrome://flags`; só por linha de comando (`--enable-features=...`),
+  e só para captura por WGC. Não testado aqui (precisa de Windows com placa).
+
+Relatos de fora com o mesmo quadro: "quando o jogo usa 99-100% da placa a captura da área de trabalho
+para, e volta assim que a carga cai um pouco ou o jogo perde o foco" (fórum de desenvolvedores da NVIDIA,
+"GPU scheduling priority for DXGI/WGC capture under 100% GPU load", maio de 2026); OBS 24.0.3 ("fix
+que pode aliviar problemas de fps causados por 95%+ de uso da placa", só como administrador); Looking
+Glass (a captura DXGI "normalmente precisa de um limitador de quadros no jogo para sobrar tempo de placa").
+
+### O que era do próprio site: o "Ceder" cortava para 30 fps em todo jogo
+
+O "Ceder quando o PC apertar" vem ligado. Ele descia um degrau de fps a cada 6 s com o processador em
+`serious`, e no Chrome `serious` é 75-90% do processador inteiro
+(`services/device/public/cpp/compute_pressure/cpu_pressure_converter.cc`: 0,6 / 0,75 / 0,9), o normal de
+qualquer jogo. Medido com o processador simulado pelo DevTools (`Emulation.setPressureStateOverride`,
+`tools/e2e/captura.mjs ceder`): no `main`, 14 s de `serious` levaram a captura a **30 fps** (degrau 2);
+nesta versão continua em 60.
+
+### O que mudou
+
+- **"Ceder" só no limite de verdade:** só desce com o processador em `critical` (acima de ~90%) por 5 s.
+  Volta depois de 20 s fora do limite; se voltar ao limite logo depois de subir, a próxima subida espera
+  o dobro (até 160 s), para não ficar indo e voltando.
+- **O vigia do processador existe sempre** (com o "Ceder" desligado ele só lê). O uso vai para os
+  números ao vivo e, só `serious`/`critical`, para o atributo `tx`.
+- **Captura curta é dita, com o motivo e o que fazer** (`CaptureShortfall` em `core/stats.ts`): a captura
+  entrega menos de 80% do pedido em todas as leituras de ~10 s, com a imagem mexendo (1,5 Mbps ou mais)
+  e pelo menos 8 fps. Não acusa tela parada (poucos quadros) nem conteúdo que tem menos quadros mesmo
+  (captura firme em 24, 25 ou 30: vídeo, jogo travado em 30).
+  - Quem transmite: a tecla "prévia" mostra "20/60fps" em amarelo, com a explicação; um aviso uma vez
+    por transmissão; o diário registra e manda ao servidor (`my-capture`, com tamanho, codec, se é na
+    placa e o uso do processador), para a gente ver em que jogos e PCs acontece.
+  - Quem assiste: na faixa de cima, "captura de fulano: ~20 de 60 fps", explicando que não é a internet
+    nem o PC de quem assiste. As travadas nesse período vão para "PC de quem transmite".
+  - Se a captura entrega e o codificador perde quadros, o aviso é do codificador (`lim: 'encoder'`).
+
+Teste (`tools/e2e/captura.mjs`, fonte sintética 1280x720 muito mexida, 60 fps pedidos):
+
+| Parte | Captura | Resultado |
+| --- | --- | --- |
+| curta | 18 fps | A vê "20/60fps", B vê "captura de A: ~20 de 60 fps", registro chega ao servidor |
+| cheia | 60 fps | nada |
+| video | 30 fps firmes | nada |
+| parada | relógio mudando 2×/s (~2 fps) | nada |
+| ceder | `serious` 14 s → `critical` → `fair` | 60 → 45 → volta a 60 em ~20 s |
+
+### O que cada um pode fazer para ter fps cheio em jogo
+
+1. **Limitar o FPS do jogo** um pouco abaixo do que ele roda hoje, para sobrar placa (no próprio jogo,
+   "Taxa máxima de quadros" no painel da NVIDIA, "Frame Rate Target Control"/Chill no AMD, ou o RTSS).
+   De preferência num múltiplo do fps da transmissão (120 para 60): a captura pega quadros num ritmo
+   fixo, e um jogo a 144 com transmissão a 60 sai com quadros repetidos e pulados.
+2. **OBS como administrador, com "Captura de jogo"**, transmitindo na sala pela tecla OBS (WHIP). O OBS
+   copia o quadro dentro do próprio jogo e, como administrador, ganha prioridade na placa.
+3. Quem assiste também pode ver menos quadros se estiver jogando no mesmo PC: há vários relatos de vídeo
+   travando no segundo monitor com o jogo em janela sem borda, que somem com o jogo em tela cheia (fórum
+   do Brave, "Video Playback Stuttering Dual Monitor"; Chromium 387478829). Sem aviso de captura curta
+   na faixa de cima e com fps baixo, compare "Números ao vivo" dos dois lados.

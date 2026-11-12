@@ -133,6 +133,13 @@ LiveKit (Room) ──eventos──► RoomSession ──RoomSnapshot──► Ro
 20. **O foco não é roubado.** Quem assiste uma tela continua nela quando chega outra tela ou câmera
     (`focusOnArrival`); aparece um aviso com "ver" (`onShareArrived`). Só uma câmera em foco automático
     dá lugar à grade. Voltar a ver uma tela escondida volta para a grade se o foco era automático.
+21. **Fps baixo em jogo tem nome.** Quando a captura do navegador entrega menos que o pedido (jogo usando a
+    placa de vídeo inteira; o Chrome espera a cópia de cada quadro e dobra o intervalo entre capturas),
+    quem transmite e quem assiste veem "captura em ~N de M fps" com o motivo e o que fazer
+    (`CaptureShortfall` em `core/stats.ts`, `captureAdvice`/`CAPTURE_FIX` em `core/diag.ts`). Nada de
+    baixar fps ou resolução "por precaução": o "Ceder" só age com o processador em `critical` (acima de
+    ~90%); `serious` (75-90%) é o normal de um jogo. Números em `docs/DESEMPENHO.md`, "Quinta rodada".
+    Teste: `tools/e2e/captura.mjs`.
 
 ## Atributos dos participantes
 
@@ -142,7 +149,7 @@ vai mudar.
 | Atributo | Quem escreve | Quando muda |
 | --- | --- | --- |
 | `watching` | cada pessoa (`room-session.ts`) | troca de foco/grade |
-| `tx` | quem transmite (`room-store.ts` → `publishSendHealth`) | perda/teto/CPU mudam de faixa; no máximo 1 a cada 5 s |
+| `tx` | quem transmite (`room-store.ts` → `publishSendHealth`) | perda/teto mudam de faixa, CPU entra ou sai de `serious`/`critical`, captura curta começa/acaba ou muda de degrau (`cf`/`wf`, de 5 em 5 fps); no máximo 1 a cada 5 s |
 | `act` | quem transmite (`activity.ts`) | começa/para de transmitir, troca de janela |
 | `hwdec` | cada pessoa, ao entrar | ao entrar e ao voltar de uma queda |
 | `direct` | cada pessoa (`direct.ts`) | conversa direta começa/acaba |
@@ -185,6 +192,9 @@ com o Chromium.
 - `BASE=http://127.0.0.1:3001 node tools/e2e/qualidade.mjs [codec] [resolução] [segundos]`: o que a
   tela manda de verdade (codec e perfil do H.264, tamanho e fps de cada camada, quem codifica) e o que
   quem assiste recebe. A tela é sintética (2560x1440 a 60 fps).
+- `BASE=http://127.0.0.1:3001 node tools/e2e/captura.mjs [partes]`: captura curta (aviso para quem
+  transmite e para quem assiste, registro no servidor), captura cheia, vídeo de 30 fps e tela parada sem
+  aviso, e o "Ceder" com o processador simulado pelo DevTools (`serious` não mexe, `critical` desce, volta).
 - `BASE=http://127.0.0.1:3001 PANEL=1 node tools/e2e/measure.mjs rotulo`: custo por segundo em cada
   navegador (JavaScript, trabalho total, recálculo de estilo, mensagens de sinalização por tipo).
   `CAM=1` faz B ligar a câmera (grade com 2 telas).

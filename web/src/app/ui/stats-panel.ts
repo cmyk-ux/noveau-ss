@@ -115,11 +115,13 @@ export class StatsPanel {
     const s = await this.store.sendingStats();
     if (s === null) return null;
     const h = this.store.health();
+    // O pedido de agora: o fps escolhido, ou o degrau do "Ceder".
+    const want = h?.wantFps || this.prefs.stream().frameRate;
     return {
       title: 'Enviando',
       rows: [
         row('tamanho', `${s.width}x${s.height}`),
-        row('fps capturados', `${s.captureFps} / ${this.prefs.stream().frameRate}`, s.captureFps > 0 && s.captureFps < this.prefs.stream().frameRate * 0.9),
+        row('fps capturados', `${s.captureFps} / ${want}`, s.captureFps > 0 && s.captureFps < want * 0.9),
         row('fps enviados', String(s.fps), s.captureFps > 0 && s.fps < s.captureFps * 0.85),
         row('bitrate', formatBitrate(s.bitrate)),
         row('alvo', formatBitrate(s.targetBitrate)),
@@ -146,11 +148,15 @@ export class StatsPanel {
    * escolhido não muda isso, porque a captura é sempre no tamanho original.
    */
   private tipRows(s: { encoder: string; width: number; height: number; captureFps: number }): Row[] {
-    const want = this.prefs.stream().frameRate;
+    const want = this.store.health()?.wantFps || this.prefs.stream().frameRate;
     const out: Row[] = [];
     if (/openh264/i.test(s.encoder)) out.push(row('dica', 'H.264 saiu no processador: escolha H.265 ou reinicie a transmissão', true));
-    if (s.captureFps > 0 && s.captureFps < want * 0.9)
-      out.push(row('dica', 'o navegador não captura mais rápido que isso: menos fps no menu, ou o OBS para fps cheio', true));
+    const h = this.store.health();
+    if (h?.short === 'capture')
+      out.push(row('dica', 'jogo ocupando a placa de vídeo: limite o FPS do jogo um pouco abaixo do que ele faz hoje, ou use o OBS', true));
+    else if (h?.short === 'encoder') out.push(row('dica', 'o codificador perde quadros: limite o FPS do jogo para sobrar placa de vídeo', true));
+    else if (s.captureFps > 0 && s.captureFps < want * 0.9)
+      out.push(row('dica', 'captura abaixo do pedido: com a imagem parada é normal (o navegador só captura o que muda)'));
     return out;
   }
 
@@ -169,8 +175,8 @@ export class StatsPanel {
     if (l === null) return [];
     if (!l.supported) return [row('uso do PC', 'navegador não informa')];
     return [
-      row('uso do PC', describePressure(l.pressure), l.pressure === 'serious' || l.pressure === 'critical'),
-      row('degrau', l.step === 0 ? 'qualidade total' : `${l.width}x${l.height} ≤${l.fps}fps`, l.step > 0),
+      row('uso do PC', describePressure(l.pressure), l.pressure === 'critical'),
+      row('ceder', !l.active ? 'desligado' : l.step === 0 ? 'qualidade total' : `${l.width}x${l.height} ≤${l.fps}fps`, l.step > 0),
     ];
   }
 

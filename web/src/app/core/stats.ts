@@ -9,7 +9,19 @@ export interface ShareHealth {
   height: number;
   fps: number;
   sustained: boolean;
+  /** Quadros por segundo que a captura do navegador entrega (antes do codificador), média recente. */
+  captureFps: number;
+  /** Quadros por segundo pedidos agora (o escolhido, ou o degrau do "Ceder"). */
+  wantFps: number;
+  /**
+   * O que está segurando os quadros, de forma sustentada e com a imagem mexendo:
+   * 'capture' = a captura entrega bem menos do que o pedido (jogo ocupando a placa de vídeo ou o
+   * processador; ver CaptureShortfall); 'encoder' = a captura entrega, o codificador perde quadros.
+   */
+  short: Shortfall;
 }
+
+export type Shortfall = 'capture' | 'encoder' | null;
 
 export function asLimitation(v: unknown): Limitation {
   return v === 'cpu' || v === 'bandwidth' || v === 'none' ? v : 'other';
@@ -53,7 +65,7 @@ export function lackOf(l: Limitation): string {
 /** Uma leitura de getStats a cada 2 s, repartida por todos os vigias de quem transmite. */
 const FEED_EVERY_MS = 2000;
 const SUSTAINED_SHARE = 0.6;
-const IDLE: ShareHealth = { reason: 'none', width: 0, height: 0, fps: 0, sustained: false };
+const IDLE: ShareHealth = { reason: 'none', width: 0, height: 0, fps: 0, sustained: false, captureFps: 0, wantFps: 0, short: null };
 type Durations = Record<Limitation, number>;
 const ZERO: Durations = { none: 0, cpu: 0, bandwidth: 0, other: 0 };
 
@@ -143,18 +155,97 @@ export class StatsFeed {
   }
 }
 
+/** Quantas leituras (de 2 s) olhar para dizer que a captura está curta: ~10 s. */
+const SHORT_WINDOW = 5;
+/** Leituras curtas dentro da janela para acusar (todas) e no máximo esta quantidade para limpar. */
+const SHORT_ON = 5;
+const SHORT_OFF = 2;
+/** Abaixo disto do pedido conta como curta. */
+const SHORT_RATIO = 0.8;
+/**
+ * Com menos bits que isso a imagem está quase parada (o navegador só captura o que muda). Sozinho não
+ * basta: com poucos quadros o codificador gasta a sobra refinando a imagem parada (medido: VP8 a
+ * 2 fps com um relógio mudando mandou ~3,4 Mbps por uns 8 s), por isso também o piso de quadros.
+ */
+const MOVING_BPS = 1.5e6;
+/** Menos que isso é tela parada com um detalhe mudando (relógio, cursor), não jogo sem captura. */
+const MIN_SHORT_FPS = 8;
+/** Ritmos de vídeo e de jogo travado: captura firme num deles é o conteúdo, não falta de captura. */
+const CONTENT_RATES = [24, 25, 30];
+
+interface ShortSample {
+  capture: number;
+  sent: number;
+  want: number;
+  moving: boolean;
+}
+
+function contentPaced(samples: ShortSample[]): boolean {
+  return CONTENT_RATES.some((r) => samples.every((x) => Math.abs(x.capture - r) <= 1.5));
+}
+
+/**
+ * Captura curta: a tela está mexendo (bits altos) e o navegador entrega bem menos quadros do que o
+ * pedido, por ~10 s. Em jogo isso quase sempre é a placa de vídeo (ou o processador) ocupada pelo
+ * jogo: o Chrome copia cada quadro da placa e espera a cópia terminar, e com o jogo usando a placa
+ * inteira essa espera cresce; aí ele ainda dobra o intervalo entre capturas para a captura não passar
+ * de meio núcleo (DesktopCaptureDevice::Core::ScheduleNextCaptureFrame). 27 ms de espera viram ~18 fps.
+ * O Chrome não pede prioridade na placa (o OBS só consegue isso rodando como administrador).
+ *
+ * Exceções que não são falta de captura: tela parada (o navegador só captura o que muda: poucos bits
+ * ou poucos quadros) e conteúdo que tem menos quadros mesmo (vídeo de 24/25/30 fps, jogo travado em
+ * 30): captura firme num desses ritmos não acusa. Precisa estar curta em todas as leituras de ~10 s.
+ */
+export class CaptureShortfall {
+  private samples: ShortSample[] = [];
+  private state: Shortfall = null;
+
+  /** Uma leitura. Devolve o estado depois dela. */
+  push(x: ShortSample): Shortfall {
+    this.samples = [...this.samples, x].slice(-SHORT_WINDOW);
+    const capture = this.samples.filter(
+      (s) => s.moving && s.want >= 30 && s.capture >= MIN_SHORT_FPS && s.capture < s.want * SHORT_RATIO,
+    );
+    const encoder = this.samples.filter(
+      (s) => s.moving && s.want >= 30 && s.capture >= s.want * SHORT_RATIO && s.sent < s.capture * SHORT_RATIO,
+    );
+    const paced = this.samples.length === SHORT_WINDOW && contentPaced(this.samples);
+    if (!paced && capture.length >= SHORT_ON) this.state = 'capture';
+    else if (encoder.length >= SHORT_ON) this.state = 'encoder';
+    else if (paced || (this.state === 'capture' && capture.length <= SHORT_OFF) || (this.state === 'encoder' && encoder.length <= SHORT_OFF))
+      this.state = null;
+    return this.state;
+  }
+
+  /** Média dos quadros capturados na janela (o número que aparece para as pessoas). */
+  captureFps(): number {
+    if (this.samples.length === 0) return 0;
+    return Math.round(this.samples.reduce((a, s) => a + s.capture, 0) / this.samples.length);
+  }
+}
+
+/** Teto de quadros da cópia menor da tela (simulcast, share.ts): acima disso ela não manda por desenho. */
+export const LOW_LAYER_MAX_FPS = 60;
+/** Ordem das camadas do LiveKit, da menor para a maior. */
+const RIDS = ['q', 'h', 'f'];
+
 /** Vigia o encoder da tela e avisa quando ele passa a reduzir a qualidade de forma sustentada. */
 export class ShareWatch {
   private readonly onChange: (h: ShareHealth) => void;
+  /** Quadros por segundo pedidos agora (muda com o degrau do "Ceder"). */
+  private readonly want: () => number;
   private off: (() => void) | null = null;
   private durations: Durations | null = null;
   private last = IDLE;
+  private bytes: { sent: number; at: number } | null = null;
+  private readonly shortfall = new CaptureShortfall();
 
   constructor(
-    opts: { onChange: (h: ShareHealth) => void },
+    opts: { onChange: (h: ShareHealth) => void; want: () => number },
     private readonly feed: StatsFeed,
   ) {
     this.onChange = opts.onChange;
+    this.want = opts.want;
   }
 
   start() {
@@ -177,19 +268,48 @@ export class ShareWatch {
     const now = durationsOf(s);
     const lasting = this.durations === null ? 'none' : dominant(this.durations, now);
     this.durations = now;
+    const fps = Math.round(num(s, 'framesPerSecond'));
+    const want = this.want();
+    // Bits de todas as camadas: com a imagem parada o navegador quase não manda nada. E os quadros da
+    // camada ativa que mais entrega: o LiveKit pausa as camadas que ninguém está vendo (dynacast), e uma
+    // camada pausada não é o codificador perdendo quadros. A cópia menor tem teto próprio (60 fps):
+    // ela é medida contra o que deveria mandar, para 120 pedidos com todos na cópia menor não acusar.
+    const capture = captureFpsOf(report, s.mediaSourceId);
+    const layers = [...report.values()].filter((r) => r.type === 'outbound-rtp' && r.kind === 'video');
+    const rank = (r: any) => (typeof r.rid === 'string' ? RIDS.indexOf(r.rid) : RIDS.length);
+    const top = Math.max(-1, ...layers.map(rank));
+    let sent = 0;
+    let sentFps = -1;
+    for (const r of layers) {
+      sent += num(r, 'bytesSent');
+      if (r.active === false) continue;
+      const expected = rank(r) < top ? Math.min(capture, LOW_LAYER_MAX_FPS) : capture;
+      const fps = num(r, 'framesPerSecond');
+      sentFps = Math.max(sentFps, expected > 0 ? (fps / expected) * capture : fps);
+    }
+    const at = num(s, 'timestamp');
+    const bps = this.bytes === null || at <= this.bytes.at ? 0 : ((sent - this.bytes.sent) * 8 * 1e3) / (at - this.bytes.at);
+    this.bytes = { sent, at };
+    const short = this.shortfall.push({ capture, sent: sentFps < 0 ? capture : sentFps, want, moving: bps >= MOVING_BPS });
     const next: ShareHealth = {
       reason: lasting === 'none' ? asLimitation(s.qualityLimitationReason) : lasting,
       width: num(s, 'frameWidth'),
       height: num(s, 'frameHeight'),
-      fps: Math.round(num(s, 'framesPerSecond')),
+      fps,
       sustained: lasting !== 'none',
+      captureFps: this.shortfall.captureFps(),
+      wantFps: want,
+      short,
     };
     const changed =
       next.sustained !== this.last.sustained ||
       next.reason !== this.last.reason ||
       next.width !== this.last.width ||
       next.height !== this.last.height ||
-      next.fps !== this.last.fps;
+      next.fps !== this.last.fps ||
+      next.short !== this.last.short ||
+      next.captureFps !== this.last.captureFps ||
+      next.wantFps !== this.last.wantFps;
     this.last = next;
     if (changed) this.onChange(next);
   }
