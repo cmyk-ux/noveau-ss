@@ -604,6 +604,44 @@ await part('som-da-tela', async () => {
   ok('Opus de novo: som da tela de A volta para B', (await eventually(async () => (await remote(B, 'A', 'screen_share_audio')).exists === true, 15000)).ok);
 });
 
+await part('estudio-parar', async () => {
+  // Parar a tela pelo navegador ("Parar de compartilhar" do Chrome) com o modo estúdio ligado: o selo
+  // "estúdio 24-bit" ficava aceso em quem assistia, porque o envio de PCM nunca parava.
+  await baseline({ aSharing: true });
+  const panel = await streamPanel(A);
+  await panel.locator('.chip', { hasText: 'Estúdio 24-bit' }).click();
+  await applyNow(panel);
+  ok('estúdio 24: B vê o selo', await until(B, () => (document.querySelector('.now')?.textContent ?? '').includes('estúdio 24-bit'), undefined, 15000));
+  // Conta o que A ainda manda no canal do estúdio depois de parar.
+  await A.page.evaluate(() => {
+    const lp = window.__noveau.room.localParticipant;
+    window.__studioSent = 0;
+    const orig = lp.publishData.bind(lp);
+    lp.publishData = (data, opts) => {
+      if (opts?.topic === 'studio') window.__studioSent++;
+      return orig(data, opts);
+    };
+  });
+  // O navegador encerra as faixas da captura e avisa com 'ended' (track.stop() sozinho não avisa).
+  await A.page.evaluate(() => {
+    for (const t of window.__noveauDisplay.getTracks()) {
+      t.stop();
+      t.dispatchEvent(new Event('ended'));
+    }
+  });
+  ok('A volta a mostrar "Compartilhar tela"', await until(A, () => document.querySelector('button[title="Compartilhar tela"]') !== null, undefined, 8000));
+  ok('B: o som de estúdio de A some em até 2 s', await until(B, () => window.__noveau.store.studio.streams().length === 0, undefined, 2000));
+  await A.page.evaluate(() => (window.__studioSent = 0));
+  await wait(1500);
+  const sent = await A.page.evaluate(() => window.__studioSent);
+  ok('A parou de mandar som de estúdio', sent === 0, `${sent} pacotes em 1,5 s`);
+  ok('B: o selo continua apagado', await B.page.evaluate(() => window.__noveau.store.studio.streams().length === 0 && !(document.querySelector('.now')?.textContent ?? '').includes('estúdio')));
+  await A.page.evaluate(() => delete window.__noveau.room.localParticipant.publishData);
+  const p2 = await streamPanel(A);
+  await p2.locator('.chip', { hasText: 'Opus 192k' }).click();
+  await A.page.keyboard.press('Escape').catch(() => undefined);
+});
+
 await part('voz', async () => {
   // O tratamento da voz fica na janela "sua voz" (submenu do microfone → "Equalizador, ruído, eco e
   // sala"). Trocar a redução de ruído não republica o microfone: só o worker muda (ou a captura reabre).
