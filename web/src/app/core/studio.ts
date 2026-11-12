@@ -46,8 +46,11 @@ export class StudioSender {
     this.track.addEventListener('ended', this.onEnded, { once: true });
     const ctx = new AudioContext({ sampleRate: RATE, latencyHint: 'interactive' });
     this.ctx = ctx;
-    await ctx.audioWorklet.addModule(WORKLET_URL);
-    if (this.stopped) return void ctx.close();
+    // Parar no meio (o navegador encerrou a captura): stop() já fechou o contexto e o módulo é abortado.
+    await ctx.audioWorklet.addModule(WORKLET_URL).catch((e: unknown) => {
+      if (!this.stopped) throw e;
+    });
+    if (this.stopped) return;
     const source = ctx.createMediaStreamSource(new MediaStream([this.track]));
     const node = new AudioWorkletNode(ctx, 'studio-capture', { channelCount: 2, channelCountMode: 'explicit' });
     // O worklet só roda se estiver ligado até a saída; o ganho 0 evita tocar o som de novo aqui.
@@ -444,6 +447,9 @@ export class StudioHub {
       pl.node = node;
       for (const q of pl.queue) node.port.postMessage({ type: 'pcm', data: q }, [q.buffer]);
       pl.queue = [];
+    }).catch((e: unknown) => {
+      // A tela saiu antes de o módulo carregar: drop() fechou o contexto e o carregamento é abortado.
+      if (this.players.get(key) === pl) throw e;
     });
     if (ctx.state === 'suspended') void ctx.resume().catch(() => undefined);
     this.publish();
