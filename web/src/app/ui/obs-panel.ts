@@ -12,8 +12,8 @@ import { Toast } from '../core/toast';
   selector: 'cen-obs-panel',
   template: `
     <p class="hint lead">
-      Transmita a tela (ou uma cena inteira) pelo <strong>OBS 30 ou mais novo</strong>. O OBS codifica na placa de vídeo
-      e o servidor só repassa, sem recodificar: chega para a sala o que sai do OBS, com o som em estéreo.
+      Opcional: transmita uma cena inteira pelo <strong>OBS 30 ou mais novo</strong>. O servidor só repassa, sem recodificar:
+      chega para a sala exatamente o que sai do OBS, com som estéreo.
     </p>
 
     @for (s of live(); track s.id) {
@@ -55,14 +55,17 @@ import { Toast } from '../core/toast';
       <li><strong>Áudio</strong>: 48 kHz, estéreo; na Saída, bitrate do áudio no máximo (Opus).</li>
       <li>Aperte <strong>Iniciar transmissão</strong>. Aparece aqui como a tela de {{ me() }}.</li>
     </ol>
-    <p class="hint">
-      Por que 1 s: o OBS não atende pedido de quadro-chave, então quem entra ou perde um pacote espera o próximo.
-      H.264 toca em todo navegador; AV1 só se todos da sala tiverem placa/navegador recentes (não há conversão no servidor).
-    </p>
-    <p class="hint">
-      <strong>OBS 32.1 ou mais novo</strong>: em Transmissão, ponha <em>2 camadas</em> de simulcast (no máximo 3). Quem
-      não aguenta a qualidade cheia recebe a cópia menor sozinho, em vez de travar; os outros continuam no máximo.
-    </p>
+    <details class="more">
+      <summary>Por que quadro-chave de 1 s? E o simulcast?</summary>
+      <p class="hint">
+        O OBS não atende pedido de quadro-chave, então quem entra ou perde um pacote espera o próximo.
+        H.264 toca em todo navegador; AV1 só se todos da sala tiverem placa/navegador recentes (não há conversão no servidor).
+      </p>
+      <p class="hint">
+        <strong>OBS 32.1 ou mais novo</strong>: em Transmissão, ponha <em>2 camadas</em> de simulcast (no máximo 3). Quem
+        não aguenta a qualidade cheia recebe a cópia menor sozinho, em vez de travar; os outros continuam no máximo.
+      </p>
+    </details>
   `,
   styles: `
     :host { display: block; }

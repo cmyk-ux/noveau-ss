@@ -104,13 +104,13 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
           <button type="button" class="btn small" [class.on]="prefs.diagOn()" [class.alert]="prefs.diagOn() && store.diag.unseen() > 0"
             [title]="prefs.diagOn() ? 'Diagnóstico ligado: por que a tela travou' : 'Diagnóstico (desligado)'"
             aria-haspopup="dialog" [attr.aria-expanded]="diagOpen()" (click)="toggleDiag()">
-            <cen-icon name="pulse" [size]="15" />
+            <cen-icon name="pulse" [size]="15" /> <span class="wide-only">diagnóstico</span>
             @if (prefs.diagOn() && store.diag.unseen() > 0) { <span class="mono">{{ store.diag.unseen() }}</span> }
           </button>
           @if (diagOpen()) {
             <div class="diag panel-surface" role="dialog" aria-label="Diagnóstico">
               <div class="pop-head">
-                <span class="label">diagnóstico</span>
+                <h2 class="pop-title">Diagnóstico</h2>
                 <button class="close" title="Fechar" (click)="diagOpen.set(false)"><cen-icon name="close" [size]="15" /></button>
               </div>
               <label class="switch">
@@ -141,7 +141,7 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
           }
         </div>
         <button type="button" class="btn small people-top" [class.on]="peopleOpen()" title="Pessoas e volumes" (click)="togglePeople()">
-          <cen-icon name="people" [size]="15" /> <span class="mono">{{ store.peopleCount() }}</span>
+          <cen-icon name="people" [size]="15" /> <span class="wide-only">pessoas</span> <span class="mono">{{ store.peopleCount() }}</span>
         </button>
         @if (!callRoom) {
           <button type="button" class="btn small invite-top" title="Copiar o convite" (click)="copyInvite()"><cen-icon name="link" [size]="15" /> <span class="wide-only">convidar</span></button>
@@ -177,7 +177,7 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
               Falando só com <strong>{{ personName(d.peer) }}</strong> enquanto segura. Solte para voltar a falar com todos.
             } @else if (d.waiting) {
               Você puxou <strong>{{ personName(d.peer) }}</strong> para um 1o1, mas essa pessoa está em outro 1o1 agora.
-              Sua voz já vai só para ela, e o 1o1 de vocês começa assim que o outro acabar.
+              Ela ouviu um aviso discreto. Sua voz já vai só para ela, e o 1o1 de vocês começa assim que o outro acabar.
             } @else if (d.mine) {
               1o1 com <strong>{{ personName(d.peer) }}</strong>: vocês só se ouvem, e o resto da sala não ouve vocês.
             } @else {
@@ -386,7 +386,7 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
 
       <footer class="dock">
         <div class="keys">
-          <div class="split" [class.open]="menu() === 'mic'">
+          <div class="split" data-legend="mic" [class.open]="menu() === 'mic'">
             <button class="btn icon" [class.off]="!store.micOn()" [title]="store.micOn() ? 'Desligar microfone' : 'Ligar microfone'"
               (click)="store.toggleMic()">
               <cen-icon [name]="store.micOn() ? 'mic' : 'micOff'" />
@@ -397,7 +397,7 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
 
           @if (store.canPublish()) {
             @if (canShare || !isMobile) {
-            <div class="split" [class.open]="menu() === 'screen'">
+            <div class="split" data-legend="tela" [class.open]="menu() === 'screen'">
               <button class="btn icon" [class.on]="store.sharing()" [disabled]="!canShare || store.busy()" [title]="shareTitle2()"
                 (click)="store.toggleShare()">
                 <cen-icon [name]="store.sharing() ? 'screenOff' : 'screen'" />
@@ -406,7 +406,7 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
                 [attr.aria-expanded]="menu() === 'screen'" (click)="toggleMenu('screen')"><cen-icon name="caret" [size]="14" /></button>
             </div>
             }
-            <div class="split" [class.open]="menu() === 'camera'">
+            <div class="split" data-legend="câmera" [class.open]="menu() === 'camera'">
               <button class="btn icon" [class.on]="store.webcamOn()" [disabled]="store.busy()"
                 [title]="store.webcamOn() ? 'Desligar câmera' : 'Ligar câmera'" (click)="store.toggleWebcam()">
                 <cen-icon [name]="store.webcamOn() ? 'cameraOff' : 'camera'" />
@@ -424,17 +424,17 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
 
           @if (store.canClip() && !isMobile) {
             <!-- Clipe só liga se a pessoa pedir: desligado, nada grava e nada fica na memória. -->
-            <button class="btn icon clip-key" [class.on]="store.clipsOn()" [attr.aria-pressed]="store.clipsOn()"
+            <button class="btn icon clip-key" data-legend="clipes" [class.on]="store.clipsOn()" [attr.aria-pressed]="store.clipsOn()"
               [title]="store.clipsOn() ? 'Clipes ligados: guardando os últimos 2 min das telas que você assiste (Alt+C clipa). Clique para desligar.' : 'Clipes desligados (nada grava). Clique para guardar os últimos 2 min das telas que você assiste.'"
               aria-label="Clipes" (click)="toggleClips()">
               <cen-icon name="scissors" />
             </button>
           }
           @if (!isMobile) {
-            <button class="btn icon" [class.on]="menu() === 'daw' || dawPlaying()" title="Plugin de DAW: som da sua DAW sem compressão"
+            <button class="btn icon" data-legend="daw" [class.on]="menu() === 'daw' || dawPlaying()" title="Plugin de DAW: som da sua DAW sem compressão"
               aria-label="Plugin de DAW" [attr.aria-expanded]="menu() === 'daw'" (click)="toggleMenu('daw')"><cen-icon name="fader" /></button>
             @if (store.canPublish()) {
-              <button class="btn icon" [class.on]="menu() === 'obs' || obsLive()" title="Transmitir pelo OBS"
+              <button class="btn icon" data-legend="obs" [class.on]="menu() === 'obs' || obsLive()" title="Transmitir pelo OBS"
                 aria-label="Transmitir pelo OBS" [attr.aria-expanded]="menu() === 'obs'" (click)="toggleMenu('obs')"><cen-icon name="broadcast" /></button>
             }
           }
@@ -443,13 +443,13 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
             <button class="btn icon" [class.on]="peopleOpen()" title="Pessoas e volumes" (click)="togglePeople()"><cen-icon name="people" /></button>
           }
           <span class="sep" aria-hidden="true"></span>
-          <button class="btn danger icon hangup" title="Sair da sala" (click)="hangUp()"><cen-icon name="hangup" /></button>
+          <button class="btn danger icon hangup" data-legend="sair" title="Sair da sala" (click)="hangUp()"><cen-icon name="hangup" /></button>
         </div>
 
         @if (menu(); as m) {
           <div class="pop panel-surface" animate.leave="pop-out" [class.wide]="m === 'screen'" role="dialog" [attr.aria-label]="menuTitle(m)">
             <div class="pop-head">
-              <span class="label">{{ menuTitle(m) }}</span>
+              <h2 class="pop-title">{{ menuTitle(m) }}</h2>
               @if (m === 'mic' && !isMobile) { <cen-listen-button class="head-listen" /> }
               <button class="close" title="Fechar" (click)="menu.set(null)"><cen-icon name="close" [size]="15" /></button>
             </div>
@@ -584,7 +584,8 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
     .warn-line { color: var(--warn); }
     .actions { display: flex; gap: 0.5rem; margin: 1.2rem 0 0.4rem; flex-wrap: wrap; justify-content: center; }
     .slip { margin-top: 1.3rem; padding-top: 1rem; border-top: 1px dashed var(--line-2); }
-    .slip .label { margin: 0 0 0.3rem; }
+    .slip .label { margin: 0 0 0.3rem; display: block; }
+    .slip .label::after { display: none; }
     .link { word-break: break-all; font-size: 0.8rem; margin: 0; color: var(--text); }
 
     /* ---------- menu de volume (botão direito) */
@@ -613,6 +614,14 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
     .split.open .caret cen-icon { transform: none; }
     .sep { width: 2px; height: 26px; margin: 0 0.2rem; border-left: 1px solid #0b0b0c; border-right: 1px solid rgb(255 255 255 / 0.06); }
     .hangup { width: 52px; }
+    /* Legenda impressa embaixo de cada tecla: quem acabou de entrar sabe o que é cada uma sem passar o mouse. */
+    .keys { padding-bottom: 1.15rem; }
+    .split, .keys > .btn[data-legend] { position: relative; }
+    .split[data-legend]::after, .keys > .btn[data-legend]::before {
+      content: attr(data-legend); position: absolute; left: 50%; top: calc(100% + 4px); translate: -50% 0; pointer-events: none;
+      font: 500 0.54rem/1 var(--mono); letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint); white-space: nowrap; }
+    .keys > .btn[data-legend]:active::before, .keys > .btn.on[data-legend]::before { top: calc(100% + 2px); }
+    .split.open::after, .keys > .btn.on[data-legend]::before { color: var(--heading); }
     .pop { position: absolute; bottom: calc(100% + 8px); left: 50%; translate: -50% 0; z-index: 32;
       width: min(320px, calc(100vw - 1.5rem)); max-height: calc(100dvh - 9.5rem); overflow-y: auto;
       padding: 0.7rem 0.9rem 0.9rem; animation: pop-open 260ms steps(6) both; transform-origin: 50% 100%; }
@@ -638,7 +647,11 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
     @keyframes link-wiggle { 33% { transform: rotate(-25deg); } 66% { transform: rotate(15deg); } }
     .pop.wide { width: min(400px, calc(100vw - 1.5rem)); }
     .pop-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.3rem; }
-    .pop-head .label { margin: 0; }
+    /* Nome do menu impresso grande, como o "Pessoas" do painel: dá para saber onde se está. */
+    .pop-head { padding-bottom: 0.55rem; margin-bottom: 0.2rem; border-bottom: 1px solid var(--line); box-shadow: 0 1px 0 rgb(255 255 255 / 0.04); }
+    .pop-title { margin: 0; font-size: 1.3rem; line-height: 1; }
+    /* O primeiro título de seção logo abaixo do nome do menu não precisa de tanto respiro. */
+    .pop-head + * > p.label:first-child, .pop-head + * > :first-child > p.label:first-child { margin-top: 0.9rem; }
     .pop-head .head-listen { margin-left: auto; margin-right: 0.35rem; }
     .close { background: none; border: 0; color: var(--muted); display: grid; place-items: center; padding: 4px; border-radius: 4px; }
     .close:hover { color: var(--text); background: var(--surface-3); }
@@ -703,6 +716,8 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
     /* Dock: teclas grandes para o dedo, longe da barra de gestos do sistema. */
     .mobile .dock { padding: 0.5rem 0.5rem calc(0.6rem + env(safe-area-inset-bottom)); }
     /* Com as fotos de quem está no ar, a fileira pode passar da tela: desliza de lado. */
+    .mobile .keys { padding-bottom: 0.45rem; }
+    .mobile .split[data-legend]::after, .mobile .keys > .btn[data-legend]::before { display: none; }
     .mobile .keys { gap: 0.4rem; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
     .mobile .keys .btn.icon { width: 50px; height: 48px; }
     .mobile .caret { width: 26px; height: 48px; }
@@ -869,7 +884,9 @@ export class RoomScreen {
   protected readonly emptyHint = computed(() =>
     this.store.canPublish()
       ? this.canShare
-        ? 'Compartilhe sua tela e todo mundo na sala vê na hora.'
+        ? this.store.micOn()
+          ? 'Compartilhe sua tela e todo mundo na sala vê na hora.'
+          : 'Compartilhe sua tela e todo mundo na sala vê na hora. Seu microfone começa desligado: ligue na tecla "mic", lá embaixo.'
         : 'Esperando alguém compartilhar. Celular assiste, mas só computador compartilha tela.'
       : 'Você entrou como espectador. Quando alguém compartilhar, aparece aqui.',
   );
@@ -994,7 +1011,7 @@ export class RoomScreen {
   }
 
   menuTitle(m: Menu) {
-    return m === 'mic' ? 'microfone' : m === 'screen' ? 'transmissão da tela' : m === 'daw' ? 'plugin de DAW' : m === 'obs' ? 'transmitir pelo OBS' : 'câmera';
+    return m === 'mic' ? 'Microfone' : m === 'screen' ? 'Transmissão da tela' : m === 'daw' ? 'Plugin de DAW' : m === 'obs' ? 'Transmitir pelo OBS' : 'Câmera';
   }
 
   closeAll() {
