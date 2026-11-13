@@ -377,3 +377,11 @@ Mudanças:
 - O /teste tem "Testar pela janela" e "Testar pela tela inteira", mostra o que foi compartilhado e, na tela inteira com fps baixo, explica o teto.
 
 Ainda não testado com um jogo de verdade (fps e som da janela).
+
+## Décima rodada (13/11/2026): R6 a 17 fps numa RTX 4060
+
+Um amigo do Pedro transmitiu o R6 (RTX 4060) com o fps do jogo sem limite. O painel mostrou:
+- 17 de 60 fps capturados e 17 enviados, tanto pela janela quanto pela tela inteira;
+- H.264 na placa, 5,2 ms por quadro, "limitado por: nada".
+
+Com o R6 limitado a 144 fps, a captura voltou ao pedido. Sem limite, o jogo desenha o máximo que a placa aguenta e ela fica perto de 100% em qualquer modelo. A cópia de cada quadro da captura entra na fila atrás do jogo. A dica do painel (captura abaixo do pedido) e o texto do menu da tela agora sugerem limitar o fps do jogo.
