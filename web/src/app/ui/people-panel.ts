@@ -71,7 +71,7 @@ import { Activity, Surface, activityLine } from '../core/activity';
       @if (d.mode === 'lock') {
         <div class="direct-bar">
           <cen-icon name="direct" [size]="14" />
-          <span class="msg">Só com <strong>{{ nameOf(d.peer) }}</strong>{{ d.waiting ? ' (em outra conversa agora)' : '' }}</span>
+          <span class="msg">1o1 com <strong>{{ nameOf(d.peer) }}</strong>{{ d.waiting ? ' (em outro 1o1 agora)' : '' }}</span>
           <button type="button" class="btn small" (click)="store.directEnd()">voltar para todos</button>
         </div>
       }
@@ -184,7 +184,7 @@ import { Activity, Surface, activityLine } from '../core/activity';
       </div>
     }
     <p class="foot">Os volumes valem só para você. O contorno verde é quem está falando.
-      @if (canDirectAny()) { Passe o mouse numa pessoa: segure a tecla para falar só com ela; arraste até o cadeado para continuar só com ela. }</p>
+      @if (canDirectAny()) { Passe o mouse numa pessoa: segure a tecla para falar só com ela; arraste até o cadeado para puxar ela para um 1o1. }</p>
   `,
   styles: `
     :host { display: block; }
@@ -208,7 +208,7 @@ import { Activity, Surface, activityLine } from '../core/activity';
     .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 0.66rem/1.3 var(--mono);
       letter-spacing: 0.04em; color: var(--faint); }
 
-    /* Conversa direta: a tecla aparece ao passar o mouse na pessoa (no celular, sempre). */
+    /* 1o1: a tecla aparece ao passar o mouse na pessoa (no celular, sempre). */
     .dk { opacity: 0; pointer-events: none; transition: opacity 100ms; }
     .strip:hover .dk, .dk:focus-within, .dk.on { opacity: 1; pointer-events: auto; }
     .strip.direct { background: linear-gradient(90deg, rgb(255 255 255 / 0.035), transparent); }
@@ -341,14 +341,14 @@ export class PeoplePanel {
     if (p.isLocal) {
       const d = this.store.direct();
       if (d?.waiting) return `você · esperando ${other}`;
-      return `você · só com ${other}`;
+      return p.direct.mode === 'lock' ? `você · 1o1 com ${other}` : `você · só com ${other}`;
     }
     if (p.direct.to === me) {
       const d = this.store.direct();
-      if (d !== null && d.peer === p.identity && d.mode === 'lock') return 'conversa a dois com você';
-      return p.direct.mode === 'hold' ? 'falando só com você' : 'quer falar só com você';
+      if (d !== null && d.peer === p.identity && d.mode === 'lock') return '1o1 com você';
+      return p.direct.mode === 'hold' ? 'falando só com você' : 'quer um 1o1 com você';
     }
-    return `em conversa direta com ${other}`;
+    return `em 1o1 com ${other}`;
   }
 
   actIcon(s: Surface): string {

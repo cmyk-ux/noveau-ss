@@ -170,17 +170,17 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
       }
       @if (store.direct(); as d) {
         <div class="banner direct">
-          <span class="flag mono">direto</span>
+          <span class="flag mono">1o1</span>
           <span class="msg">
             @if (d.mode === 'hold') {
               Falando só com <strong>{{ personName(d.peer) }}</strong> enquanto segura. Solte para voltar a falar com todos.
             } @else if (d.waiting) {
-              Você travou a conversa com <strong>{{ personName(d.peer) }}</strong>, que está em outra conversa direta agora.
-              Sua voz já vai só para essa pessoa, e a conversa a dois começa assim que ela acabar a outra.
+              Você puxou <strong>{{ personName(d.peer) }}</strong> para um 1o1, mas essa pessoa está em outro 1o1 agora.
+              Sua voz já vai só para ela, e o 1o1 de vocês começa assim que o outro acabar.
             } @else if (d.mine) {
-              Conversa a dois com <strong>{{ personName(d.peer) }}</strong>: vocês só se ouvem, e o resto da sala não ouve vocês.
+              1o1 com <strong>{{ personName(d.peer) }}</strong>: vocês só se ouvem, e o resto da sala não ouve vocês.
             } @else {
-              <strong>{{ personName(d.peer) }}</strong> abriu uma conversa a dois com você: vocês só se ouvem, e o resto da sala não ouve vocês.
+              <strong>{{ personName(d.peer) }}</strong> puxou você para um 1o1: vocês só se ouvem, e o resto da sala não ouve vocês.
             }
           </span>
           @if (d.mode === 'lock') {
@@ -189,7 +189,7 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
         </div>
       } @else if (store.whispers().length > 0) {
         <div class="banner direct">
-          <span class="flag mono">direto</span>
+          <span class="flag mono">1o1</span>
           <span class="msg">{{ whisperLine() }}</span>
         </div>
       }
@@ -738,7 +738,7 @@ export class RoomScreen {
     const asking = people.filter((p) => p.direct?.mode === 'lock').map((p) => p.name);
     const parts: string[] = [];
     if (holding.length > 0) parts.push(`${holding.join(' e ')} ${holding.length === 1 ? 'está falando' : 'estão falando'} só com você.`);
-    if (asking.length > 0) parts.push(`${asking.join(' e ')} ${asking.length === 1 ? 'quer' : 'querem'} uma conversa a dois com você (você recusou ou está em outra).`);
+    if (asking.length > 0) parts.push(`${asking.join(' e ')} ${asking.length === 1 ? 'quer' : 'querem'} um 1o1 com você (você saiu ou está em outro).`);
     return parts.join(' ');
   });
   protected readonly prefs = inject(Prefs);

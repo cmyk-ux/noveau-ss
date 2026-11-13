@@ -709,7 +709,7 @@ await part('direta', async () => {
   await B.page.mouse.down();
   await B.page.mouse.move(b2.x + 45, b2.y + b2.height / 2, { steps: 6 });
   await B.page.mouse.up();
-  ok('travar: A entra na conversa a dois', await until(A, () => document.body.innerText.includes('abriu uma conversa a dois com você'), undefined, 8000));
+  ok('travar: A entra na conversa a dois', await until(A, () => document.body.innerText.includes('puxou você para um 1o1'), undefined, 8000));
   const lockC = await eventually(async () => {
     const a = await remote(C, 'A', 'microphone');
     const b = await remote(C, 'B', 'microphone');
@@ -722,7 +722,7 @@ await part('direta', async () => {
   });
   ok('travar: A não ouve o resto da sala', mute.ok, JSON.stringify(mute.last?.c));
   await A.page.locator('.banner.direct button', { hasText: 'Voltar para todos' }).click();
-  ok('"Voltar para todos" (de A) acaba para os dois', await until(B, () => !document.body.innerText.includes('Conversa a dois com'), undefined, 8000) && await until(A, () => document.querySelector('.banner.direct') === null, undefined, 8000));
+  ok('"Voltar para todos" (de A) acaba para os dois', await until(B, () => !document.querySelector('.banner.direct')?.innerText.includes('1o1 com'), undefined, 8000) && await until(A, () => document.querySelector('.banner.direct') === null, undefined, 8000));
   ok('C volta a receber a voz de A', (await eventually(async () => ({ ok: await flowing(C, 'A', 'microphone') }), 10000)).ok);
   await B.page.locator('button.people-top').click();
   await btn(B, 'Desligar microfone').click();
@@ -891,7 +891,7 @@ await part('queda-sinal', async () => {
     await wait(1500);
     const still = await eventually(async () => { const s = await remote(C, 'B', 'microphone'); return { ok: s.subscribed === false || s.allowed === false, s }; }, 6000);
     ok(`${scenario}: a conversa a dois continua (C segue sem ouvir B)`, still.ok, JSON.stringify(still.last?.s));
-    ok(`${scenario}: B continua vendo a conversa com A`, await until(B, () => document.body.innerText.includes('Conversa a dois com'), undefined, 6000));
+    ok(`${scenario}: B continua vendo a conversa com A`, await until(B, () => document.querySelector('.banner.direct')?.innerText.includes('1o1 com'), undefined, 6000));
   }
   await B.page.evaluate(() => window.__noveau.store.directEnd());
   ok('depois das quedas, "Voltar para todos": C volta a ouvir B (sem conversa fantasma)', (await eventually(async () => ({ ok: await flowing(C, 'B', 'microphone') }), 12000)).ok);

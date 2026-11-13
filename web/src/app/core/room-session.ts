@@ -27,7 +27,8 @@ import { gpuEncodes, hardwareDecoders } from './stream';
 import { CaptureFacts, captureFacts, needsWorker, voiceCapture, VoiceProcessor, voicePublish, wantPtime } from './voice';
 import { DEFAULT_ROOM_AUDIO, DEFAULT_VOICE, EqBand, RoomAudio, roomAudio, VoiceSettings } from './voice-dsp';
 import type { VoiceMeter, VoiceWorkerOut } from './voice.worker';
-import { DirectMode, DirectTalk, DirectView } from './direct';
+import { DirectCue, DirectMode, DirectTalk, DirectView } from './direct';
+import { playCue } from './sfx';
 import { keep, keepList, keepMap } from './same';
 import type { Probe } from './diag';
 
@@ -465,8 +466,10 @@ export class RoomSession {
     }, AWAY_AFTER_MS);
   };
 
-  /** Conversa direta (falar e ouvir só com uma pessoa). Veja direct.ts. */
+  /** 1o1 (falar e ouvir só com uma pessoa). Veja direct.ts. */
   private readonly direct: DirectTalk;
+  /** Sons do 1o1 já tocados, em ordem (para os testes). */
+  readonly cues: DirectCue[] = [];
 
   constructor(
     private readonly audioContainer: HTMLElement,
@@ -489,6 +492,10 @@ export class RoomSession {
     } catch {}
     this.direct = new DirectTalk(this.room, {
       changed: () => this.emit(),
+      cue: (c) => {
+        if (this.cues.push(c) > 50) this.cues.shift();
+        playCue(c, this.room.getActiveDevice('audiooutput'));
+      },
       micLive: () => this.room.localParticipant.isMicrophoneEnabled || isLive(this.phones().get(this.room.localParticipant.identity)?.getTrackPublication(Track.Source.Microphone)),
       setMic: (on) => this.setMicrophone(on),
     });

@@ -6,9 +6,9 @@ const TRAVEL = 30;
 const LOCK_AT = 22;
 
 /**
- * Botão de conversa direta, numa pessoa da lista.
+ * Tecla do 1o1, numa pessoa da lista.
  * Segurar = fala e ouve só com ela enquanto segura. Segurar e arrastar para a direita até o
- * cadeado = fica travado (conversa a dois) até alguém desligar. Travado, um clique desliga.
+ * cadeado = puxa a pessoa para um 1o1 até alguém desligar. Travado, um clique desliga.
  * Teclado: segurar Espaço = segurar; Enter = travar/destravar.
  */
 @Component({
@@ -61,8 +61,8 @@ export class DirectKey {
   protected readonly knobX = computed(() => (this.state() === 'lock' && !this.pressing ? TRAVEL : this.dx()));
   protected readonly title = computed(() =>
     this.state() === 'lock'
-      ? `Falando só com ${this.name()}. Clique para voltar a falar com todos.`
-      : `Segure para falar só com ${this.name()}. Segure e arraste até o cadeado para continuar só com ${this.name()}.`,
+      ? `1o1 com ${this.name()}. Clique para voltar a falar com todos.`
+      : `Segure para falar só com ${this.name()}. Segure e arraste até o cadeado para puxar ${this.name()} para um 1o1.`,
   );
 
   down(e: PointerEvent) {
