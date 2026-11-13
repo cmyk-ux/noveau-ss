@@ -9,6 +9,7 @@ import {
 } from '@angular/core';
 import {
   AudioPresets,
+  ConnectionState,
   DisconnectReason,
   LocalAudioTrack,
   LocalVideoTrack,
@@ -18,6 +19,7 @@ import {
   VideoPresets,
 } from 'livekit-client';
 import { requestPhoneToken } from '../core/api';
+import { parseDirect, privatePermissions } from '../core/direct';
 import {
   AskResult,
   askCameraAndMic,
@@ -671,6 +673,8 @@ export class PhonePage {
   private ctlSeen = -1;
   private sawOwner = false;
   private ownerTimer?: number;
+  /** Últimas permissões enviadas (para não reenviar iguais). */
+  private permsSig = 'all';
   private wakeLock: { release(): Promise<void> } | null = null;
 
   constructor() {
@@ -788,10 +792,24 @@ export class PhonePage {
         })
         .on(RoomEvent.ParticipantAttributesChanged, (_changed, p) => {
           if (p === room.localParticipant) this.readAttributes();
+          this.followPrivacy();
         })
-        .on(RoomEvent.ParticipantConnected, () => this.checkOwner())
-        .on(RoomEvent.ParticipantDisconnected, () => this.checkOwner())
-        .on(RoomEvent.LocalTrackPublished, () => this.showPreview())
+        .on(RoomEvent.ParticipantConnected, () => {
+          this.checkOwner();
+          this.followPrivacy();
+        })
+        .on(RoomEvent.ParticipantDisconnected, () => {
+          this.checkOwner();
+          this.followPrivacy();
+        })
+        .on(RoomEvent.LocalTrackPublished, () => {
+          this.followPrivacy();
+          this.showPreview();
+        })
+        .on(RoomEvent.Reconnected, () => {
+          this.permsSig = '';
+          this.followPrivacy();
+        })
         .on(RoomEvent.MediaDevicesError, () => this.step.set('denied'));
       await room.connect(grant.url, grant.token, { autoSubscribe: false });
       this.step.set('live');
@@ -807,6 +825,7 @@ export class PhonePage {
       if (typeof ctl?.['n'] === 'number') this.ctlSeen = ctl['n'];
       this.readAttributes();
       this.checkOwner();
+      this.followPrivacy();
       await this.apply();
     } catch (e) {
       this.fail(e instanceof Error ? e.message : 'Não foi possível conectar.');
@@ -854,6 +873,29 @@ export class PhonePage {
   tapToAllow() {
     this.needTap.set(null);
     void this.apply(true);
+  }
+
+  /**
+   * O dono deste celular entrou num 1o1: o microfone daqui vai só para a outra pessoa, cortado no
+   * servidor, como o do PC (antes o resto da sala só deixava o volume no zero). O celular fica sabendo
+   * pelo atributo do PC, que chega junto com o de todo mundo.
+   */
+  private followPrivacy() {
+    const room = this.room;
+    if (room === null || room.state !== ConnectionState.Connected) return;
+    const of = room.localParticipant.attributes?.['phoneOf'];
+    const aim = of === undefined ? null : parseDirect(room.remoteParticipants.get(of)?.attributes);
+    const lp = room.localParticipant;
+    if (aim === null) {
+      if (this.permsSig === 'all') return;
+      this.permsSig = 'all';
+      lp.setTrackSubscriptionPermissions(true);
+      return;
+    }
+    const { sig, list } = privatePermissions(room, lp, aim.to);
+    if (sig === this.permsSig) return;
+    this.permsSig = sig;
+    lp.setTrackSubscriptionPermissions(false, list);
   }
 
   /** O PC dono deste celular está na sala? Se sair (e não voltar logo), pausa tudo. */

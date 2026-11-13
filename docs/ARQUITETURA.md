@@ -146,6 +146,17 @@ LiveKit (Room) ──eventos──► RoomSession ──RoomSnapshot──► Ro
     se algo voltar a pôr a tela em "manter fluidez". Antes de mexer nisso, rode o `/teste`
     (`pages/test-page.ts`, `tools/e2e/autoteste.mjs`) e `tools/e2e/qualidade.mjs`. Números em
     `docs/DESEMPENHO.md`, "Sétima rodada".
+23. **1o1: o servidor corta, e quem está de fora confere a volta.** Quem está num 1o1 libera o
+    microfone (do PC e do celular usado como microfone) só para a outra pessoa, com
+    `setTrackSubscriptionPermissions`; as permissões mudam junto com o envio (`permsFor`), nunca depois
+    de esperar o atributo (antes elas abriam para a sala inteira por um instante em cada começo). Ao
+    sair, o LiveKit v1.13.11 devolve a voz na hora só para parte da sala (o observador da faixa se perde
+    numa corrida de goroutines; o resto esperava a ronda de 3 s). Por isso quem está de fora, quando vê
+    o atributo `direct` da pessoa voltar, pede a inscrição de novo (`setSubscribed(true)`, exceção
+    medida à regra 3: uma mensagem por pessoa por 1o1) e, 4 s depois, confere uma vez se os bytes
+    chegam; se não, desinscreve e inscreve do zero (`DirectTalk.verify`). Quem sai de um 1o1 deixa
+    `"<pessoa>|out"` enquanto a outra ainda aponta para ela, para ninguém ficar preso sozinho esperando.
+    Teste: `tools/e2e/umaum.mjs`.
 
 ## Atributos dos participantes
 
@@ -158,7 +169,7 @@ vai mudar.
 | `tx` | quem transmite (`room-store.ts` → `publishSendHealth`) | perda/teto mudam de faixa, CPU entra ou sai de `serious`/`critical`, codificador perdendo quadros começa/acaba, fps capturado muda de degrau (`cf`/`wf`, de 5 em 5 fps); no máximo 1 a cada 5 s |
 | `act` | quem transmite (`activity.ts`) | começa/para de transmitir, troca de janela |
 | `hwdec` | cada pessoa, ao entrar | ao entrar e ao voltar de uma queda |
-| `direct` | cada pessoa (`direct.ts`) | conversa direta começa/acaba |
+| `direct` | cada pessoa (`direct.ts`) | 1o1 começa/acaba (`<pessoa>\|hold`, `<pessoa>\|lock`, `<pessoa>\|out` = saí e a outra ainda aponta para mim) |
 | `discordId`, `avatar`, `guest`, `invitedBy`, `device` | servidor, no token | nunca |
 | `phoneOf`, `phoneOfDiscord`, `ctl` | servidor (`phone.mjs`) | celular liga/desliga câmera ou microfone |
 | `obs`, `obsName`, `obsOf` | servidor (`obs.mjs`), no token | nunca |
@@ -190,6 +201,10 @@ com o Chromium.
   chegam, permissões da conversa direta), inclusive quedas de sinal e reconexão completa simuladas.
   Cada parte começa do mesmo ponto (`baseline`), então uma falha não derruba as outras. `ONLY=tela,volume`
   roda só essas partes; `SHOTS=pasta` guarda a tela de cada um quando uma parte quebra.
+- `BASE=http://127.0.0.1:3001 N=6 CICLOS=3 node tools/e2e/umaum.mjs`: o 1o1 com a sala cheia, várias
+  vezes: ninguém de fora recebe a voz dos dois (no servidor), todos voltam a ouvir os dois depois (bytes,
+  faixa viva, elemento tocando, volume), sons de entrar e sair, apertar e soltar rápido, gente entrando
+  no meio, faixa perdida em quem está de fora, quem puxou sem ver o outro sair, celular como microfone.
 - `BASE=http://127.0.0.1:3001 node tools/e2e/voz-teste.mjs`: o microfone no worker, Opus a ~100
   pacotes/s, janela da voz, presets, IA forte entrando sem cortar a voz, troca da qualidade da sala,
   volume acima de 100% (`SHOTS=pasta` grava fotos da janela).
