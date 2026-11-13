@@ -24,6 +24,8 @@
   --text: #ddd8cc;
   --muted: #908b80;
   --faint: #66635c;
+  /* títulos de seção: tinta lilás, para não se confundir com o texto nem com as explicações */
+  --heading: #b4a9dc;
   /* roxo apagado, de tinta e não de luz */
   --accent: #6f5fa6;
   --accent-hi: #a497cf;
@@ -139,16 +141,35 @@ a { color: var(--accent-hi); }
   background: var(--led-off); box-shadow: inset 0 1px 1px #000a;
 }
 .chip:hover { color: var(--text); }
-.chip.lit { transform: translateY(2px); box-shadow: var(--key-pressed); background: #2f2f30; color: var(--text); }
-.chip.lit::before { background: var(--accent-hi); box-shadow: 0 0 4px var(--accent-glow); animation: led-on 380ms steps(1) both; }
+/* Escolhida: afundada, chapa tingida de roxo, legenda clara e LED aceso. Dá para ver de longe qual está valendo. */
+.chip.lit { transform: translateY(2px); box-shadow: var(--key-pressed), inset 0 0 0 1px rgb(164 151 207 / 0.45);
+  background: #3a3352; color: var(--accent-ink); }
+.chip.lit::before { background: #cfc4f5; box-shadow: 0 0 5px rgb(164 151 207 / 0.8); animation: led-on 380ms steps(1) both; }
 .chips { display: flex; flex-wrap: wrap; gap: 0.35rem; padding-bottom: 2px; }
 
-/* Legenda impressa no painel. */
+/* Legenda impressa no painel. Três níveis, cada um com a sua cor:
+   título de seção (.label, lilás, maiúsculas), texto e escolhas (creme), explicação (.hint, cinza). */
 .label {
-  font: 500 0.64rem/1.2 var(--mono); letter-spacing: 0.16em; text-transform: uppercase; color: var(--faint);
-  margin: 1.1rem 0 0.45rem;
+  font: 500 0.68rem/1.2 var(--mono); letter-spacing: 0.14em; text-transform: uppercase; color: var(--heading);
+  margin: 1.35rem 0 0.5rem;
 }
-.hint { font-size: 0.82rem; color: var(--muted); margin: 0.3rem 0; line-height: 1.45; }
+/* Título de seção dentro de painel: um fio depois do texto, como legenda de equipamento. */
+p.label:not(.sub):not(.or) { display: flex; align-items: center; gap: 0.6rem; }
+p.label:not(.sub):not(.or)::after { content: ''; flex: 1; height: 1px; background: rgb(180 169 220 / 0.18); }
+/* Legenda pequena que não é título (subtítulo, rodapé): continua apagada. */
+.label.sub { color: var(--faint); }
+.hint { font-size: 0.8rem; color: var(--muted); margin: 0.35rem 0; line-height: 1.45; }
+.hint strong { color: var(--text); font-weight: 600; }
+/* Explicação longa que nem todo mundo precisa: fechada, abre com um clique. */
+details.more { margin: 0.45rem 0 0; font-size: 0.8rem; color: var(--muted); }
+details.more > summary { display: inline-flex; align-items: center; gap: 0.35rem; cursor: pointer; list-style: none;
+  color: var(--text); font-size: 0.8rem; padding: 2px 0; user-select: none; }
+details.more > summary::-webkit-details-marker { display: none; }
+details.more > summary::before { content: ''; width: 0; height: 0; border-left: 5px solid var(--heading);
+  border-top: 4px solid transparent; border-bottom: 4px solid transparent; transition: transform 120ms steps(2); }
+details.more[open] > summary::before { transform: rotate(90deg); }
+details.more > summary:hover { color: var(--accent-hi); }
+details.more > :not(summary) { animation: print 220ms steps(5) both; }
 .error { color: var(--danger); min-height: 1.2em; font-size: 0.88rem; }
 .mono { font-family: var(--mono); font-size: 0.92em; letter-spacing: 0.01em; }
 /* Etiqueta colada (fita rotuladora). */
