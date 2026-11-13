@@ -29,6 +29,17 @@ function fakeWindow() {
   window.__surface = 'window';
   window.__freeze = false;
   window.__extra = 0;
+  // Quadros chegando com a imagem congelada (R6 com alt-tab): grabFrame devolve sempre a mesma.
+  window.__still = false;
+  const grab = ImageCapture.prototype.grabFrame;
+  let stillBitmap = null;
+  ImageCapture.prototype.grabFrame = async function () {
+    const b = await grab.call(this);
+    if (!window.__still) return b;
+    if (stillBitmap === null) stillBitmap = await createImageBitmap(b);
+    b.close();
+    return createImageBitmap(stillBitmap);
+  };
   md.getDisplayMedia = async (c) => {
     const s = await capture(c);
     for (const t of s.getVideoTracks()) {
@@ -117,6 +128,16 @@ await set(A, { __freeze: true });
 await wait(900);
 await set(A, { __freeze: false });
 ok('soluço de 0,9 s: sem aviso', await never(B, stagePaused, undefined, 4000));
+
+// --- Quadros chegando com a imagem congelada (R6 com alt-tab em tela cheia).
+await wait(4000);
+const t2 = Date.now();
+await set(A, { __still: true });
+ok('imagem congelada com quadros chegando: B vê "Transmissão pausada"', await until(B, stagePaused, undefined, 8000), `${((Date.now() - t2) / 1000).toFixed(1)} s`);
+await set(A, { __still: false });
+ok('imagem volta a mexer: o aviso some', await until(B, () => document.querySelector('main.stage-area .paused') === null, undefined, 6000));
+await wait(4000);
+ok('janela mexendo normal: sem aviso', !(await B.page.evaluate(stagePaused)));
 
 // --- Tela inteira parada: não é janela, nunca avisa.
 await set(A, { __surface: 'monitor' });
