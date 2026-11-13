@@ -176,7 +176,7 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
               Falando só com <strong>{{ personName(d.peer) }}</strong> enquanto segura. Solte para voltar a falar com todos.
             } @else if (d.waiting) {
               Você puxou <strong>{{ personName(d.peer) }}</strong> para um 1o1, mas essa pessoa está em outro 1o1 agora.
-              Sua voz já vai só para ela, e o 1o1 de vocês começa assim que o outro acabar.
+              Ela ouviu um aviso discreto. Sua voz já vai só para ela, e o 1o1 de vocês começa assim que o outro acabar.
             } @else if (d.mine) {
               1o1 com <strong>{{ personName(d.peer) }}</strong>: vocês só se ouvem, e o resto da sala não ouve vocês.
             } @else {

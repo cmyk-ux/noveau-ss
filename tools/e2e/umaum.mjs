@@ -246,6 +246,46 @@ for (let i = 1; i <= CICLOS; i++) {
   await allHearAll('depois do rápido', group);
 }
 
+// 9) "Toc toc": A está num 1o1 com B e C tenta puxar A. Só A ouve o aviso, uma vez; C arrastar de
+// novo logo em seguida não toca de novo (20 s por pessoa), nem D logo depois (5 s entre quaisquer).
+step = 'toc toc';
+await store(A).lock(ids.B);
+ok('B entra junto', await untilIn(B));
+await Promise.all(group.map(cues));
+await store(C).lock(ids.A);
+await wait(1500);
+ok('A ouve o toc toc', JSON.stringify(await cues(A)) === '["knock"]');
+ok('A continua no 1o1 com B', (await A.page.evaluate(() => window.__noveau.store.direct()?.peer)) === ids.B);
+ok('C ouve "puxei" e fica esperando', JSON.stringify(await cues(C)) === '["pull"]' && (await C.page.evaluate(() => window.__noveau.store.direct()?.waiting)) === true);
+ok('ninguém mais ouve nada', (await Promise.all(group.filter((p) => p !== A && p !== C).map(cues))).every((c) => c.length === 0));
+await store(C).end();
+await wait(400);
+await store(C).lock(ids.A);
+await wait(1200);
+ok('C insistindo: não toca de novo', (await cues(A)).length === 0);
+const D = group[3];
+await store(D).lock(ids.A);
+await wait(1200);
+ok('D logo depois: não toca (5 s entre avisos)', (await cues(A)).length === 0);
+await store(D).end();
+await store(C).end();
+ok('C e D saem', (await untilOut(C)) && (await untilOut(D)));
+await store(A).end();
+ok('A e B saem', (await untilOut(A)) && (await untilOut(B)));
+await wait(5200);
+await store(A).lock(ids.B);
+ok('B entra junto de novo', await untilIn(B));
+await cues(A);
+await store(D).lock(ids.A);
+await wait(1500);
+ok('D depois de 5 s: toca', JSON.stringify(await cues(A)) === '["knock"]');
+await store(D).end();
+ok('D sai', await untilOut(D));
+await store(A).end();
+ok('A e B saem', (await untilOut(A)) && (await untilOut(B)));
+await allHearAll('depois do toc toc', group);
+await Promise.all(group.map(cues));
+
 // 5) Gente entrando e saindo durante o 1o1.
 step = 'entra gente no meio';
 await store(A).lock(ids.B);

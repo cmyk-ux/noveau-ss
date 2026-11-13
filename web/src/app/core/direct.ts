@@ -53,8 +53,13 @@ function outOf(attrs: Record<string, string> | undefined): string | null {
   return v !== undefined && v.endsWith('|out') ? v.slice(0, -4) : null;
 }
 
-/** Som de entrar e sair do 1o1 (veja sfx.ts). */
-export type DirectCue = 'pull' | 'pulled' | 'leave';
+/** Som de entrar e sair do 1o1, e o "toc toc" de quem tenta puxar você enquanto está noutro (veja sfx.ts). */
+export type DirectCue = 'pull' | 'pulled' | 'leave' | 'knock';
+
+/** A mesma pessoa só faz o "toc toc" tocar de novo depois disso (arrastar e cancelar várias vezes). */
+export const KNOCK_EACH_MS = 20_000;
+/** Entre dois "toc toc" quaisquer (várias pessoas tentando ao mesmo tempo). */
+export const KNOCK_ANY_MS = 5_000;
 
 /**
  * Quem pode receber cada faixa de `lp` estando num 1o1 com `to`: a outra pessoa recebe tudo; o
@@ -125,6 +130,11 @@ export class DirectTalk {
   /** Quantas vezes cada pessoa entrou num 1o1 com outra (a conferência do fim vale só para o último). */
   private readonly rounds = new Map<string, number>();
   private queue: Promise<void> = Promise.resolve();
+  /** Quem está tentando me puxar para um 1o1 enquanto estou noutro (já avisado ou ignorado). */
+  private knockers = new Set<string>();
+  /** Quando cada pessoa fez o "toc toc" tocar pela última vez. */
+  private readonly knockedAt = new Map<string, number>();
+  private lastKnock = -Infinity;
 
   constructor(
     private readonly room: Room,
@@ -251,11 +261,37 @@ export class DirectTalk {
         }
       }
     }
+    this.knock(pointsAtMe);
     // Entrou gente ou publiquei outra faixa: refaz a lista de quem pode receber o quê.
     this.applyPermissions(this.permsFor);
     // O "saí" já não precisa ficar (a outra pessoa parou de apontar para mim): limpa o atributo.
     if (this.wire() !== this.appliedWire) this.kick();
     this.reclaim();
+  }
+
+  /**
+   * Estou num 1o1 travado e alguém tenta me puxar para outro: a pessoa fica esperando (não entro
+   * sozinho no dela), e eu ouço um "toc toc" discreto, só aqui (som local, não passa pelo microfone
+   * nem pelo servidor). Toca uma vez por tentativa nova, no máximo uma vez a cada KNOCK_EACH_MS por
+   * pessoa e KNOCK_ANY_MS no geral; uma tentativa barrada pelo limite não toca depois.
+   */
+  private knock(pointsAtMe: (id: string) => boolean) {
+    const busyWith = this.aim?.mode === 'lock' ? this.aim.to : null;
+    const now = new Set<string>();
+    if (busyWith !== null) {
+      for (const p of this.room.remoteParticipants.values()) {
+        if (p.identity !== busyWith && p.identity !== this.declined && pointsAtMe(p.identity)) now.add(p.identity);
+      }
+    }
+    const t = performance.now();
+    for (const id of now) {
+      if (this.knockers.has(id)) continue;
+      if (t - (this.knockedAt.get(id) ?? -Infinity) < KNOCK_EACH_MS || t - this.lastKnock < KNOCK_ANY_MS) continue;
+      this.knockedAt.set(id, t);
+      this.lastKnock = t;
+      this.hooks.cue('knock');
+    }
+    this.knockers = now;
   }
 
   /**
