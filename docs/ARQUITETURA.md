@@ -177,8 +177,8 @@ LiveKit (Room) ──eventos──► RoomSession ──RoomSnapshot──► Ro
     `ImageCapture.grabFrame`, menos de 1% mudando). Documento parado desde o começo, tela inteira e
     soluço curto não contam. Janela coberta que continua desenhando (jogo sem borda) não tem como ser
     vista pelo navegador: segue mandando imagem. Volta com 3 quadros em 1 s (um quadro solto é
-    o "refresh" do WebRTC). Vai no `act` (`p:1`), no máximo uma mudança a cada 2 s. Quem assiste vê chuvisco
-    (`.tv-static`, só `transform`, só enquanto aparece) e o aviso no palco, na grade, na prévia da barra
+    o "refresh" do WebRTC). Vai no `act` (`p:1`), no máximo uma mudança a cada 2 s. Quem assiste vê o último quadro desbotado com
+    chuvisco por cima (`.tv-static.over`, só `transform`, só enquanto aparece) e o aviso no palco, na grade, na prévia da barra
     e no painel de pessoas. Teste: `tools/e2e/pausa.mjs`.
 26. **Prévia da barra sem botão.** O vídeo do cartão de quem está no ar liga sozinho com o mouse em
     cima (chuvisco até a imagem chegar) e é solto ao sair. Não liga para a tela em foco, escondida ou

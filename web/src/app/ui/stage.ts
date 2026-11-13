@@ -18,6 +18,7 @@ const QUALITY_EVERY_MS = 2000;
     '(dblclick)': 'onDoubleClick()',
     '[class.zoomed]': 'zoom() > 1',
     '[class.panning]': 'panning',
+    '[class.frozen]': 'frozen()',
   },
   template: `<div class="lens" [style.transform]="lens()">
       <video #video autoplay playsinline muted [class.mirror]="mirror()" [class.tuning]="tuning()" (resize)="readSource()"></video>
@@ -39,6 +40,8 @@ const QUALITY_EVERY_MS = 2000;
     video.mirror { transform: scaleX(-1); }
     /* Trocou a câmera com a tela: a imagem fecha numa faixa e abre de novo, como TV trocando de canal. */
     video.tuning { animation: tune-big 300ms steps(6) both; }
+    /* Transmissão pausada: o último quadro fica, desbotado, atrás do chuvisco e do aviso. */
+    :host(.frozen) video { filter: grayscale(0.7) brightness(0.55) contrast(1.15); animation: frozen-hold 2.6s steps(1, end) infinite; }
     @keyframes tune-big {
       0% { clip-path: inset(49% 0 49% 0); filter: brightness(2) contrast(1.5) grayscale(1); }
       55% { clip-path: inset(0 0 0 0); filter: brightness(1.3); }
@@ -71,6 +74,7 @@ export class Stage {
     return this.camBig() ? f.cam?.mirror === true : f.mirror;
   });
   protected readonly tuning = signal(false);
+  protected readonly frozen = computed(() => this.store.focused()?.activity.paused === true && !this.camBig());
   private previousFrames = 0;
   /** Zoom com a roda, no ponto onde o mouse está (1 = normal, até 8x). */
   protected readonly zoom = signal(1);

@@ -304,6 +304,16 @@ input[type='checkbox'] { accent-color: var(--accent); }
   37.5% { transform: translate(-122px, -18px); } 50% { transform: translate(89px, 61px); } 62.5% { transform: translate(-29px, 134px); }
   75% { transform: translate(147px, -55px); } 87.5% { transform: translate(-103px, 101px); }
 }
+/* Por cima do último quadro (transmissão pausada): a imagem que a pessoa estava vendo fica,
+   desbotada, com o chuvisco por cima, como TV perdendo o sinal. */
+.tv-static.over { background: transparent; }
+.tv-static.over::before { opacity: 0.26; }
+/* O último quadro, parado: sem cor, mais escuro, tremendo a cada tanto como antena mal ajustada. */
+.frozen-frame { filter: grayscale(0.7) brightness(0.55) contrast(1.15); animation: frozen-hold 2.6s steps(1, end) infinite; }
+@keyframes frozen-hold {
+  0%, 86%, 100% { transform: none; } 88% { transform: translate(0, -3px) skewX(-1.5deg); } 90% { transform: translate(2px, 2px); }
+  92% { transform: translate(-1px, 0) skewX(1deg); } 94% { transform: none; }
+}
 @keyframes static-roll { from { transform: translateY(-100%); } to { transform: translateY(340%); } }
 
 @media (prefers-reduced-motion: reduce) {

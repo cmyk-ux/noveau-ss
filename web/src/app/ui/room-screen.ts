@@ -214,7 +214,7 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
           @if (f.activity.paused && !store.focusedCamBig()) {
             <!-- A janela transmitida parou de mandar imagem (minimizada, alt-tab): chuvisco e aviso. -->
             <div class="paused" animate.leave="paused-out" role="status" aria-live="polite">
-              <div class="tv-static" aria-hidden="true"></div>
+              <div class="tv-static over" aria-hidden="true"></div>
               <div class="testcard card screws paused-card">
                 <div class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
                 <p class="nosignal mono"><span class="led warn"></span>{{ f.isLocal ? 'sua janela saiu de cena' : 'em outra janela' }}</p>
