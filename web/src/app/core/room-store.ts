@@ -3,6 +3,7 @@ import { LoadGovernor, LoadState } from './load';
 import { UploadGuard, UploadState } from './upload-guard';
 import { CodecGuard } from './codec-guard';
 import { ShrinkGuard } from './shrink-guard';
+import { PauseWatch } from './pause-watch';
 import { Diagnostics, encodeSendHealth, fpsStep } from './diag';
 import { DestroyRef, Injectable, computed, effect, inject, signal } from '@angular/core';
 import {
@@ -104,6 +105,8 @@ export class RoomStore {
   private readonly _activity = signal<Activity | null>(null);
   /** O que eu estou transmitindo (null = nada). */
   readonly myActivity = this._activity.asReadonly();
+  /** A janela que estou transmitindo parou de mandar imagem (minimizada, alt-tab). */
+  readonly myPaused = computed(() => this._activity()?.paused === true);
 
   private link: RoomLink = { key: '', secret: '' };
   private token = '';
@@ -121,6 +124,7 @@ export class RoomStore {
   private uploadGuard: UploadGuard | null = null;
   private codecGuard: CodecGuard | null = null;
   private shrinkGuard: ShrinkGuard | null = null;
+  private pauseWatch: PauseWatch | null = null;
   private readonly _upload = signal<UploadState | null>(null);
   /** Diário de problemas da tela que estou assistindo. */
   readonly diag = new Diagnostics(() => this.token);
@@ -802,6 +806,8 @@ export class RoomStore {
               `Troquei para ${c.to.toUpperCase()} na placa de vídeo para o seu PC não perder FPS.`,
           );
         },
+        onPaused: (paused) =>
+          this._activity.update((a) => (a === null ? a : paused ? { ...a, paused: true } : { surface: a.surface })),
         onShrinkFix: (e) => {
           console.info('[tela] mantendo a resolução', e);
           this.diag.noteShrink({ who: this.prefs.name() || 'você', ...e, codec: this._encoder()?.codec ?? '' });
@@ -812,6 +818,8 @@ export class RoomStore {
     this.codecGuard = r.guard;
     this.shrinkGuard?.stop();
     this.shrinkGuard = r.shrink;
+    this.pauseWatch?.stop();
+    this.pauseWatch = r.pause;
     this.watch = r.watch;
     this.governor = r.governor;
     this.uploadGuard?.stop();
@@ -858,6 +866,8 @@ export class RoomStore {
     this.codecGuard = null;
     this.shrinkGuard?.stop();
     this.shrinkGuard = null;
+    this.pauseWatch?.stop();
+    this.pauseWatch = null;
     this.governor?.stop();
     this.governor = null;
     this.uploadGuard?.stop();

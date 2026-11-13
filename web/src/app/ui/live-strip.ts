@@ -36,8 +36,9 @@ function iconFor(s: ShareView): string {
  *
  * - A minha tela: uma tecla "prévia". Fechada por padrão: mostrar a própria tela grande custava
  *   ~0,6 núcleo a mais para quem transmite. Aberta, é uma cópia em 360p a 15 fps (quase de graça).
- * - A tela de cada pessoa: a foto dela. Clicar põe em foco. Parar o mouse mostra o nome e o que
- *   ela está passando, sem vídeo; o vídeo ao vivo (cópia menor) só liga se você pedir.
+ * - A tela de cada pessoa: a foto dela. Clicar põe em foco. Parar o mouse abre um cartão com o nome,
+ *   o que ela está passando e a prévia ao vivo (cópia menor), que só existe enquanto o mouse está ali:
+ *   chuvisco de TV primeiro, depois a imagem. Tirou o mouse, a cópia é solta.
  */
 @Component({
   selector: 'cen-live-strip',
@@ -78,7 +79,7 @@ function iconFor(s: ShareView): string {
         </div>
         <div class="screen">
           <video #mv autoplay playsinline muted [class.mirror]="m.mirror" (playing)="mineTuned.set(true)"></video>
-          @if (!mineTuned()) { <div class="snow" aria-hidden="true"><span class="mono">sintonizando</span></div> }
+          @if (!mineTuned()) { <div class="snow" aria-hidden="true"><div class="tv-static"></div><span class="mono">sintonizando</span></div> }
         </div>
         <div class="swap">
           <button type="button" class="btn small" [class.on]="store.myOnStage()" [attr.aria-pressed]="store.myOnStage()"
@@ -97,21 +98,24 @@ function iconFor(s: ShareView): string {
           <span class="onair mono">ao vivo</span>
           <strong>{{ p.face.name }}</strong>
         </div>
-        @if (live()) {
-          <div class="screen" (click)="pick(p.face)">
+        <!-- Prévia ao vivo: só existe com o mouse em cima (cópia menor). Até o vídeo chegar, chuvisco. -->
+        <div class="screen" (click)="pick(p.face)">
+          @if (live()) {
             <video #pv autoplay playsinline muted (playing)="tuned.set(true)" (loadeddata)="tuned.set(true)"></video>
-            @if (!tuned()) { <div class="snow" aria-hidden="true"><span class="mono">sintonizando</span></div> }
-          </div>
-        }
+          }
+          @if (!live() || !tuned()) {
+            <div class="snow" [class.paused]="p.face.share.activity.paused" aria-hidden="true">
+              <div class="tv-static"></div>
+              <span class="mono">{{ snowLabel(p.face) }}</span>
+            </div>
+          }
+        </div>
         <div class="act">
           <cen-pixel [name]="p.face.icon" [size]="11" />
           <span class="what">{{ p.face.line || (p.face.share.kind === 'camera' ? 'câmera' : 'tela') }}</span>
           @if (p.face.share.hidden) { <span class="tag">escondida</span> }
         </div>
         <div class="row">
-          @if (!live() && p.face.share.id !== focusedId() && !p.face.share.hidden) {
-            <button type="button" class="btn small" (click)="live.set(true)">▶ prévia ao vivo</button>
-          }
           @if (p.face.share.id !== focusedId()) {
             <button type="button" class="btn small primary" (click)="pick(p.face)">assistir</button>
           }
@@ -160,11 +164,11 @@ function iconFor(s: ShareView): string {
       box-shadow: 0 0 0 1px #0b0b0c, inset 0 0 0 1px rgb(255 255 255 / 0.04); }
     .screen video { width: 100%; height: 100%; object-fit: contain; display: block; animation: crt-on 320ms var(--ease) both; }
     .screen video.mirror { transform: scaleX(-1); }
-    /* Chuvisco parado (uma imagem só) enquanto o vídeo não chega. */
-    .snow { position: absolute; inset: 0; display: grid; place-items: center; background-color: #1a1a1b;
-      background-image: var(--grain), var(--grain); background-size: 120px 120px, 77px 77px; }
-    .snow span { font-size: 0.6rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted); background: rgb(0 0 0 / 0.6);
-      padding: 2px 6px; }
+    /* Chuvisco de TV (o mesmo da transmissão pausada) enquanto o vídeo não chega. */
+    .snow { position: absolute; inset: 0; display: grid; place-items: center; }
+    .snow span { position: relative; font-size: 0.6rem; letter-spacing: 0.2em; text-transform: uppercase; color: var(--muted);
+      background: rgb(0 0 0 / 0.66); padding: 2px 6px; }
+    .snow.paused span { color: var(--warn); }
     .act { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.45rem; color: var(--accent-hi); min-width: 0; }
     .what { font: 500 0.72rem/1.2 var(--mono); letter-spacing: 0.04em; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .row { display: flex; gap: 0.35rem; margin-top: 0.45rem; }
@@ -219,8 +223,15 @@ export class LiveStrip {
     const face = h === null ? undefined : this.faces().find((f) => f.share.id === h.id);
     return face === undefined || h === null ? null : { face, x: h.x };
   });
-  /** O vídeo ao vivo no cartão só liga quando a pessoa pede. */
-  protected readonly live = signal(false);
+  /**
+   * O vídeo ao vivo no cartão liga sozinho com o mouse em cima e desliga ao sair (é o mesmo custo do
+   * antigo botão "prévia ao vivo", só que sem o clique). Não liga para a tela que já está no palco,
+   * para a escondida (você pediu para não baixar) nem para a pausada (a imagem está parada).
+   */
+  protected readonly live = computed(() => {
+    const p = this.preview();
+    return p !== null && p.face.share.id !== this.focusedId() && !p.face.share.hidden && p.face.share.activity.paused !== true;
+  });
   protected readonly tuned = signal(false);
   private readonly pv = viewChild<ElementRef<HTMLVideoElement>>('pv');
   private attached: { id: string; el: HTMLVideoElement; track: string } | null = null;
@@ -295,7 +306,14 @@ export class LiveStrip {
     this.store.focusShare(f.share.id);
     this.overCard = false;
     this.hoverId.set(null);
-    this.live.set(false);
+  }
+
+  snowLabel(f: Face): string {
+    const s = f.share;
+    if (s.id === this.focusedId()) return 'no palco';
+    if (s.hidden) return 'escondida';
+    if (s.activity.paused) return 'pausada · outra janela';
+    return 'sintonizando';
   }
 
   hover(f: Face, e: Event) {
@@ -305,7 +323,6 @@ export class LiveStrip {
     const btn = e.currentTarget as HTMLElement;
     const x = btn.getBoundingClientRect().left - this.host.nativeElement.getBoundingClientRect().left;
     const open = () => {
-      if (this.hoverId()?.id !== f.share.id) this.live.set(false);
       this.mineOpen.set(false);
       this.hoverId.set({ id: f.share.id, x: Math.max(-120, x - 8) });
     };
@@ -325,7 +342,6 @@ export class LiveStrip {
     this.closeTimer = window.setTimeout(() => {
       if (this.overCard) return;
       this.hoverId.set(null);
-      this.live.set(false);
     }, CLOSE_MS);
   }
 }

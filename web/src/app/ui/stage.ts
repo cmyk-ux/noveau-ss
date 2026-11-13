@@ -111,6 +111,17 @@ export class Stage {
         window.setTimeout(() => this.tuning.set(false), 320);
       }
     });
+    // A janela de quem transmite voltou depois de pausada: a imagem "sintoniza" de novo.
+    let pausedId: string | null = null;
+    effect(() => {
+      const f = this.store.focused();
+      const paused = f?.activity.paused === true && !this.camBig() ? f.id : null;
+      if (pausedId !== null && paused === null && f?.id === pausedId) {
+        this.tuning.set(true);
+        window.setTimeout(() => this.tuning.set(false), 320);
+      }
+      pausedId = paused;
+    });
     effect((onCleanup) => {
       this.readPlaybackQuality();
       const t = window.setInterval(() => this.readPlaybackQuality(), QUALITY_EVERY_MS);

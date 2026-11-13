@@ -210,6 +210,24 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
       <main #stageArea class="stage-area" [class.controls]="controls()" (wheel)="noZoom($event)">
         @if (store.focused(); as f) {
           <cen-stage (click)="clickFocused()" (contextmenu)="openVolume($event, f)" />
+          @if (f.activity.paused && !store.focusedCamBig()) {
+            <!-- A janela transmitida parou de mandar imagem (minimizada, alt-tab): chuvisco e aviso. -->
+            <div class="paused" animate.leave="paused-out" role="status" aria-live="polite">
+              <div class="tv-static" aria-hidden="true"></div>
+              <div class="testcard card screws paused-card">
+                <div class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
+                <p class="nosignal mono"><span class="led warn"></span>{{ f.isLocal ? 'sua janela saiu de cena' : 'em outra janela' }}</p>
+                <h2>Transmissão pausada</h2>
+                @if (f.isLocal) {
+                  <p class="hint">A janela que você transmite está minimizada ou parou de desenhar. Quem assiste vê este aviso
+                    até você voltar para ela.</p>
+                } @else {
+                  <p class="hint"><b>{{ f.ownerName }}</b> saiu da janela que está transmitindo (minimizou ou foi para outra).
+                    A imagem volta sozinha assim que a janela aparecer de novo.</p>
+                }
+              </div>
+            </div>
+          }
           <div class="viewfinder" aria-hidden="true"></div>
           @if (f.cam !== null && !store.focusedCamClosed()) { <cen-cam-pip [share]="f" [source]="stage()?.source() ?? noSize" /> }
           @if (freshIssue(); as e) {
@@ -266,10 +284,17 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
             <div class="testcard card screws">
               <div class="bars" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div>
               @if (store.myShare(); as mine) {
-                <p class="nosignal mono sending"><span class="led accent"></span>enviando</p>
-                <h2>{{ mine.kind === 'camera' ? 'Sua câmera está no ar.' : 'Sua tela está no ar.' }}</h2>
-                <p class="hint">A prévia fica desligada para não pesar no seu PC enquanto você joga.
-                  Quando alguém abrir a tela, ela aparece aqui.</p>
+                @if (store.myPaused()) {
+                  <p class="nosignal mono"><span class="led warn"></span>pausada</p>
+                  <h2>Sua transmissão está pausada.</h2>
+                  <p class="hint warn-line">A janela que você transmite está minimizada ou parou de desenhar. Quem assiste vê
+                    "transmissão pausada" até você voltar para ela.</p>
+                } @else {
+                  <p class="nosignal mono sending"><span class="led accent"></span>enviando</p>
+                  <h2>{{ mine.kind === 'camera' ? 'Sua câmera está no ar.' : 'Sua tela está no ar.' }}</h2>
+                  <p class="hint">A prévia fica desligada para não pesar no seu PC enquanto você joga.
+                    Quando alguém abrir a tela, ela aparece aqui.</p>
+                }
                 <div class="actions">
                   <button class="btn" title="Mostrar a sua tela grande aqui (cópia em 720p 30 fps; quem assiste recebe a original)"
                     (click)="store.setMyOnStage(true); store.focusShare(mine.id)"><cen-icon name="eye" [size]="16" /> Ver minha tela aqui</button>
@@ -564,6 +589,15 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
     .stage-area:hover .viewfinder, .stage-area:hover .corner, .corner:focus-within { opacity: 1; transform: none; }
     .grid { position: absolute; inset: 0; padding: 10px; display: grid; gap: 10px;
       grid-template-columns: repeat(var(--cols), minmax(0, 1fr)); grid-auto-rows: minmax(0, 1fr); }
+
+    /* ---------- transmissão pausada (janela minimizada): chuvisco atrás, aviso na frente */
+    .paused { position: absolute; inset: 0; z-index: 2; display: grid; place-items: center; padding: 1.5rem 1rem; overflow: hidden;
+      animation: crt-on 420ms var(--ease) both; }
+    .paused-card { position: relative; width: min(460px, 100%); text-align: center; padding-top: 0; overflow: visible;
+      background-color: rgb(20 20 21 / 0.94); animation: win-zoom 220ms 160ms steps(5) both; }
+    .paused-card .led.warn { animation: blink 1.4s steps(1) infinite; }
+    .paused-card .hint b { color: var(--text); font-weight: 500; }
+    .paused.paused-out { animation: crt-off 300ms var(--ease) both; }
 
     /* ---------- sem sinal */
     .empty { height: 100%; display: grid; place-items: center; padding: 1.5rem 1rem; overflow-y: auto;

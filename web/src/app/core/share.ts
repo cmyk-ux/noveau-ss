@@ -1,4 +1,5 @@
 // Publicar a tela (e o som dela) no LiveKit com as configurações escolhidas.
+import { PauseWatch } from './pause-watch';
 import { captureRateFor } from './monitor';
 import {
   BackupCodecPolicy,
@@ -57,6 +58,8 @@ export interface ShareCallbacks {
   onCodecSwitch?: (s: CodecSwitch) => void;
   /** O navegador encolheu a tela sozinho com bits de sobra; passou para "manter resolução". */
   onShrinkFix?: (e: ShrinkEvent) => void;
+  /** A janela transmitida parou de mandar imagem (minimizada, alt-tab) ou voltou. */
+  onPaused?: (paused: boolean) => void;
 }
 
 export interface CodecSwitch {
@@ -83,6 +86,8 @@ export interface ShareResult {
   gpu: boolean;
   /** 'monitor' (tela inteira), 'window' (janela) ou 'browser' (aba). */
   surface?: string;
+  /** Vigia de "transmissão pausada" (janela minimizada). */
+  pause: PauseWatch;
 }
 
 /**
@@ -449,7 +454,10 @@ export async function startShare(room: Room, req: ShareRequest, cb: ShareCallbac
   // (visto com H.264 na NVIDIA). Aí a tela passa a manter a resolução. Ver shrink-guard.ts.
   const shrink = new ShrinkGuard(video, (e) => cb.onShrinkFix?.(e), feed);
   shrink.start();
-  return { codec, bitrate, resolution: encoded, audio: audioState, watch, surface, governor, upload, guard, shrink, gpu: probes[codec]?.gpu === true };
+  // Janela minimizada / alt-tab: os quadros param; quem assiste vê "transmissão pausada".
+  const pause = new PauseWatch(video.mediaStreamTrack, (p) => cb.onPaused?.(p));
+  pause.start();
+  return { codec, bitrate, resolution: encoded, audio: audioState, watch, surface, governor, upload, guard, shrink, pause, gpu: probes[codec]?.gpu === true };
 }
 
 export async function stopShareAudio(room: Room) {

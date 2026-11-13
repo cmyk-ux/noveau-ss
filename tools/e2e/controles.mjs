@@ -499,8 +499,8 @@ await part('faixa', async () => {
   const faceB = C.page.locator('cen-live-strip .face').filter({ hasText: 'B' });
   await faceB.hover();
   ok('passar o mouse na foto de B abre o cartão', await until(C, () => document.querySelector('cen-live-strip .card[role=tooltip]') !== null, undefined, 4000));
-  await C.page.locator('cen-live-strip .card button', { hasText: 'prévia ao vivo' }).click();
-  ok('prévia ao vivo de B toca', await until(C, () => document.querySelector('cen-live-strip .card video')?.videoWidth > 0));
+  // Sem botão: a prévia ao vivo carrega sozinha com o mouse em cima.
+  ok('prévia ao vivo de B toca sozinha', await until(C, () => document.querySelector('cen-live-strip .card video')?.videoWidth > 0));
   const r = await eventually(async () => { const s = await remote(C, 'B', 'screen_share'); return { ok: s.enabled === true, s }; });
   ok('prévia liga a tela de B (camada menor)', r.ok, JSON.stringify(r.last?.s));
   await C.page.locator('cen-live-strip .card button', { hasText: 'assistir' }).click();

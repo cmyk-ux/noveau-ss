@@ -23,7 +23,8 @@ Contam as diferenças entre as linhas, não o valor absoluto.
   que o navegador já entrega em 360p a 15 fps.
 - **"No ar" na barra de baixo.** As fotos de quem está com a tela aberta saíram do palco e foram para
   a barra. Passar o mouse mostra o nome e o que a pessoa está passando, sem vídeo. O vídeo ao vivo
-  só liga no botão "prévia ao vivo".
+  só liga no botão "prévia ao vivo". (13/11: o botão saiu; a prévia liga sozinha enquanto o mouse está
+  em cima, com chuvisco até a imagem chegar, e é solta ao tirar o mouse. Mesmo custo do clique.)
 - **Clipe mais leve:**
   - Sem canvas no meio quando só muda o tamanho, porque o próprio codificador reduz a imagem.
   - Grava só com o codificador da placa de vídeo. Antes, sem placa, codificava 1080p60 no processador.
