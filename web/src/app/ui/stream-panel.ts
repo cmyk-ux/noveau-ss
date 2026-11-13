@@ -63,8 +63,8 @@ import {
     @if (settings().frameRate > 60) {
       <p class="hint">Acima de 60 só aparece para quem assiste num monitor de 120 Hz ou mais. 120 é o máximo que o navegador captura.</p>
     }
-    <p class="hint">Em jogo: sem limite de fps o jogo usa a placa de vídeo inteira (mesmo numa placa forte) e o navegador não consegue
-      copiar a tela no fps pedido. Limite o fps do jogo (ex.: 144, ou a taxa do monitor) e compartilhe a janela do jogo.</p>
+    <p class="hint">Em jogo: se o jogo usar a placa de vídeo inteira, o navegador não consegue copiar a tela no fps pedido. Limitar o FPS do jogo
+      um pouco abaixo do que ele faz (de preferência num múltiplo deste: 120 para 60) deixa folga e a tela sai cheia.</p>
     <p class="label">bitrate máximo</p>
     <div class="chips">
       @for (b of bitrates; track b.bps) {

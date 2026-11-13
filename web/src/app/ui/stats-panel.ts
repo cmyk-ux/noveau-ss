@@ -145,11 +145,8 @@ export class StatsPanel {
     if (monitorShort) out.push(row('dica', 'tela inteira tem teto no Windows 11: compartilhe a JANELA do jogo (sem bordas) para passar disso', true));
     const h = this.store.health();
     if (h?.short === 'encoder') out.push(row('dica', 'o codificador perde quadros: limite o FPS do jogo para sobrar placa de vídeo', true));
-    // Jogo sem limite de fps deixa a placa sempre perto de 100% (desenha o máximo que ela aguenta) e a
-    // cópia de cada quadro da captura fica na fila. Visto em 13/11/2026: R6 numa 4060 capturava 17/60
-    // pela janela e pela tela; com o jogo limitado a 144 fps, a captura voltou ao pedido.
     else if (!monitorShort && s.captureFps > 0 && s.captureFps < want * 0.9)
-      out.push(row('dica', 'em jogo: limite o fps do jogo (ex.: 144, ou a taxa do monitor) para sobrar placa para a captura; sem jogo, tela parada dá menos quadros e é normal', true));
+      out.push(row('dica', 'o navegador só captura quando a tela muda: área de trabalho parada ou vídeo de 30 fps dão menos quadros, e é normal'));
     return out;
   }
 
