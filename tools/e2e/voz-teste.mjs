@@ -110,12 +110,48 @@ const peakHz = await A.page.evaluate(async () => {
 });
 results.push(`INFO tom do microfone falso: ${Math.round(peakHz)} Hz`);
 
+// Teste do microfone: A se ouve, a sala não ouve A, A não ouve a sala, e o eco do navegador desliga
+// só enquanto testa (com ele ligado a escuta virava "eco" e a voz travava).
+await B.page.locator('button[title="Ligar microfone"]').first().click();
+/** Volume com que a voz de B toca para A (elemento ou ganho do Web Audio). */
+const bLevelAtA = () => A.page.evaluate(() => {
+  const t = [...window.__noveau.room.remoteParticipants.values()][0]?.getTrackPublication('microphone')?.track;
+  if (!t) return null;
+  return t.gainNode ? t.gainNode.gain.value : Math.max(0, ...t.attachedElements.map((e) => (e.muted ? 0 : e.volume)));
+});
+await until(A, () => [...window.__noveau.room.remoteParticipants.values()][0]?.getTrackPublication('microphone')?.track !== undefined);
+await wait(600);
+const echoOf = () => A.page.evaluate(() => window.__noveau.session.micTracks().raw?.getSettings().echoCancellation);
+const echoBefore = await echoOf();
+const bBefore = await bLevelAtA();
 const listen = A.page.locator('cen-voice-panel header button.listen');
 await listen.click();
-ok('A: "me ouvir" no topo da janela liga a escuta', await until(A, () => document.querySelector('cen-voice-panel header button.listen')?.getAttribute('aria-pressed') === 'true'));
+ok('A: "me ouvir" no topo da janela liga o teste', await until(A, () => document.querySelector('cen-voice-panel header button.listen')?.getAttribute('aria-pressed') === 'true'));
+ok('A: aviso "testando o microfone" aparece', await until(A, () => /Testando o microfone/.test(document.querySelector('cen-voice-panel cen-listen-note')?.textContent ?? '')));
 ok('A: escuta passa pelo tratamento (trilha da escuta existe)', await until(A, () => window.__noveau.session.voiceProc?.monitorTrack?.readyState === 'live'));
+await wait(800);
+const echoDuring = await echoOf();
+ok('A: eco do navegador desligado durante o teste', echoBefore !== false && echoDuring === false, `antes ${echoBefore}, durante ${echoDuring}`);
+const monDb = await rms(A, 'monitor');
+const outDb = await rms(A, 'out');
+ok('A: escuta toca a voz, sala recebe silêncio', monDb !== null && monDb > -50 && outDb !== null && outDb < -90, `escuta ${monDb?.toFixed(1)} dB, sala ${outDb?.toFixed(1)} dB`);
+const bDuring = await bLevelAtA();
+ok('A: não ouve B durante o teste', bBefore !== null && bBefore > 0.5 && bDuring !== null && bDuring < 0.001, `antes ${bBefore}, durante ${bDuring}`);
 await listen.click();
-ok('A: "me ouvir" desliga', await until(A, () => document.querySelector('cen-voice-panel header button.listen')?.getAttribute('aria-pressed') === 'false' && !window.__noveau.session.voiceProc?.monitorTrack));
+ok('A: "parar teste" desliga', await until(A, () => document.querySelector('cen-voice-panel header button.listen')?.getAttribute('aria-pressed') === 'false' && !window.__noveau.session.voiceProc?.monitorTrack));
+await wait(1000);
+const echoAfter = await echoOf();
+ok('A: eco do navegador volta ao parar', echoAfter === echoBefore, `${echoAfter}`);
+const outAfter = await rms(A, 'out');
+ok('A: voz volta para a sala', outAfter !== null && outAfter > -50, `${outAfter?.toFixed(1)} dB`);
+ok('A: volta a ouvir B', await until(A, () => {
+  const t = [...window.__noveau.room.remoteParticipants.values()][0]?.getTrackPublication('microphone')?.track;
+  return t && (t.gainNode ? t.gainNode.gain.value : Math.max(0, ...t.attachedElements.map((e) => (e.muted ? 0 : e.volume)))) > 0.5;
+}));
+// B desliga: a mesma voz falsa tocando em A confundiria as medidas seguintes (o eco de A apagaria a voz).
+await B.page.evaluate(() => window.__noveau.session.setMicrophone(false));
+await until(A, () => [...window.__noveau.room.remoteParticipants.values()][0]?.getTrackPublication('microphone')?.isMuted !== false);
+await wait(500);
 
 // Clique num lugar vazio do gráfico: banda nova, já escolhida.
 await A.page.selectOption('cen-voice-panel select[aria-label="Preset do equalizador"]', 'natural').catch(() => {});
@@ -158,9 +194,14 @@ await shot(A, 'voz-solo.png');
 await A.page.mouse.up();
 ok('A: solo deixa passar só a faixa (fora do tom quase nada, em cima do tom quase tudo)', soloOff !== null && soloOn !== null && soloOn - soloOff > 15, `fora ${soloOff?.toFixed(1)} dB, em cima ${soloOn?.toFixed(1)} dB (banda em ${fNow} Hz)`);
 ok('A: arrastar o fone muda a frequência da banda', Math.abs(Math.log2(fNow / peakHz)) < 0.3, `${fNow} Hz`);
-ok('A: a sala não ouve o solo', outDuring !== null && outBefore !== null && Math.abs(outDuring - outBefore) < 3, `sala antes ${outBefore?.toFixed(1)} dB, durante ${outDuring?.toFixed(1)} dB`);
+// O solo liga o teste do microfone: a sala recebe silêncio enquanto você segura o fone.
+ok('A: a sala não ouve o solo (silêncio enquanto testa)', outDuring !== null && outDuring < -90, `sala antes ${outBefore?.toFixed(1)} dB, durante ${outDuring?.toFixed(1)} dB`);
 ok('A: soltar o fone sai do solo e desliga a escuta que ele ligou', await until(A, () => document.querySelector('cen-voice-panel button.solo.on') === null && !window.__noveau.session.voiceProc?.monitorTrack));
 
+// Referência nova: o fim do teste reabre a captura (o eco volta), e o ganho automático do navegador
+// recomeça do zero; o nível de antes do solo não serve mais de comparação.
+await wait(2500);
+const outRef = await rms(A, 'out');
 // EQ dinâmico em cima do tom: limiar baixo, alcance -9 dB: a banda abaixa sozinha.
 await A.page.fill('cen-voice-panel .row.edit label:has-text("Q") input', '1');
 await A.page.locator('cen-voice-panel .row.edit label:has-text("Q") input').dispatchEvent('change');
@@ -172,7 +213,7 @@ await A.page.locator('cen-voice-panel .dynrow label:has-text("alcance") input').
 ok('A: banda dinâmica age sozinha (medidor desce)', await until(A, (idx) => parseFloat((document.querySelector('cen-voice-panel .dynrow .val')?.textContent ?? '0').replace(',', '.').replace('−', '-')) < -3, idx),
   await A.page.evaluate(() => document.querySelector('cen-voice-panel .dynrow .val')?.textContent ?? ''));
 const outDyn = await rms(A, 'out');
-ok('A: com a dinâmica o tom sai mais baixo para a sala', outDyn !== null && outBefore !== null && outBefore - outDyn > 2, `antes ${outBefore?.toFixed(1)} dB, agora ${outDyn?.toFixed(1)} dB`);
+ok('A: com a dinâmica o tom sai mais baixo para a sala', outDyn !== null && outRef !== null && outRef - outDyn > 2, `antes ${outRef?.toFixed(1)} dB, agora ${outDyn?.toFixed(1)} dB`);
 await shot(A, 'voz-dinamica.png');
 // Escala ±30, congelar e pré/pós: só não podem quebrar o desenho.
 await A.page.getByRole('button', { name: '±30' }).click();
@@ -269,12 +310,15 @@ ok('A: janela fecha', await until(A, () => document.querySelector('cen-voice-pan
 
 // O "me ouvir" também está no menu do microfone.
 await A.page.locator('button[aria-label="Escolher microfone"]').click();
-ok('A: "me ouvir" no menu do microfone', await A.page.locator('.pop button.listen').waitFor({ timeout: 5000 }).then(() => true, () => false));
-await A.page.locator('.pop button.listen').click();
+ok('A: "me ouvir" ao lado do X do menu do microfone', await A.page.locator('.pop .pop-head button.listen').waitFor({ timeout: 5000 }).then(() => true, () => false));
+await A.page.locator('.pop .pop-head button.listen').click();
 ok('A: menu do microfone liga a escuta', await until(A, () => window.__noveau.session.voiceProc?.monitorTrack?.readyState === 'live'));
-await A.page.locator('.pop button.listen').click();
+await A.page.locator('.pop .pop-head button.listen').click();
 ok('A: e desliga', await until(A, () => !window.__noveau.session.voiceProc?.monitorTrack));
-await A.page.keyboard.press('Escape');
+await A.page.locator('.pop .pop-head button.listen').click();
+await until(A, () => window.__noveau.session.voiceProc?.monitorTrack?.readyState === 'live');
+await A.page.locator('.pop .pop-head button.close').click();
+ok('A: fechar o menu para o teste', await until(A, () => !window.__noveau.session.voiceProc?.monitorTrack && window.__noveau.store.micMonitor() === false));
 
 for (const [name, p] of Object.entries(people)) ok(`${name} sem erros no console`, p.errors.length === 0, p.errors.slice(0, 3).join(' | '));
 console.log(results.join('\n'));

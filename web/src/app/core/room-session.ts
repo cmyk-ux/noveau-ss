@@ -693,7 +693,7 @@ export class RoomSession {
     const mic = this.wantMic;
     const hadScreen = this.hadScreen;
     // O microfone antigo parou junto com a sala (o LiveKit para as trilhas locais ao sair).
-    this.monitorMic(false);
+    this.dropSelfTest();
     void this.voiceProc?.destroy().catch(() => undefined);
     this.voiceProc = null;
     this.update('full');
@@ -1024,7 +1024,7 @@ export class RoomSession {
 
   async disconnect() {
     this.leaving = true;
-    this.monitorMic(false);
+    this.dropSelfTest();
     this.voiceProc = null;
     void this.boost?.close().catch(() => undefined);
     this.boost = null;
@@ -1247,6 +1247,13 @@ export class RoomSession {
   private voice: VoiceSettings = DEFAULT_VOICE;
   private voiceProc: VoiceProcessor | null = null;
   private micMonitor: HTMLAudioElement | null = null;
+  /**
+   * Testando o microfone ("me ouvir"): você ouve a sua voz tratada, a sala recebe silêncio, os outros
+   * ficam mudos para você e o cancelamento de eco do navegador desliga. Ver selfTest().
+   */
+  private testing = false;
+  /** O teste acabou sem a pessoa pedir (desligou o microfone, caiu, a sala trocou o áudio). */
+  onSelfTest: ((on: boolean) => void) | null = null;
   /** Medidores do worker da voz (só com a janela da voz aberta). */
   private metering = false;
   onVoiceMeter: ((m: VoiceMeter) => void) | null = null;
@@ -1280,7 +1287,7 @@ export class RoomSession {
     if (on && lp.getTrackPublication(Track.Source.Microphone)?.track === undefined) await this.publishMic();
     else await lp.setMicrophoneEnabled(on);
     this.wantMic = on;
-    if (!on) this.monitorMic(false);
+    if (!on) await this.endSelfTest();
     this.emit();
     // Mesma conta em dois aparelhos: o microfone "passa" para este, e o outro desliga o dele.
     if (on) {
@@ -1332,9 +1339,10 @@ export class RoomSession {
     // quem estava se ouvindo passa a ouvir a nova.
     proc.onOutput = (t) => {
       wantPtime(t, roomAudio(this.micAudio).ptime);
-      if (this.micMonitor !== null) this.monitorMic(true);
+      if (this.testing) this.playMonitor();
     };
     proc.meter(this.metering);
+    proc.hold(this.testing);
     if (!(track as unknown as { audioContext?: AudioContext }).audioContext) track.setAudioContext(dormantContext());
     await track.setProcessor(proc);
     this.voiceProc = proc;
@@ -1352,11 +1360,10 @@ export class RoomSession {
       const pub = this.room.localParticipant.getTrackPublication(Track.Source.Microphone);
       const track = pub?.track instanceof LocalAudioTrack ? pub.track : undefined;
       if (track === undefined) return;
-      const capture = (v: VoiceSettings) => JSON.stringify(voiceCapture(v));
+      const capture = (v: VoiceSettings) => JSON.stringify(this.captureFor(v));
       if (capture(prev) !== capture(next)) {
-        const deviceId = this.room.getActiveDevice('audioinput');
-        await track.restartTrack({ ...voiceCapture(next), ...(deviceId ? { deviceId } : {}) });
-        this.noteFacts(track);
+        await track.restartTrack(this.captureFor(next));
+        if (!this.testing) this.noteFacts(track);
       }
       const need = needsWorker(next);
       if (need && this.voiceProc === null) await this.attachVoice(track);
@@ -1365,8 +1372,18 @@ export class RoomSession {
         await track.stopProcessor();
         wantPtime(track.mediaStreamTrack, roomAudio(this.micAudio).ptime);
       } else this.voiceProc?.update(next);
+      // Sem o worker, o silêncio do teste é a sala sem trilha (a troca acima religou o envio).
+      if (this.testing) {
+        await this.holdRaw(track);
+        this.playMonitor();
+      }
     });
-    if (this.micMonitor !== null) this.monitorMic(true);
+  }
+
+  /** A captura pedida ao navegador; no teste do microfone, sem o cancelamento de eco (ver selfTest). */
+  private captureFor(v: VoiceSettings) {
+    const deviceId = this.room.getActiveDevice('audioinput');
+    return { ...voiceCapture(this.testing ? { ...v, echo: 'off' } : v), ...(deviceId ? { deviceId } : {}) };
   }
 
   /** Microfone antes e depois do tratamento, para o analisador da janela da voz. */
@@ -1444,33 +1461,108 @@ export class RoomSession {
       const pub = lp.getTrackPublication(Track.Source.Microphone);
       if (pub?.track === undefined) return;
       const wasOn = !pub.isMuted;
-      const monitoring = this.micMonitor !== null;
-      this.monitorMic(false);
+      // A trilha vai ser trocada por outra: o teste do microfone acaba (a pessoa liga de novo).
+      this.dropSelfTest();
       await lp.unpublishTrack(pub.track, true);
       this.voiceProc = null;
       await this.publishMic();
       if (!wasOn) await lp.setMicrophoneEnabled(false);
-      if (monitoring) this.monitorMic(true);
       this.emit();
     }).catch(() => undefined);
   }
 
   /**
-   * Toca para você o som que está indo para a sala (já com a redução de ruído), para comparar os
-   * modos. Use fone: na caixa de som vira microfonia.
+   * Teste do microfone ("me ouvir"): toca para você a sua voz já tratada, como ela sairia para a sala.
+   * Enquanto testa:
+   * - a sala recebe silêncio (ninguém ouve você se testando): o worker manda zeros no mesmo ritmo;
+   *   sem worker, o envio fica sem trilha;
+   * - os outros (vozes e som das telas) ficam mudos só para você, e voltam ao parar;
+   * - o cancelamento de eco do navegador desliga. Ele usa como referência o que o navegador toca
+   *   (com "eco do PC inteiro", tudo que o PC toca), e a escuta toca a sua própria voz ~50 ms
+   *   depois: o AEC3 entende a sua voz no microfone como eco dessa escuta e a apaga aos pedaços
+   *   (a voz "travando"). Com a sala muda para você não sobra nada para cancelar.
+   * O eco volta antes de a voz voltar para a sala, e os outros só voltam depois disso.
+   * Devolve se está testando.
    */
-  monitorMic(on: boolean): boolean {
+  selfTest(on: boolean): Promise<boolean> {
+    return this.serial(async () => {
+      if (!on) {
+        await this.endSelfTest();
+        return false;
+      }
+      const track = this.micTrack();
+      if (track === undefined) return false;
+      if (!this.testing) {
+        this.testing = true;
+        this.voiceProc?.hold(true);
+        this.mix();
+        await this.holdRaw(track);
+        if (this.voice.echo !== 'off') await track.restartTrack(this.captureFor(this.voice)).catch(() => undefined);
+        // A troca de captura religa o envio quando não há worker.
+        await this.holdRaw(track);
+      }
+      this.playMonitor();
+      return true;
+    });
+  }
+
+  private micTrack(): LocalAudioTrack | undefined {
+    const t = this.room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
+    return t instanceof LocalAudioTrack ? t : undefined;
+  }
+
+  /** Sem worker, a sala não recebe nada enquanto o teste dura. */
+  private async holdRaw(track: LocalAudioTrack) {
+    if (!this.testing || this.voiceProc !== null) return;
+    await track.sender?.replaceTrack(null).catch(() => undefined);
+  }
+
+  /** Para o teste e devolve tudo: eco, voz para a sala e o som dos outros, nessa ordem. */
+  private async endSelfTest() {
+    this.stopMonitor();
+    if (!this.testing) return;
+    const track = this.micTrack();
+    this.testing = false;
+    if (track !== undefined) {
+      if (this.voice.echo !== 'off') {
+        await track.restartTrack(this.captureFor(this.voice)).catch(() => undefined);
+        this.noteFacts(track);
+      }
+      if (this.voiceProc === null) await track.sender?.replaceTrack(track.mediaStreamTrack).catch(() => undefined);
+    }
+    this.voiceProc?.hold(false);
+    this.mix();
+    this.onSelfTest?.(false);
+  }
+
+  /** O microfone foi embora (caiu, saiu, republicou): só esquece o teste e devolve o som dos outros. */
+  private dropSelfTest() {
+    this.stopMonitor();
+    if (!this.testing) return;
+    this.testing = false;
+    this.voiceProc?.hold(false);
+    this.mix();
+    this.onSelfTest?.(false);
+  }
+
+  private stopMonitor() {
     if (this.micMonitor !== null) {
       this.micMonitor.pause();
       this.micMonitor.srcObject = null;
       this.micMonitor = null;
     }
-    if (!on) {
-      this.voiceProc?.monitor(false);
-      return false;
+    this.voiceProc?.monitor(false);
+  }
+
+  /** Toca a escuta (de novo, se a trilha mudou: troca de microfone, IA forte entrou). */
+  private playMonitor() {
+    if (this.micMonitor !== null) {
+      this.micMonitor.pause();
+      this.micMonitor.srcObject = null;
+      this.micMonitor = null;
     }
-    const pub = this.room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track?.mediaStreamTrack;
-    if (pub === undefined) return false;
+    const pub = this.micTrack()?.mediaStreamTrack;
+    if (pub === undefined) return;
     // Com o worker, uma saída só de escuta (é por ela que o solo de banda toca só para você).
     const track = this.voiceProc?.monitor(true) ?? pub;
     const el = new Audio();
@@ -1479,7 +1571,6 @@ export class RoomSession {
     if (sink && 'setSinkId' in el) void (el as any).setSinkId(sink).catch(() => undefined);
     void el.play().catch(() => undefined);
     this.micMonitor = el;
-    return true;
   }
 
   /**
@@ -1517,8 +1608,11 @@ export class RoomSession {
       await (this.boost as unknown as { setSinkId(id: string): Promise<void> }).setSinkId(id).catch(() => undefined);
     }
     if (kind === 'audioinput') {
-      const t = this.room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;
-      if (t instanceof LocalAudioTrack) this.noteFacts(t);
+      const t = this.micTrack();
+      if (t !== undefined && this.testing) {
+        await this.holdRaw(t);
+        this.playMonitor();
+      } else if (t !== undefined) this.noteFacts(t);
     }
     this.emit();
   }
@@ -1867,8 +1961,14 @@ export class RoomSession {
     }
   }
 
-  /** O ganho de um som (mudo, foco, escondida, conversa direta); undefined = não é um som que o mixer controla. */
+  /** O ganho de um som; no teste do microfone, todos os sons dos outros ficam mudos para você. */
   private levelOf(p: RemoteParticipant, source: Track.Source): number | undefined {
+    const level = this.mixedLevel(p, source);
+    return level !== undefined && this.testing ? SILENT_GAIN : level;
+  }
+
+  /** O ganho de um som (mudo, foco, escondida, conversa direta); undefined = não é um som que o mixer controla. */
+  private mixedLevel(p: RemoteParticipant, source: Track.Source): number | undefined {
     const me = this.room.localParticipant;
     const id = p.identity;
     // Microfone do celular de alguém: é a voz dele, com o volume dele. O do meu celular não toca

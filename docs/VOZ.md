@@ -13,8 +13,23 @@ sala"). Três abas:
 - **sala e atraso**: qualidade de áudio da sala (vale para todo mundo) e a conta do atraso da voz, ao
   vivo.
 
-O botão **me ouvir** (fone) fica no topo da janela e no menu do microfone: toca para você o que vai para a
-sala, já tratado. Use fone (na caixa de som vira microfonia).
+O botão **me ouvir** (fone) é o teste do microfone. Fica ao lado do X, no menu do microfone e no topo da
+janela da voz (vale em qualquer aba). Toca para você a sua voz já tratada, como ela sai para a sala. Use
+fone (na caixa de som vira microfonia). Enquanto testa (`RoomSession.selfTest`):
+
+- **a sala não te ouve**: o worker manda silêncio no mesmo ritmo (`hold`); sem worker, o envio fica sem
+  trilha (`replaceTrack(null)`). Ninguém precisa ouvir você se testando;
+- **você não ouve a sala**: vozes e som das telas ficam mudos só para você (`levelOf` devolve o mudo);
+- **o cancelamento de eco do navegador desliga.** Era a voz "travando": o AEC3 usa como referência o que
+  o navegador toca (com "eco do PC inteiro", tudo que o PC toca), e a escuta toca a sua própria voz uns
+  50 ms depois. Ele entende a voz no microfone como eco da escuta e apaga pedaços dela. Com a sala muda
+  para você não sobra eco para cancelar. O Chrome ignora `applyConstraints({ echoCancellation })` numa
+  trilha viva (resolve sem mudar nada, medido no Chromium 153), então a captura reabre (`restartTrack`),
+  sem republicar. O ganho automático do navegador recomeça junto e leva uns segundos para assentar.
+
+Ao parar, nessa ordem: o eco volta, a voz volta para a sala, os outros voltam a tocar. O teste para sozinho
+ao fechar o menu do microfone e a janela da voz, ao desligar o microfone, ao cair da sala ou quando a
+sala troca a qualidade de áudio (o microfone é republicado). O solo de banda usa o mesmo teste.
 
 Os ajustes valem no quadro seguinte (10 ms), sem republicar o microfone. Ficam no navegador
 (`noveau:voz2`; os presets em `noveau:eq-presets`). O modo antigo (`noveau:voice`) é convertido.
@@ -32,8 +47,8 @@ Lido do manual do FabFilter Pro-Q 3 e trazido o que faz sentido para voz numa ch
   um passa-faixa com a largura dela; numa prateleira ou corte, a parte que ela mexe (o que o corte de
   grave tira, por exemplo). Arrastando o fone para os lados a banda anda (40 px por oitava; Shift: 5x mais
   fino), para caçar o zumbido ou o S que arde. **Só você ouve**: o solo sai numa terceira trilha do worker
-  (a da escuta); a sala continua recebendo a voz normal. Se a escuta estava desligada, o solo liga e,
-  ao soltar, desliga de novo.
+  (a da escuta). Se o teste do microfone estava desligado, o solo liga (a sala recebe silêncio e você não
+  ouve a sala enquanto segura) e, ao soltar, desliga de novo.
 - **EQ dinâmico** (sino e prateleiras): limiar e alcance (±24 dB). Um detector com o mesmo passa-faixa
   do solo mede a faixa a cada 10 ms (ataque rápido, soltura ~80 ms); a banda começa a agir no limiar e
   chega ao alcance todo 10 dB acima. Alcance negativo abaixa (S ardido, estouro de P, grave que embola

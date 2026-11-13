@@ -4,14 +4,16 @@ import { IS_MOBILE } from '../core/device';
 import { RoomStore } from '../core/room-store';
 import { DENOISE_LABELS, eqActive, roomAudio } from '../core/voice-dsp';
 import { Icon } from './icon';
+import { ListenNote } from './listen-button';
 import { PhoneLinkPanel } from './phone-link';
 
 /** Microfone, câmera do computador e câmera externa por RTMP. */
 @Component({
   selector: 'cen-devices-panel',
-  imports: [Icon, PhoneLinkPanel],
+  imports: [Icon, ListenNote, PhoneLinkPanel],
   template: `
     @if (section() !== 'camera') {
+    @if (!isPhoneDevice) { <cen-listen-note /> }
     @if (section() === 'all') { <p class="label">microfone</p> }
     @if (store.microphones.devices().length === 0) {
       <p class="hint">{{ store.micOn() ? 'Nenhum microfone encontrado.' : 'Ligue o microfone uma vez para o navegador mostrar a lista.' }}</p>
@@ -27,13 +29,7 @@ import { PhoneLinkPanel } from './phone-link';
     @if (section() !== 'camera' && !isPhoneDevice) {
       <p class="label">sua voz</p>
       <p class="hint">{{ voiceSummary() }}</p>
-      <div class="pair">
-        <button type="button" class="btn listen" [class.on]="store.micMonitor()" [attr.aria-pressed]="store.micMonitor()" [disabled]="!store.ownMicOn()"
-          (click)="store.toggleMicMonitor()" [title]="store.ownMicOn() ? 'Ouvir o que vai para a sala, já tratado (use fone: na caixa vira microfonia)' : 'Ligue o microfone para se ouvir'">
-          <cen-icon name="headphones" [size]="14" /> {{ store.micMonitor() ? 'me ouvindo' : 'me ouvir' }}
-        </button>
-        <button class="btn wide" (click)="store.openVoice(true)">Equalizador, ruído, eco e sala</button>
-      </div>
+      <button class="btn wide" (click)="store.openVoice(true)">Equalizador, ruído, eco e sala</button>
     }
     @if (section() === 'mic' && store.canPublish()) {
       <p class="label">celular como microfone</p>
