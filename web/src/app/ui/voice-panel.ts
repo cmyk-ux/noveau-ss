@@ -31,6 +31,7 @@ import {
   soloRange,
 } from '../core/voice-dsp';
 import { Icon } from './icon';
+import { ListenButton, ListenNote } from './listen-button';
 
 type Tab = 'eq' | 'ruido' | 'sala';
 
@@ -116,7 +117,7 @@ class Scope {
 /** Equalizador, redução de ruído, eco e qualidade de áudio da sala. */
 @Component({
   selector: 'cen-voice-panel',
-  imports: [Icon],
+  imports: [Icon, ListenButton, ListenNote],
   host: { '(keydown)': 'key($event)' },
   template: `
     <div class="win panel-surface" role="dialog" aria-label="Voz">
@@ -131,12 +132,10 @@ class Scope {
           <span class="bar"><i [style.width.%]="meterPct(meter()?.inDb)"></i></span>
           <span class="bar out"><i [style.width.%]="meterPct(meter()?.outDb)"></i></span>
         </span>
-        <button type="button" class="btn small listen" [class.on]="store.micMonitor()" [attr.aria-pressed]="store.micMonitor()" [disabled]="!store.ownMicOn()"
-          (click)="store.toggleMicMonitor()" [title]="store.ownMicOn() ? 'Ouvir o que vai para a sala, já tratado (use fone: na caixa vira microfonia)' : 'Ligue o microfone para se ouvir'">
-          <cen-icon name="headphones" [size]="14" /> {{ store.micMonitor() ? 'me ouvindo' : 'me ouvir' }}
-        </button>
+        <cen-listen-button />
         <button class="close" title="Fechar" (click)="store.openVoice(false)"><cen-icon name="close" [size]="15" /></button>
       </header>
+      <cen-listen-note />
 
       @if (!store.voiceWorker) {
         <p class="hint warn">Este navegador não tem o caminho rápido de áudio (Worker de áudio). Equalizador, IA e portão precisam do Chrome, Edge, Brave ou Opera. Aqui só vale o filtro do navegador.</p>

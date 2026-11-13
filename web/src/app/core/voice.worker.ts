@@ -22,6 +22,8 @@ export type VoiceWorkerIn =
   | { type: 'monitor'; writable: WritableStream<AudioData> | null }
   /** Solo de uma banda do equalizador na saída de escuta (null = escuta normal). */
   | { type: 'solo'; band: EqBand | null }
+  /** Teste do microfone: a sala recebe silêncio (só a escuta toca a voz). */
+  | { type: 'hold'; on: boolean }
   | { type: 'stop' };
 
 export interface VoiceMeter {
@@ -291,6 +293,7 @@ let stages: Stage[] = [];
 
 let monitor: WritableStreamDefaultWriter<AudioData> | null = null;
 let monitorTs = 0;
+let hold = false;
 let solo: { band: EqBand; secs: Biquad[]; z: Float64Array } | null = null;
 const soloBuf = new Float32Array(FRAME);
 let outGain = 1;
@@ -549,7 +552,8 @@ async function pump(r: ReadableStreamDefaultReader<AudioData>) {
         numberOfFrames: FRAME,
         numberOfChannels: 1,
         timestamp: nextTimestamp,
-        data: frame.slice(),
+        // Testando o microfone: a sala recebe silêncio no mesmo ritmo (a trilha não para).
+        data: hold ? new Float32Array(FRAME) : frame.slice(),
       });
       nextTimestamp += (FRAME / SAMPLE_RATE) * 1e6;
       if (monitor !== null) {
@@ -638,6 +642,9 @@ self.onmessage = (e: MessageEvent<VoiceWorkerIn>) => {
         const z = solo !== null && solo.z.length === secs.length * 2 ? solo.z : new Float64Array(secs.length * 2);
         solo = { band: m.band, secs, z };
       }
+      break;
+    case 'hold':
+      hold = m.on;
       break;
     case 'meter':
       meterOn = m.on;

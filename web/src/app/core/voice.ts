@@ -126,6 +126,7 @@ export class VoiceProcessor implements TrackProcessor<Track.Kind.Audio, AudioPro
   /** Avisa a trilha de saída nova (para pedir quadros de 10 ms nela também). */
   onOutput: ((track: MediaStreamTrack) => void) | null = null;
   private monitoring = false;
+  private holding = false;
   private soloBand: EqBand | null = null;
   private lane: Lane | null = null;
   /** Worker carregando a IA forte, ainda sem entrada. */
@@ -184,6 +185,12 @@ export class VoiceProcessor implements TrackProcessor<Track.Kind.Audio, AudioPro
     return this.lane?.monitor ?? null;
   }
 
+  /** Teste do microfone: a sala recebe silêncio enquanto você se ouve. */
+  hold(on: boolean) {
+    this.holding = on;
+    this.lane?.send({ type: 'hold', on });
+  }
+
   /** Solo de uma banda na escuta (null = escuta normal). */
   solo(band: EqBand | null) {
     this.soloBand = band;
@@ -231,6 +238,7 @@ export class VoiceProcessor implements TrackProcessor<Track.Kind.Audio, AudioPro
       lane.send({ type: 'settings', settings: s });
     }
     lane.send({ type: 'meter', on: this.metering });
+    lane.send({ type: 'hold', on: this.holding });
   }
 
   /** A IA forte ficou pronta no worker novo: ele passa a ser a saída. */
@@ -244,6 +252,7 @@ export class VoiceProcessor implements TrackProcessor<Track.Kind.Audio, AudioPro
     lane.send({ type: 'settings', settings: this.settings });
     lane.send({ type: 'meter', on: this.metering });
     lane.send({ type: 'solo', band: this.soloBand });
+    lane.send({ type: 'hold', on: this.holding });
     if (this.monitoring) lane.openMonitor();
     lane.input(this.raw);
     const sender = this.local?.sender;

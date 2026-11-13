@@ -11,6 +11,7 @@ import { Toast } from '../core/toast';
 import { DevicesPanel } from './devices-panel';
 import { VoicePanel } from './voice-panel';
 import { Icon } from './icon';
+import { ListenButton } from './listen-button';
 import { PeoplePanel } from './people-panel';
 import { ShareTile } from './share-tile';
 import { Stage } from './stage';
@@ -30,7 +31,7 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
 
 @Component({
   selector: 'cen-room-screen',
-  imports: [Icon, Stage, ShareTile, VolumeSlider, StatsPanel, PeoplePanel, StreamPanel, DevicesPanel, VoicePanel, DawPanel, ObsPanel, CamPip, SelfCam, LiveStrip, Timecode, Countdown],
+  imports: [Icon, ListenButton, Stage, ShareTile, VolumeSlider, StatsPanel, PeoplePanel, StreamPanel, DevicesPanel, VoicePanel, DawPanel, ObsPanel, CamPip, SelfCam, LiveStrip, Timecode, Countdown],
   host: {
     '(document:fullscreenchange)': 'isFullscreen.set(fullscreenActive())',
     '(document:keydown.escape)': 'closeAll()',
@@ -449,6 +450,7 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
           <div class="pop panel-surface" animate.leave="pop-out" [class.wide]="m === 'screen'" role="dialog" [attr.aria-label]="menuTitle(m)">
             <div class="pop-head">
               <span class="label">{{ menuTitle(m) }}</span>
+              @if (m === 'mic' && !isMobile) { <cen-listen-button class="head-listen" /> }
               <button class="close" title="Fechar" (click)="menu.set(null)"><cen-icon name="close" [size]="15" /></button>
             </div>
             @switch (m) {
@@ -637,6 +639,7 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
     .pop.wide { width: min(400px, calc(100vw - 1.5rem)); }
     .pop-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.3rem; }
     .pop-head .label { margin: 0; }
+    .pop-head .head-listen { margin-left: auto; margin-right: 0.35rem; }
     .close { background: none; border: 0; color: var(--muted); display: grid; place-items: center; padding: 4px; border-radius: 4px; }
     .close:hover { color: var(--text); background: var(--surface-3); }
     .brand .wordmark { display: none; }
@@ -890,6 +893,11 @@ export class RoomScreen {
     // A janela da voz abre por cima do submenu do microfone: fecha o submenu.
     effect(() => {
       if (this.store.voiceOpen()) untracked(() => this.menu.set(null));
+    });
+    // O teste do microfone ("me ouvir") deixa a sala sem te ouvir e você sem ouvir a sala: não fica
+    // ligado escondido. Fechou o menu do microfone e a janela da voz, o teste para.
+    effect(() => {
+      if (this.menu() !== 'mic' && !this.store.voiceOpen()) untracked(() => this.store.stopMicMonitor());
     });
     // Tem alguém transmitindo: não deixa a tela apagar.
     effect(() => {

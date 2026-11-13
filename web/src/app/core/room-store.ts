@@ -311,6 +311,10 @@ export class RoomStore {
     void this.session.setVoice(this.prefs.voice());
     this.session.onVoiceMeter = (m) => this._voiceMeter.set(m);
     this.session.onVoiceFacts = (f) => this._voiceFacts.set(f);
+    this.session.onSelfTest = (on) => {
+      if (!on) this.soloAutoMonitor = false;
+      this._micMonitor.set(on);
+    };
     this.session.onVoiceEvent = (m) => {
       if (m.type === 'overload') {
         this.toast.show('O PC não está dando conta da IA forte: voltei para a IA leve.');
@@ -711,9 +715,28 @@ export class RoomStore {
     return this.session.voiceStats();
   }
 
+  /**
+   * "Me ouvir": testa o microfone. Enquanto testa, a sala não te ouve e você não ouve a sala (ver
+   * RoomSession.selfTest).
+   */
   toggleMicMonitor() {
     this.soloAutoMonitor = false;
-    this._micMonitor.set(this.session.monitorMic(!this._micMonitor()));
+    void this.selfTest(!this._micMonitor());
+  }
+
+  /** Para o teste do microfone (o menu e a janela da voz fecharam). */
+  stopMicMonitor() {
+    if (!this._micMonitor()) return;
+    this.soloAutoMonitor = false;
+    void this.selfTest(false);
+  }
+
+  /** O botão muda na hora; o teste em si leva um instante (reabre a captura sem o eco). */
+  private async selfTest(on: boolean) {
+    this._micMonitor.set(on);
+    const got = await this.session.selfTest(on);
+    if (this._micMonitor() === on) this._micMonitor.set(got);
+    return got;
   }
 
   /** A escuta foi ligada só para o solo (desliga quando o solo acaba). */
@@ -731,17 +754,13 @@ export class RoomStore {
         this.toast.show('Ligue o microfone para ouvir a banda em solo.');
         return;
       }
-      if (!this._micMonitor()) {
-        this._micMonitor.set(this.session.monitorMic(true));
-        this.soloAutoMonitor = this._micMonitor();
-      }
       if (!this.session.soloBand(band)) {
         this.toast.show('O solo precisa do equalizador ligado.');
-        if (this.soloAutoMonitor) {
-          this.soloAutoMonitor = false;
-          this._micMonitor.set(this.session.monitorMic(false));
-        }
         return;
+      }
+      if (!this._micMonitor()) {
+        this.soloAutoMonitor = true;
+        void this.selfTest(true);
       }
       this._soloing.set(true);
       return;
@@ -750,7 +769,7 @@ export class RoomStore {
     this._soloing.set(false);
     if (this.soloAutoMonitor) {
       this.soloAutoMonitor = false;
-      this._micMonitor.set(this.session.monitorMic(false));
+      void this.selfTest(false);
     }
   }
 

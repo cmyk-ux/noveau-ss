@@ -669,9 +669,9 @@ await part('voz', async () => {
   ok('voz de A (com IA) chega em B', (await eventually(async () => ({ ok: await flowing(B, 'A', 'microphone') }), 10000)).ok);
   ok('trocar o tratamento não republica o microfone', (await pubSid()) === sid0, String(sid0));
   await vp.locator('header button.listen').click();
-  ok('"me ouvir" (topo da janela) vira "me ouvindo"', await until(A, () => document.querySelector('cen-voice-panel header button.listen')?.textContent?.includes('me ouvindo')));
+  ok('"me ouvir" (topo da janela) vira "parar teste"', await until(A, () => document.querySelector('cen-voice-panel header button.listen')?.textContent?.includes('parar teste')));
   await vp.locator('header button.listen').click();
-  ok('"me ouvindo" volta a "me ouvir"', await until(A, () => document.querySelector('cen-voice-panel header button.listen')?.textContent?.includes('me ouvir') && !document.querySelector('cen-voice-panel header button.listen')?.textContent?.includes('me ouvindo')));
+  ok('"parar teste" volta a "me ouvir"', await until(A, () => document.querySelector('cen-voice-panel header button.listen')?.textContent?.includes('me ouvir')));
   await noise('Desligada').click();
   const r3 = await eventually(async () => {
     const s = await raw();
