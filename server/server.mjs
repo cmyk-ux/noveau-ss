@@ -264,8 +264,10 @@ function serveStatic(req, res, path) {
   } catch {
     /* caminho torto: cai no index.html */
   }
-  // Rotas do site (/room/..., /call): o Angular resolve no navegador.
-  const f = staticFiles.get(name) ?? staticFiles.get('/index.html');
+  // Rotas do site (/room/..., /call): o Angular resolve no navegador. /antigo/... é a versão de 9/11
+  // guardada para comparar a transmissão (docs/DESEMPENHO.md), com o próprio index.html.
+  const fallback = name === '/antigo' || name.startsWith('/antigo/') ? '/antigo/index.html' : '/index.html';
+  const f = staticFiles.get(name) ?? staticFiles.get(fallback);
   if (f === undefined) return send(res, 404, { error: 'Não encontrado.' });
   const headers = { 'content-type': f.type, 'cache-control': f.cache, etag: f.etag };
   if (f.br !== null || f.gz !== null) headers.vary = 'accept-encoding';
