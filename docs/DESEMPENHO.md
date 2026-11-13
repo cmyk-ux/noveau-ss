@@ -377,3 +377,45 @@ Mudanças:
 - O /teste tem "Testar pela janela" e "Testar pela tela inteira", mostra o que foi compartilhado e, na tela inteira com fps baixo, explica o teto.
 
 Ainda não testado com um jogo de verdade (fps e som da janela).
+
+## Décima rodada (13/11/2026): jogo sem limite derruba a captura; o Reflex resolve
+
+O amigo do Pedro (RTX 4060) transmitia o R6 a 9-24 fps capturados, só dentro da partida, em janela ou tela cheia. Limitar o fps do jogo resolvia. O Pedro lembrava que "antes funcionava". Tudo abaixo foi medido no PC do Pedro (RTX 3070, Windows 11 26200, monitor 144 Hz).
+
+Carga sintética (segundo Brave sem vsync com shader pesado, placa a ~99%), capturando a janela dela:
+
+| o que | fps capturados |
+| --- | --- |
+| só captura, sem codificar | 48,1 |
+| captura + H.264 da placa | 48,2 |
+| captura + H.264 + flags sem cópia | 40,6 |
+| site de 9/11 (95c4d30, servido em /antigo), mesmos pedidos de captura | 48,0 (e encolhia para 720p) |
+| Chromium 152, 156 (época de 9/11), 157; Edge 157; Brave 157 | 48,0-48,2 |
+| janela do navegador visível ou minimizada | 48,1 |
+
+Ou seja: nem o site nem o navegador mudaram isso desde 9/11, e o codificador não é a causa.
+
+R6 de verdade, no mapa, tela cheia exclusiva, sem limite de fps, 1080p:
+
+| R6 | fps capturados (tela inteira) | placa | memória da placa |
+| --- | --- | --- | --- |
+| NVIDIA Reflex ligado | 48,0 estável | 82-94% | 2,7 GB |
+| NVIDIA Reflex desligado | 31,2-32,2 estável | 72-93% | 2,8 GB |
+
+Capturador nativo (WGC, igual ao do Chromium) contra o R6 sem Reflex:
+
+| modo | fps |
+| --- | --- |
+| ritmo do Chromium (próxima = 2x a duração) | 43,7 |
+| sem a regra do 2x | 44,2 |
+| prioridade de GPU HIGH (sem admin) | 43,7-44,0 |
+| prioridade de GPU REALTIME | 45,7 |
+| sem cópia para a CPU | 42,1 |
+
+O que isso mostra:
+- Sem Reflex o jogo enfileira quadros na placa, e o Windows só entrega ~44 quadros/s da tela a qualquer capturador. Prioridade de GPU não muda isso.
+- O Chromium perde mais ~12 (32) no próprio trabalho por quadro (cópia de 8 MB e conversão de cor na thread de captura, que ele limita a meio núcleo: `DesktopCaptureDevice` agenda a próxima captura em max(1/fps, 2x a duração da última)). Nada que a página pede muda isso: tamanho (1600x900, 720p, 540p) e fps pedidos não tiveram efeito confiável.
+- O "antes funcionava" mais provável: o Reflex estava ligado no jogo (o do Pedro estava).
+- Começar a transmitir com o jogo já em tela cheia exclusiva faz o aviso de compartilhamento do navegador tirar o foco, e o jogo minimiza.
+
+Mudanças: as dicas (painel de estatísticas, painel de transmissão, diagnóstico e aviso para quem assiste) agora mandam ligar o NVIDIA Reflex / AMD Anti-Lag, em vez de limitar o fps do jogo ou usar o OBS. A versão de 9/11 em /antigo saiu do ar.
