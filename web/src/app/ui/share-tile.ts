@@ -8,11 +8,11 @@ import { RoomStore } from '../core/room-store';
   selector: 'cen-share-tile',
   imports: [Icon],
   template: `
-    <video #video autoplay playsinline muted [class.tuning]="tuning()"></video>
+    <video #video autoplay playsinline muted [class.tuning]="tuning()" [class.frozen-frame]="share().activity.paused"></video>
     @if (share().activity.paused) {
       <!-- Janela minimizada / alt-tab: chuvisco no lugar da imagem congelada. -->
       <div class="paused" animate.leave="paused-out" role="status">
-        <div class="tv-static" aria-hidden="true"></div>
+        <div class="tv-static over" aria-hidden="true"></div>
         <p class="tag"><span class="led warn" aria-hidden="true"></span>pausada<span class="why"> · em outra janela</span></p>
       </div>
     }
