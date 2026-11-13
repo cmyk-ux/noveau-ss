@@ -519,6 +519,8 @@ async function streamPanel(p) {
   }
   const panel = p.page.locator('footer .pop cen-stream-panel');
   await panel.waitFor({ timeout: 5000 });
+  // O codec fica em "Avançado", fechado por padrão.
+  await panel.locator('details.advanced').evaluate((d) => (d.open = true));
   return panel;
 }
 const chipsAfter = (panel, label) => panel.locator('p.label', { hasText: label }).locator('xpath=following-sibling::div[contains(@class,"chips")][1]');
