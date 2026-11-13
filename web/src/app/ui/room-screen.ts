@@ -933,13 +933,13 @@ export class RoomScreen {
     if (tx.lim === 'encoder' && (tx.cf ?? 0) > 0) {
       return {
         text: `codificador de ${s.name}: ~${tx.cf} de ${tx.wf} fps`,
-        title: `A tela de ${s.name} é capturada no fps cheio, mas o codificador de vídeo dele está perdendo quadros (sai ~${tx.cf} de ${tx.wf}). Costuma ser a placa de vídeo ocupada pelo jogo; limitar o FPS do jogo ajuda.`,
+        title: `A tela de ${s.name} é capturada no fps cheio, mas o codificador de vídeo dele está perdendo quadros (sai ~${tx.cf} de ${tx.wf}). Costuma ser o jogo enfileirando quadros na placa de vídeo; ligar o NVIDIA Reflex (ou AMD Anti-Lag) no jogo resolve sem limitar o fps.`,
       };
     }
     if (tx.lim === 'cpu' || tx.cpu === 'critical') {
       return {
         text: `PC de ${s.name} no limite`,
-        title: `O PC de ${s.name} não aguenta transmitir no máximo agora, então o navegador dele baixou resolução ou fps para a transmissão não travar. Volta sozinho quando sobrar folga (por exemplo, limitando o fps do jogo).`,
+        title: `O PC de ${s.name} não aguenta transmitir no máximo agora, então o navegador dele baixou resolução ou fps para a transmissão não travar. Volta sozinho quando sobrar folga.`,
       };
     }
     if (tx.lim === 'bandwidth' || (tx.max > 0 && tx.cap < tx.max)) {

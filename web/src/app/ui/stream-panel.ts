@@ -63,8 +63,9 @@ import {
     @if (settings().frameRate > 60) {
       <p class="hint">Acima de 60 só aparece para quem assiste num monitor de 120 Hz ou mais. 120 é o máximo que o navegador captura.</p>
     }
-    <p class="hint">Em jogo: se o jogo usar a placa de vídeo inteira, o navegador não consegue copiar a tela no fps pedido. Limitar o FPS do jogo
-      um pouco abaixo do que ele faz (de preferência num múltiplo deste: 120 para 60) deixa folga e a tela sai cheia.</p>
+    <p class="hint">Em jogo: ligue o NVIDIA Reflex (ou o AMD Anti-Lag) nas opções do jogo. Sem ele, o jogo enfileira quadros na placa de vídeo
+      e o navegador espera atrás deles para copiar a tela. Ele não limita o fps do jogo. Com tela cheia exclusiva, comece a transmitir antes de
+      voltar ao jogo: o aviso de compartilhamento do navegador tira o foco e o jogo minimiza.</p>
     <p class="label">bitrate máximo</p>
     <div class="chips">
       @for (b of bitrates; track b.bps) {

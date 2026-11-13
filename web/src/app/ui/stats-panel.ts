@@ -6,6 +6,9 @@ import { formatBitrate } from '../core/stream';
 import { describePressure } from '../core/load';
 import { measureMonitor, monitorHz } from '../core/monitor';
 
+/** Medido com o R6 (DESEMPENHO.md, "Décima rodada"): sem Reflex a captura cai de 48 para 32 fps. */
+const REFLEX = 'ligue o NVIDIA Reflex (ou o AMD Anti-Lag) nas opções do jogo';
+
 interface Row {
   label: string;
   value: string;
@@ -144,9 +147,12 @@ export class StatsPanel {
     const monitorShort = this.store.shareSurface() === 'monitor' && s.captureFps > 0 && s.captureFps < want * 0.9;
     if (monitorShort) out.push(row('dica', 'tela inteira tem teto no Windows 11: compartilhe a JANELA do jogo (sem bordas) para passar disso', true));
     const h = this.store.health();
-    if (h?.short === 'encoder') out.push(row('dica', 'o codificador perde quadros: limite o FPS do jogo para sobrar placa de vídeo', true));
+    if (h?.short === 'encoder') out.push(row('dica', `o codificador perde quadros: ${REFLEX} (não limita o fps do jogo)`, true));
     else if (!monitorShort && s.captureFps > 0 && s.captureFps < want * 0.9)
-      out.push(row('dica', 'o navegador só captura quando a tela muda: área de trabalho parada ou vídeo de 30 fps dão menos quadros, e é normal'));
+      out.push(
+        row('dica', `em jogo, ${REFLEX}: sem ele o jogo enfileira quadros na placa e a captura espera (não limita o fps do jogo)`, true),
+        row('dica', 'fora de jogo é normal: o navegador só captura quando a tela muda (área de trabalho parada, vídeo de 30 fps)'),
+      );
     return out;
   }
 

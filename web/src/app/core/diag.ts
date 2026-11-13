@@ -41,10 +41,11 @@ export function captureAdvice(cpu: string): string {
     : 'O jogo está usando a placa de vídeo inteira e o navegador fica esperando para copiar cada quadro da tela (o processador está com folga).';
 }
 
+// Medido com o R6 no PC do Pedro (DESEMPENHO.md, "Décima rodada"): sem Reflex o jogo enfileira quadros
+// na placa e a captura cai (48 -> 32 fps); com Reflex volta. Não limita o fps do jogo.
 export const CAPTURE_FIX =
-  'Para ter fps cheio: limite o FPS do jogo um pouco abaixo do que ele faz hoje (no próprio jogo, ou "Taxa máxima de quadros" no painel da NVIDIA, ' +
-  'ou "Frame Rate Target Control"/Chill no AMD), de preferência num múltiplo do fps da transmissão (120 para 60). ' +
-  'Ou transmita pelo OBS (captura de jogo, rodando como administrador), na tecla OBS da sala.';
+  'Para ter fps cheio: ligue o NVIDIA Reflex (ou o AMD Anti-Lag) nas opções do jogo. Ele não limita o fps do jogo: ' +
+  'só impede o jogo de acumular fila de quadros na placa de vídeo, e é essa fila que deixa a captura esperando.';
 
 export function encodeSendHealth(h: SendHealth): string {
   return JSON.stringify(h);
