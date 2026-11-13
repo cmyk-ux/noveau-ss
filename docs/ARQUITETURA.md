@@ -172,8 +172,11 @@ LiveKit (Room) ──eventos──► RoomSession ──RoomSnapshot──► Ro
     janela com 0 Hz (quadro igual não é entregue), então janela minimizada e janela parada são iguais
     para a página: os quadros param. `PauseWatch` (`core/pause-watch.ts`) lê o contador da própria
     faixa (`track.stats.totalFrames`, sem `getStats`) a cada 0,5 s, só com a fonte em `window`, e só
-    marca pausada depois de ~3 s acima de ~10 fps seguidos de 1,5 s sem quadro nenhum (documento parado
-    desde o começo, tela inteira e soluço curto não contam). Volta com 3 quadros em 1 s (um quadro solto é
+    marca pausada depois de ~3 s acima de ~10 fps seguidos de 1,5 s sem quadro nenhum, ou de 2 s com
+    quadros chegando mas a imagem igual (R6 com alt-tab congela com ~8 fps chegando; miniatura 64x36 por
+    `ImageCapture.grabFrame`, menos de 1% mudando). Documento parado desde o começo, tela inteira e
+    soluço curto não contam. Janela coberta que continua desenhando (jogo sem borda) não tem como ser
+    vista pelo navegador: segue mandando imagem. Volta com 3 quadros em 1 s (um quadro solto é
     o "refresh" do WebRTC). Vai no `act` (`p:1`), no máximo uma mudança a cada 2 s. Quem assiste vê chuvisco
     (`.tv-static`, só `transform`, só enquanto aparece) e o aviso no palco, na grade, na prévia da barra
     e no painel de pessoas. Teste: `tools/e2e/pausa.mjs`.
