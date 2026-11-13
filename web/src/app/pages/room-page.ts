@@ -36,6 +36,7 @@ import { RoomScreen } from '../ui/room-screen';
             <label class="label" for="nickname">Como te chamamos</label>
             <input id="nickname" class="input" type="text" maxlength="24" autocomplete="nickname"
               [value]="name()" (input)="name.set($any($event.target).value)" />
+            <p class="hint">Você entra com o microfone desligado. Ninguém te ouve até você ligar.</p>
           </div>
           <p class="error" role="alert">{{ message() }}</p>
           <button type="submit" class="btn primary wide" [disabled]="joining()">

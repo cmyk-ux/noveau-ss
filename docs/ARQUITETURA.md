@@ -156,7 +156,9 @@ LiveKit (Room) ──eventos──► RoomSession ──RoomSnapshot──► Ro
     medida à regra 3: uma mensagem por pessoa por 1o1) e, 4 s depois, confere uma vez se os bytes
     chegam; se não, desinscreve e inscreve do zero (`DirectTalk.verify`). Quem sai de um 1o1 deixa
     `"<pessoa>|out"` enquanto a outra ainda aponta para ela, para ninguém ficar preso sozinho esperando.
-    Teste: `tools/e2e/umaum.mjs`.
+    Quem já está num 1o1 travado e é puxado por outra pessoa não entra no dela: ouve um "toc toc"
+    local (`knock` em `sfx.ts`, nunca pelo microfone nem pelo servidor), uma vez por tentativa, no
+    máximo a cada 20 s por pessoa e 5 s no geral (`DirectTalk.knock`). Teste: `tools/e2e/umaum.mjs`.
 24. **Caiu de vez, volta sozinho.** O LiveKit retoma quedas curtas (~45 s de tentativas); depois disso
     a sala termina em `Disconnected`. A `RoomSession` então tenta entrar de novo (1, 2, 4, 8 e depois a
     cada 15 s, sem desistir) com o último token (o servidor renova; mesma identidade, então volumes e
