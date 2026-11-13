@@ -8,7 +8,14 @@ import { RoomStore } from '../core/room-store';
   selector: 'cen-share-tile',
   imports: [Icon],
   template: `
-    <video #video autoplay playsinline muted></video>
+    <video #video autoplay playsinline muted [class.tuning]="tuning()"></video>
+    @if (share().activity.paused) {
+      <!-- Janela minimizada / alt-tab: chuvisco no lugar da imagem congelada. -->
+      <div class="paused" animate.leave="paused-out" role="status">
+        <div class="tv-static" aria-hidden="true"></div>
+        <p class="tag"><span class="led warn" aria-hidden="true"></span>pausada<span class="why"> · em outra janela</span></p>
+      </div>
+    }
     <div class="top">
       @if (share().cam !== null) {
         <!-- A câmera de quem transmite: uma tecla só, sempre aqui, liga e desliga. Desligada, não baixa nada. -->
@@ -26,7 +33,7 @@ import { RoomStore } from '../core/room-store';
         <!-- Câmera junto da tela: num canto do monitor, na cópia menor. Clique abre grande. -->
         <div class="cam" [style.aspect-ratio]="camAspect()" title="Clique para ver a câmera grande" (click)="$event.stopPropagation(); openCam()">
           <video #cam autoplay playsinline muted [class.mirror]="c.mirror" (playing)="camTuned.set(true)" (resize)="readCamAspect()"></video>
-          @if (!camTuned()) { <span class="snow" aria-hidden="true"></span> }
+          @if (!camTuned()) { <span class="tv-static" aria-hidden="true"></span> }
         </div>
       }
     }
@@ -52,7 +59,20 @@ import { RoomStore } from '../core/room-store';
       transition: box-shadow 160ms; animation: crt-on 420ms var(--ease) both; }
     :host(:hover) { box-shadow: 0 0 0 1px #0b0b0c, 0 0 0 3px var(--accent), 0 0 0 4px #0b0b0c; }
     video { width: 100%; height: 100%; object-fit: contain; display: block; }
-    .name { position: absolute; left: 8px; bottom: 8px; padding: 3px 8px; border-radius: 3px; background: rgb(8 7 11 / 0.82);
+    video.tuning { animation: tune-tile 300ms steps(6) both; }
+    @keyframes tune-tile {
+      0% { clip-path: inset(49% 0 49% 0); filter: brightness(2) contrast(1.5) grayscale(1); }
+      55% { clip-path: inset(0 0 0 0); filter: brightness(1.3); }
+      100% { clip-path: inset(0 0 0 0); filter: none; }
+    }
+    .paused { position: absolute; inset: 0; z-index: 1; display: grid; place-items: center; animation: crt-on 380ms var(--ease) both; }
+    .paused.paused-out { animation: crt-off 260ms var(--ease) both; }
+    .paused .tag { position: relative; margin: 0; padding: 4px 9px; border-radius: 2px; background: rgb(8 7 11 / 0.86);
+      border: 1px solid rgb(255 255 255 / 0.1); font: 500 0.68rem/1.2 var(--mono); letter-spacing: 0.16em; text-transform: uppercase;
+      color: var(--warn); display: flex; align-items: center; gap: 0.45rem; }
+    .paused .tag .led { width: 6px; height: 6px; animation: blink 1.4s steps(1) infinite; }
+    .paused .why { color: var(--muted); letter-spacing: 0.08em; }
+    .name { position: absolute; z-index: 2; left: 8px; bottom: 8px; padding: 3px 8px; border-radius: 3px; background: rgb(8 7 11 / 0.82);
       border: 1px solid rgb(255 255 255 / 0.08); font: 500 0.7rem/1.2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase;
       display: flex; gap: 0.45rem; align-items: center; }
     .snd { color: var(--accent-hi); }
@@ -77,8 +97,6 @@ import { RoomStore } from '../core/room-store';
       box-shadow: 0 0 0 1px #0b0b0c, 0 0 0 2px #2a2a2b, 0 0 0 3px #0b0b0c, 0 6px 14px -8px #000; animation: crt-on 320ms var(--ease) both; }
     .cam video { width: 100%; height: 100%; object-fit: contain; display: block; pointer-events: none; }
     .cam video.mirror { transform: scaleX(-1); }
-    .cam .snow { position: absolute; inset: 0; background: repeating-linear-gradient(0deg, #1a1a1b 0 2px, #0e0e0f 2px 4px);
-      animation: blink 0.9s steps(1) infinite; }
     .cam-key { display: flex; align-items: center; gap: 4px; height: 22px; padding: 0 6px; border: 1px solid #0b0b0c; border-radius: 3px;
       background: var(--plate); color: var(--muted); box-shadow: var(--key-shadow); cursor: pointer; }
     .cam-key:hover { background: var(--plate-hi); color: var(--text); }
@@ -119,7 +137,19 @@ export class ShareTile {
     return this.store.studio.streams().some((s) => s.identity === this.share().id);
   }
 
+  /** Voltou de pausada: a imagem "sintoniza" de novo. */
+  protected readonly tuning = signal(false);
+  private wasPaused = false;
+
   constructor() {
+    effect(() => {
+      const paused = this.share().activity.paused === true;
+      if (this.wasPaused && !paused) {
+        this.tuning.set(true);
+        window.setTimeout(() => this.tuning.set(false), 320);
+      }
+      this.wasPaused = paused;
+    });
     inject(DestroyRef).onDestroy(() => {
       this.store.detachShare(this.share().id, this.video().nativeElement);
       if (this.camAttached !== null) this.store.detachCam(this.share().id, this.camAttached.el);

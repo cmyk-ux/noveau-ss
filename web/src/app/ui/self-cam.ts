@@ -29,7 +29,7 @@ const MAX_W = 720;
           (click)="toggleFull()" (keydown.enter)="toggleFull()">
           <video #v autoplay playsinline muted [class.mirror]="me.mirror" (playing)="tuned.set(true)" (resize)="readAspect()"></video>
           @if (!tuned()) {
-            <span class="snow" aria-hidden="true"><span class="mono">sintonizando</span></span>
+            <span class="snow" aria-hidden="true"><span class="tv-static"></span><span class="mono">sintonizando</span></span>
           }
           <div class="plate" (click)="$event.stopPropagation()">
             <span class="led accent" aria-hidden="true"></span>
@@ -72,9 +72,8 @@ const MAX_W = 720;
     :host(.sizing) .win { cursor: nwse-resize; }
     video { width: 100%; height: 100%; object-fit: contain; display: block; pointer-events: none; }
     video.mirror { transform: scaleX(-1); }
-    .snow { position: absolute; inset: 0; display: grid; place-items: center;
-      background: repeating-linear-gradient(0deg, #1a1a1b 0 2px, #0e0e0f 2px 4px); }
-    .snow .mono { font-size: 0.58rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint);
+    .snow { position: absolute; inset: 0; display: grid; place-items: center; }
+    .snow .mono { position: relative; background: rgb(0 0 0 / 0.6); padding: 2px 6px; font-size: 0.58rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--faint);
       animation: blink 1.2s steps(1) infinite; }
     /* Plaqueta com o nome, como nos monitores da grade; os botões aparecem com o mouse em cima. */
     .plate { position: absolute; left: 5px; bottom: 5px; display: flex; align-items: center; gap: 0.35rem; padding: 2px 3px 2px 6px;

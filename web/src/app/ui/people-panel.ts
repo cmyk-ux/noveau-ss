@@ -357,6 +357,7 @@ export class PeoplePanel {
 
   actText(a: Activity): string {
     if (a.surface === 'camera') return 'câmera ligada';
+    if (a.paused) return 'pausada · em outra janela';
     return a.surface === 'monitor' || a.surface === '' ? 'transmitindo a tela' : `transmitindo ${activityLine(a)}`;
   }
 

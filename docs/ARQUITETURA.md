@@ -168,6 +168,19 @@ LiveKit (Room) ──eventos──► RoomSession ──RoomSnapshot──► Ro
     sala, entrou com a mesma conta em outra aba ou teve a sala apagada (`recoverable`).
     Teste: `tools/e2e/volta.mjs` (`SERVIDOR=1` também derruba o LiveKit local).
 
+25. **"Transmissão pausada" só com prova: imagem vinha e parou de vez.** No Windows o Chrome captura
+    janela com 0 Hz (quadro igual não é entregue), então janela minimizada e janela parada são iguais
+    para a página: os quadros param. `PauseWatch` (`core/pause-watch.ts`) lê o contador da própria
+    faixa (`track.stats.totalFrames`, sem `getStats`) a cada 0,5 s, só com a fonte em `window`, e só
+    marca pausada depois de ~3 s acima de ~10 fps seguidos de 1,5 s sem quadro nenhum (documento parado
+    desde o começo, tela inteira e soluço curto não contam). Volta com 3 quadros em 1 s (um quadro solto é
+    o "refresh" do WebRTC). Vai no `act` (`p:1`), no máximo uma mudança a cada 2 s. Quem assiste vê chuvisco
+    (`.tv-static`, só `transform`, só enquanto aparece) e o aviso no palco, na grade, na prévia da barra
+    e no painel de pessoas. Teste: `tools/e2e/pausa.mjs`.
+26. **Prévia da barra sem botão.** O vídeo do cartão de quem está no ar liga sozinho com o mouse em
+    cima (chuvisco até a imagem chegar) e é solto ao sair. Não liga para a tela em foco, escondida ou
+    pausada.
+
 ## Atributos dos participantes
 
 Atributos vão para todo mundo da sala. Antes de criar um, veja se já não existe e quantas vezes ele
@@ -177,7 +190,7 @@ vai mudar.
 | --- | --- | --- |
 | `watching` | cada pessoa (`room-session.ts`) | troca de foco/grade |
 | `tx` | quem transmite (`room-store.ts` → `publishSendHealth`) | perda/teto mudam de faixa, CPU entra ou sai de `serious`/`critical`, codificador perdendo quadros começa/acaba, fps capturado muda de degrau (`cf`/`wf`, de 5 em 5 fps); no máximo 1 a cada 5 s |
-| `act` | quem transmite (`activity.ts`) | começa/para de transmitir, troca de janela |
+| `act` | quem transmite (`activity.ts`) | começa/para de transmitir, troca de janela, janela pausa/volta (`p:1`, no máximo 1 a cada 2 s) |
 | `hwdec` | cada pessoa, ao entrar | ao entrar e ao voltar de uma queda |
 | `direct` | cada pessoa (`direct.ts`) | 1o1 começa/acaba (`<pessoa>\|hold`, `<pessoa>\|lock`, `<pessoa>\|out` = saí e a outra ainda aponta para mim) |
 | `discordId`, `avatar`, `guest`, `invitedBy`, `device` | servidor, no token | nunca |
@@ -228,6 +241,10 @@ com o Chromium.
 - `BASE=http://127.0.0.1:3001 node tools/e2e/qualidade.mjs [codec] [resolução] [segundos]`: o que a
   tela manda de verdade (codec e perfil do H.264, tamanho e fps de cada camada, quem codifica) e o que
   quem assiste recebe. A tela é sintética (2560x1440 a 60 fps).
+- `BASE=http://127.0.0.1:3001 [SHOTS=pasta] node tools/e2e/pausa.mjs`: janela minimizada (contador de
+  quadros congelado) vira "transmissão pausada" para quem assiste e volta; quadro solto, soluço curto,
+  tela inteira e janela parada desde o começo não avisam; grade, painel de pessoas e prévia da barra
+  (carrega sozinha com o mouse, chuvisco antes, solta ao sair).
 - `BASE=http://127.0.0.1:3001 node tools/e2e/captura.mjs [partes]`: captura curta (aviso para quem
   transmite e para quem assiste, registro no servidor), captura cheia, vídeo de 30 fps e tela parada sem
   aviso, e o "Ceder" com o processador simulado pelo DevTools (`serious` não mexe, `critical` desce, volta).
