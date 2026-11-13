@@ -157,6 +157,14 @@ LiveKit (Room) ──eventos──► RoomSession ──RoomSnapshot──► Ro
     chegam; se não, desinscreve e inscreve do zero (`DirectTalk.verify`). Quem sai de um 1o1 deixa
     `"<pessoa>|out"` enquanto a outra ainda aponta para ela, para ninguém ficar preso sozinho esperando.
     Teste: `tools/e2e/umaum.mjs`.
+24. **Caiu de vez, volta sozinho.** O LiveKit retoma quedas curtas (~45 s de tentativas); depois disso
+    a sala termina em `Disconnected`. A `RoomSession` então tenta entrar de novo (1, 2, 4, 8 e depois a
+    cada 15 s, sem desistir) com o último token (o servidor renova; mesma identidade, então volumes e
+    1o1 dos outros continuam valendo) e, se ele for recusado, pede outro ao site (`regrant`). O status
+    fica `reconnecting` ("Voltando sozinho…") e o microfone volta como estava. A tela não volta sozinha
+    (o navegador exige um clique): aparece um aviso. Não volta quem saiu (`disconnect()`), foi tirado da
+    sala, entrou com a mesma conta em outra aba ou teve a sala apagada (`recoverable`).
+    Teste: `tools/e2e/volta.mjs` (`SERVIDOR=1` também derruba o LiveKit local).
 
 ## Atributos dos participantes
 
@@ -196,6 +204,11 @@ com o Chromium.
   câmera junto da tela, reiniciar a tela, painel de pessoas, conversa direta, mutar a tela (o botão
   tem de mudar em até 1 s), voz mutada continua muda depois de "Ativar áudio", dois cliques rápidos
   no microfone, erros no console.
+- `BASE=... N=8 MIN=10 [TELAS=k] node tools/e2e/carga.mjs`: carga e estabilidade da sala (perda,
+  jitter, som tapado, fila de chegada, quedas, alguém deixando de ouvir alguém), de 15 em 15 s.
+  Medido em 2026-11-13 com o LiveKit limitado a 1 CPU e 900 MB (`docker run --cpus=1 --memory=900m`):
+  10 pessoas falando por 10 min, 0% de perda, nenhuma queda, LiveKit em ~24% de CPU e 110 MB; com
+  `lk load-test` (8 vídeos de 2 Mbps para 16 pessoas, 180 Mbps saindo) ~30% de CPU e 210 MB.
 - `BASE=http://127.0.0.1:3001 node tools/e2e/controles.mjs`: clica em todos os controles da sala e
   confere o efeito de verdade (volume que chega no som, inscrição e camada no servidor, codec e tamanho que
   chegam, permissões da conversa direta), inclusive quedas de sinal e reconexão completa simuladas.

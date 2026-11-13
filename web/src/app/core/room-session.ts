@@ -2,6 +2,7 @@
 import {
   ConnectionState,
   createLocalAudioTrack,
+  DisconnectReason,
   LocalAudioTrack,
   Participant,
   ParticipantKind,
@@ -565,7 +566,9 @@ export class RoomSession {
   }
 
   private describeNow(): RoomSnapshot {
-    return statusOf(this.room.state) === 'disconnected' ? emptySnapshot() : this.describe(this.live);
+    if (this.room.state === ConnectionState.Connected || this.room.state === ConnectionState.Reconnecting)
+      this.hadScreen = this.room.localParticipant.isScreenShareEnabled;
+    return statusOf(this.room.state) === 'disconnected' ? this.lostSnapshot() : this.describe(this.live);
   }
 
   /**
@@ -659,15 +662,93 @@ export class RoomSession {
         this.followRoomAudio();
         changed();
       })
-      .on(RoomEvent.Disconnected, changed);
+      .on(RoomEvent.Disconnected, (reason?: DisconnectReason) => {
+        if (!this.leaving && recoverable(reason)) void this.recover(reason);
+        changed();
+      });
   }
 
   async connect(url: string, token: string) {
+    this.leaving = false;
     await this.room.connect(url, token, { autoSubscribe: true });
+    this.lastJoin = { url, token };
+    this.followToken();
     this.micAudio = parseRoomAudio(this.room.metadata).preset;
     this.emit();
     void this.publishDecoders();
   }
+
+  /**
+   * Volta para a sala sozinho depois de cair de vez. O LiveKit tenta retomar por uns 45 s (rede
+   * piscando, Wi-Fi trocando); se a queda dura mais, ou o servidor reinicia, a sala termina em
+   * "desconectado". Antes aparecia "Recarregue a página" e, no meio de uma partida, ninguém
+   * percebia que tinha saído da call. Agora a página fica tentando entrar de novo (1, 2, 4, 8 e
+   * depois a cada 15 s), com a mesma identidade (volumes e 1o1 dos outros continuam valendo para
+   * esta pessoa) e com o microfone como estava. Não volta se a pessoa saiu, foi tirada da sala
+   * (Discord, convidado expulso) ou entrou em outra aba com a mesma conta.
+   */
+  private async recover(reason: DisconnectReason | undefined) {
+    if (this.rejoining || this.lastJoin === null) return;
+    this.rejoining = true;
+    const mic = this.wantMic;
+    const hadScreen = this.hadScreen;
+    // O microfone antigo parou junto com a sala (o LiveKit para as trilhas locais ao sair).
+    this.monitorMic(false);
+    void this.voiceProc?.destroy().catch(() => undefined);
+    this.voiceProc = null;
+    this.update('full');
+    console.warn('noveau: caiu da sala, tentando voltar', reason);
+    let token = this.lastJoin.token;
+    for (let attempt = 0; !this.leaving; attempt++) {
+      await new Promise((r) => setTimeout(r, REJOIN_DELAYS_MS[Math.min(attempt, REJOIN_DELAYS_MS.length - 1)]));
+      if (this.leaving) break;
+      try {
+        await this.room.connect(this.lastJoin.url, token, { autoSubscribe: true });
+      } catch (e) {
+        // Servidor de volta mas o token venceu (ou foi recusado): pede um novo ao site.
+        if (/401|403|token|unauthori|not allowed|permission/i.test(String((e as Error)?.message ?? e)) && this.regrant !== null) {
+          const fresh = await this.regrant().catch(() => null);
+          if (fresh !== null) token = fresh.token;
+        }
+        continue;
+      }
+      this.lastJoin = { url: this.lastJoin.url, token };
+      this.followToken();
+      this.rejoining = false;
+      this.micAudio = parseRoomAudio(this.room.metadata).preset;
+      this.direct.reconnected();
+      void this.publishDecoders();
+      if (mic) await this.setMicrophone(true).catch(() => undefined);
+      this.update('full');
+      this.onRejoined?.(hadScreen);
+      return;
+    }
+    this.rejoining = false;
+    this.update('full');
+  }
+
+  /** Guarda o token renovado pelo servidor (o LiveKit troca o token antes de vencer). */
+  private followToken() {
+    const engine = (this.room as unknown as { engine?: { on: (e: string, f: (t: string) => void) => void } }).engine;
+    engine?.on('tokenRefreshed', (t: string) => {
+      if (this.lastJoin !== null) this.lastJoin = { url: this.lastJoin.url, token: t };
+    });
+  }
+
+  /** Último endereço e token que entraram na sala (para voltar sozinho depois de cair). */
+  private lastJoin: { url: string; token: string } | null = null;
+  /** Tentando voltar para a sala depois de cair (a tela mostra "reconectando"). */
+  private rejoining = false;
+  /** A pessoa saiu de propósito: não volta sozinha. */
+  private leaving = false;
+  /** Pede um token novo ao site (o RoomStore preenche ao entrar). */
+  regrant: (() => Promise<{ token: string }>) | null = null;
+  /** Voltou para a sala depois de cair; `screen` diz se a tela estava no ar (precisa clicar de novo). */
+  onRejoined: ((screen: boolean) => void) | null = null;
+  /** Microfone ligado pela pessoa (para religar ao voltar). */
+  private wantMic = false;
+  /** A tela desta pessoa estava no ar na última vez que a sala estava de pé. */
+  private hadScreen = false;
 
   /** Conta aos outros o que este PC decodifica na placa de vídeo, para quem transmite escolher o codec. */
   private async publishDecoders() {
@@ -942,6 +1023,7 @@ export class RoomSession {
   }
 
   async disconnect() {
+    this.leaving = true;
     this.monitorMic(false);
     this.voiceProc = null;
     void this.boost?.close().catch(() => undefined);
@@ -1197,6 +1279,7 @@ export class RoomSession {
     const lp = this.room.localParticipant;
     if (on && lp.getTrackPublication(Track.Source.Microphone)?.track === undefined) await this.publishMic();
     else await lp.setMicrophoneEnabled(on);
+    this.wantMic = on;
     if (!on) this.monitorMic(false);
     this.emit();
     // Mesma conta em dois aparelhos: o microfone "passa" para este, e o outro desliga o dele.
@@ -1600,12 +1683,18 @@ export class RoomSession {
     return this.last;
   }
 
+  /** Fora da sala: "reconectando" enquanto tenta voltar sozinho, senão "desconectado". */
+  private lostSnapshot(): RoomSnapshot {
+    return this.rejoining ? { ...emptySnapshot(), status: 'reconnecting' } : emptySnapshot();
+  }
+
   private settle(): RoomSnapshot {
     if (statusOf(this.room.state) === 'disconnected') {
       this.setFocus(null, false);
       this.live = [];
-      return emptySnapshot();
+      return this.lostSnapshot();
     }
+    this.hadScreen = this.room.localParticipant.isScreenShareEnabled;
     this.direct.sync();
     const shares = this.collectShares();
     this.live = shares;
@@ -1900,6 +1989,24 @@ function emptySnapshot(): RoomSnapshot {
     whispers: [],
     audio: { preset: DEFAULT_ROOM_AUDIO, by: null },
   };
+}
+
+/** Espera entre as tentativas de voltar para a sala. */
+const REJOIN_DELAYS_MS = [1000, 2000, 4000, 8000, 15000];
+
+/** Caiu por rede ou servidor (volta sozinho), e não porque saiu ou foi tirado da sala. */
+function recoverable(reason: DisconnectReason | undefined): boolean {
+  switch (reason) {
+    case DisconnectReason.CLIENT_INITIATED:
+    case DisconnectReason.DUPLICATE_IDENTITY:
+    case DisconnectReason.PARTICIPANT_REMOVED:
+    case DisconnectReason.ROOM_DELETED:
+    case DisconnectReason.ROOM_CLOSED:
+    case DisconnectReason.USER_REJECTED:
+      return false;
+    default:
+      return true;
+  }
 }
 
 function statusOf(state: ConnectionState): RoomStatus {

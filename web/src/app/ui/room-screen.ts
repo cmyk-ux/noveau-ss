@@ -200,6 +200,9 @@ type Menu = 'mic' | 'screen' | 'camera' | 'daw' | 'obs';
           <button class="btn small primary" (click)="store.unlockAudio()">Ativar áudio</button>
         </div>
       }
+      @if (store.status() === 'reconnecting') {
+        <div class="banner"><span class="flag mono">sinal</span><span class="msg">Sem conexão com a sala. Voltando sozinho…</span></div>
+      }
       @if (store.status() === 'disconnected') {
         <div class="banner danger"><span class="flag mono">sinal</span><span class="msg">Conexão perdida. Recarregue a página para voltar.</span></div>
       }

@@ -328,6 +328,8 @@ export class RoomStore {
     // Chegou outra tela enquanto você assiste uma: o foco fica, e o aviso leva até ela.
     // O aviso some se a tela ou câmera acabar antes dele: o "ver" não levaria a lugar nenhum.
     let arrival: { id: string; action: ToastAction } | null = null;
+    this.session.onRejoined = (screen) =>
+      this.toast.show(screen ? 'Conexão de volta. Sua tela caiu junto: compartilhe de novo.' : 'Conexão de volta.', { ms: 5000 });
     this.session.onShareArrived = (id, name, kind) => {
       const action: ToastAction = { label: 'ver', run: () => this.focusShare(id) };
       arrival = { id, action };
@@ -442,6 +444,12 @@ export class RoomStore {
       const grant = await getGrant();
       await this.session.connect(grant.url, grant.token);
       this.token = grant.token;
+      // Caiu e o token antigo não serve mais: a sessão pede outro do mesmo jeito que entrou.
+      this.session.regrant = async () => {
+        const g = await getGrant();
+        this.token = g.token;
+        return g;
+      };
       this._canPublish.set(grant.canPublish);
       this._cameraOffered.set(grant.camera);
       this.link = link ?? { key: '', secret: '' };
