@@ -168,18 +168,18 @@ LiveKit (Room) ──eventos──► RoomSession ──RoomSnapshot──► Ro
     sala, entrou com a mesma conta em outra aba ou teve a sala apagada (`recoverable`).
     Teste: `tools/e2e/volta.mjs` (`SERVIDOR=1` também derruba o LiveKit local).
 
-25. **"Transmissão pausada" só com prova: imagem vinha e parou de vez.** No Windows o Chrome captura
-    janela com 0 Hz (quadro igual não é entregue), então janela minimizada e janela parada são iguais
-    para a página: os quadros param. `PauseWatch` (`core/pause-watch.ts`) lê o contador da própria
-    faixa (`track.stats.totalFrames`, sem `getStats`) a cada 0,5 s, só com a fonte em `window`, e só
-    marca pausada depois de ~3 s acima de ~10 fps seguidos de 1,5 s sem quadro nenhum, ou de 2 s com
-    quadros chegando mas a imagem igual (R6 com alt-tab congela com ~8 fps chegando; miniatura 64x36 por
-    `ImageCapture.grabFrame`, menos de 1% mudando). Documento parado desde o começo, tela inteira e
-    soluço curto não contam. Janela coberta que continua desenhando (jogo sem borda) não tem como ser
-    vista pelo navegador: segue mandando imagem. Volta com 3 quadros em 1 s (um quadro solto é
-    o "refresh" do WebRTC). Vai no `act` (`p:1`), no máximo uma mudança a cada 2 s. Quem assiste vê o último quadro desbotado com
-    chuvisco por cima (`.tv-static.over`, só `transform`, só enquanto aparece) e o aviso no palco, na grade, na prévia da barra
-    e no painel de pessoas. Teste: `tools/e2e/pausa.mjs`.
+25. **"Transmissão pausada" só com prova: a janela vinha mandando bem e parou de vez.** No Windows o
+    Chrome captura janela com 0 Hz (quadro igual não é entregue), então janela minimizada e janela parada
+    são iguais para a página. `PauseWatch` (`core/pause-watch.ts`) lê o contador da própria faixa
+    (`track.stats.totalFrames`, sem `getStats`) a cada 0,5 s, só com a fonte em `window`. Pausa depois
+    de ~3 s a 16 fps ou mais seguidos de 3 s "parados": nenhum quadro, ou até ~10 fps com a imagem igual
+    (R6 com alt-tab congela com ~8 fps chegando; miniatura 64x36 por `ImageCapture.grabFrame`, só tirada
+    com o fps já baixo, menos de 1% mudando). Imagem parada a fps normal (menu, carregamento) nunca
+    pausa; isso pausava sem alt-tab na primeira versão. Sai na hora com fps normal ou qualquer quadro com
+    imagem nova (um quadro solto com a imagem velha é o refresh do WebRTC). Janela coberta que continua
+    desenhando não tem como ser vista pelo navegador. Vai no `act` (`p:1`). Quem assiste vê o último
+    quadro desbotado com chuvisco por cima (`.tv-static.over`, só `transform`) e o aviso no palco, na
+    grade, na prévia da barra e no painel de pessoas. Teste: `tools/e2e/pausa.mjs`.
 26. **Prévia da barra sem botão.** O vídeo do cartão de quem está no ar liga sozinho com o mouse em
     cima (chuvisco até a imagem chegar) e é solto ao sair. Não liga para a tela em foco, escondida ou
     pausada.

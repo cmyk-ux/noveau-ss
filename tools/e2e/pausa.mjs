@@ -29,6 +29,7 @@ function fakeWindow() {
   window.__surface = 'window';
   window.__freeze = false;
   window.__extra = 0;
+  window.__slow = false;
   // Quadros chegando com a imagem congelada (R6 com alt-tab): grabFrame devolve sempre a mesma.
   window.__still = false;
   const grab = ImageCapture.prototype.grabFrame;
@@ -46,14 +47,17 @@ function fakeWindow() {
       const settings = t.getSettings.bind(t);
       t.getSettings = () => ({ ...settings(), displaySurface: window.__surface });
       let frozenAt = null;
+      let slowAt = 0;
       Object.defineProperty(t, 'stats', {
         get() {
           const real = desc.get.call(t);
           if (real === null || real === undefined) return real;
-          if (window.__freeze) {
-            if (frozenAt === null) frozenAt = real.totalFrames;
+          if (window.__freeze || window.__slow) {
+            if (frozenAt === null) { frozenAt = real.totalFrames; slowAt = performance.now(); }
           } else frozenAt = null;
-          const n = (frozenAt ?? real.totalFrames) + window.__extra;
+          // __slow: ~6 fps chegando (R6 com alt-tab manda ~8 fps com a imagem parada).
+          const slow = window.__slow && frozenAt !== null ? Math.floor((performance.now() - slowAt) / 170) : 0;
+          const n = (frozenAt ?? real.totalFrames) + slow + window.__extra;
           return { totalFrames: n, deliveredFrames: n, discardedFrames: 0 };
         },
       });
@@ -129,15 +133,28 @@ await wait(900);
 await set(A, { __freeze: false });
 ok('soluço de 0,9 s: sem aviso', await never(B, stagePaused, undefined, 4000));
 
-// --- Quadros chegando com a imagem congelada (R6 com alt-tab em tela cheia).
+// --- Quadros chegando a fps normal com a imagem parada (menu de jogo, tela de carregamento): nada.
 await wait(4000);
-const t2 = Date.now();
 await set(A, { __still: true });
-ok('imagem congelada com quadros chegando: B vê "Transmissão pausada"', await until(B, stagePaused, undefined, 8000), `${((Date.now() - t2) / 1000).toFixed(1)} s`);
+ok('imagem parada com fps normal (menu): sem aviso', await never(B, stagePaused, undefined, 6000));
+// --- Poucos quadros com a imagem congelada (R6 com alt-tab, ~8 fps): pausa.
+const t2 = Date.now();
+await set(A, { __slow: true });
+ok('poucos quadros com a imagem congelada: B vê "Transmissão pausada"', await until(B, stagePaused, undefined, 8000), `${((Date.now() - t2) / 1000).toFixed(1)} s`);
+// Os quadros voltam a fps normal (mesmo com a imagem parecida): a pausa sai na hora.
+const t3 = Date.now();
+await set(A, { __slow: false });
+ok('quadros voltam: o aviso some logo', await until(B, () => document.querySelector('main.stage-area .paused') === null, undefined, 4000), `${((Date.now() - t3) / 1000).toFixed(1)} s`);
 await set(A, { __still: false });
-ok('imagem volta a mexer: o aviso some', await until(B, () => document.querySelector('main.stage-area .paused') === null, undefined, 6000));
 await wait(4000);
 ok('janela mexendo normal: sem aviso', !(await B.page.evaluate(stagePaused)));
+// --- Pausada sem quadros, e a imagem volta mudando a poucos fps: sai na hora.
+await set(A, { __freeze: true });
+ok('pausa de novo (sem quadros)', await until(B, stagePaused, undefined, 8000));
+await set(A, { __freeze: false, __slow: true });
+ok('poucos quadros mas com imagem nova: o aviso some', await until(B, () => document.querySelector('main.stage-area .paused') === null, undefined, 4000));
+await set(A, { __slow: false });
+await wait(4000);
 
 // --- Tela inteira parada: não é janela, nunca avisa.
 await set(A, { __surface: 'monitor' });

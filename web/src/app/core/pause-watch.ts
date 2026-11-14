@@ -9,37 +9,38 @@
 //
 // Medido no Windows 11 + Brave 1.99 (Chromium 157), janela animada a ~32 fps: minimizada = 0 quadros
 // em 0,5 s; coberta por outra janela = continua mandando (não dá para saber do navegador); imagem
-// parada = 0 quadros (igual a minimizada). E no R6 com alt-tab em tela cheia a imagem congela com
-// ~8 fps ainda chegando (quadros quase iguais). Por isso dois sinais:
-//   - nenhum quadro por 1,5 s, ou
-//   - quadros chegando com a imagem igual por 2 s (miniatura de 64x36 a cada 0,5 s, menos de 1%
-//     dela mudando: o cursor ou um contador de fps não contam).
-// E só depois de a janela vir mandando imagem sem parar (jogo, vídeo): ~3 s seguidos acima de
-// ~10 fps. Documento parado desde o começo não avisa.
-// Volta quando a imagem muda de novo com pelo menos 3 quadros em 1 s (um quadro solto é o "refresh"
-// que o WebRTC pede quando alguém entra, e repete a imagem velha).
+// parada = 0 quadros (igual a minimizada). No R6 com alt-tab em tela cheia a imagem congela com ~8 fps
+// ainda chegando.
 //
+// A primeira versão também pausava com "imagem quase igual" em qualquer fps e errava muito em jogo:
+// menu, tela de carregamento e troca de tela pausavam sem alt-tab, e com quadros mexendo de novo
+// continuava pausada. Agora (13/11, depois do teste do Pedro com amigos):
+//   - só conta depois de a janela vir mandando bem: ~3 s seguidos a 16 fps ou mais;
+//   - pausa com 3 s seguidos de "parado": nenhum quadro, ou poucos quadros (até ~10 fps) com a
+//     imagem igual (miniatura de 64x36, menos de 1% mudando). Imagem parada com fps normal (menu)
+//     nunca pausa; e a miniatura só é tirada quando o fps já caiu;
+//   - volta na hora, na primeira leitura com imagem nova: fps normal, ou qualquer quadro que mude a
+//     miniatura (um quadro solto com a imagem velha é o "refresh" que o WebRTC pede, e não conta).
+//     Entrar na pausa respeita 2 s desde a última mudança; sair, não.
 // Lê `MediaStreamTrack.stats.totalFrames` (contador na própria faixa, sem getStats) a cada 0,5 s, só
 // enquanto a fonte for uma janela; a miniatura (ImageCapture.grabFrame, ~0,4 ms na página) só com
 // quadros chegando. Muda o estado no máximo a cada 2 s (vai para o atributo "act").
 
 const TICK_MS = 500;
-/** Quadros por leitura para contar como "mandando imagem" (~10 fps). */
-const MOVING_FRAMES = 5;
+/** Quadros por leitura para contar como "mandando imagem" (16 fps). */
+const MOVING_FRAMES = 8;
+/** Até quantos quadros por leitura ainda pode ser imagem congelada (~10 fps; o R6 manda ~8). */
+const SLOW_FRAMES = 5;
 /** Leituras seguidas com imagem antes de parar (3 s). */
 const MOVING_TICKS = 6;
-/** Leituras sem nenhum quadro para virar pausada (1,5 s). */
-const STOPPED_TICKS = 3;
-/** Leituras com quadros chegando mas a imagem igual para virar pausada (2 s). */
-const FROZEN_TICKS = 4;
+/** Leituras seguidas paradas (sem quadro, ou poucos e iguais) para virar pausada (3 s). */
+const STILL_TICKS = 6;
 /** Miniatura para comparar a imagem (cursor e relógio ficam abaixo de 1% dela). */
 const THUMB_W = 64;
 const THUMB_H = 36;
 /** Diferença (soma de R, G e B, 0-765) para um pixel da miniatura contar como mudado. */
 const PIXEL_DIFF = 24;
 const GRAB_TIMEOUT_MS = 400;
-/** Quadros na última 1 s para voltar. */
-const BACK_FRAMES = 3;
 /** Intervalo mínimo entre mudanças (o atributo vai para a sala inteira). */
 const MIN_CHANGE_MS = 2000;
 
@@ -59,7 +60,6 @@ export class PauseWatch {
   private timer?: number;
   private last: number | null = null;
   private moving = 0;
-  private prev = 0;
   private changedAt = 0;
   private _paused = false;
 
@@ -102,9 +102,7 @@ export class PauseWatch {
     const n = frameCount(this.track);
     if (n === null) return;
     const d = this.last === null ? 0 : Math.max(0, n - this.last);
-    const prev = this.prev;
     this.last = n;
-    this.prev = d;
     // "Compartilhar esta em vez disso" pode trocar a janela por uma tela inteira no meio.
     if (this.surface() !== 'window') {
       this.moving = 0;
@@ -114,34 +112,40 @@ export class PauseWatch {
       return;
     }
     if (d === 0) {
-      this.step(d, prev, true);
+      this.step(d, true);
+      return;
+    }
+    // Quadros a fps normal: a janela está viva (menu parado a 60 fps não é alt-tab).
+    if (d > SLOW_FRAMES) {
+      this.thumb = null;
+      this.step(d, false);
       return;
     }
     // Chegaram quadros: a imagem mudou de verdade, ou é a mesma imagem congelada (visto no R6 com
     // alt-tab: ~8 fps chegando com o quadro parado)? Uma miniatura de 64x36 responde.
     this.busy = true;
     void this.frozen()
-      .then((f) => this.step(d, prev, f))
+      .then((f) => this.step(d, f))
       .finally(() => (this.busy = false));
   }
 
-  private step(d: number, prev: number, frozen: boolean) {
-    this.still = frozen ? this.still + 1 : 0;
+  private step(d: number, still: boolean) {
+    this.still = still ? this.still + 1 : 0;
     if (this._paused) {
-      if (!frozen && d + prev >= BACK_FRAMES) {
+      // Qualquer quadro com imagem nova (ou fps normal) já tira a pausa, sem esperar.
+      if (!still && d > 0) {
         this.moving = d >= MOVING_FRAMES ? 1 : 0;
-        this.set(false);
+        this.set(false, true);
       }
       return;
     }
-    // Sem quadro nenhum: 1,5 s. Quadros chegando com a imagem parada: 2 s (menos certeza).
-    const needed = d === 0 ? STOPPED_TICKS : FROZEN_TICKS;
-    if (frozen) {
-      if (this.still >= needed && this.moving >= MOVING_TICKS) this.set(true);
+    if (still) {
+      if (this.still >= STILL_TICKS && this.moving >= MOVING_TICKS) this.set(true);
       return;
     }
-    // Um soluço curto não apaga o "vinha mandando imagem".
-    this.moving = d >= MOVING_FRAMES ? this.moving + 1 : 0;
+    // Um soluço curto (menos de 3 s) não apaga o "vinha mandando imagem".
+    if (d >= MOVING_FRAMES) this.moving++;
+    else if (d > 0) this.moving = 0;
   }
 
   /** O quadro que está chegando é praticamente igual ao anterior (menos de 1% da miniatura mudou). */
@@ -167,7 +171,8 @@ export class PauseWatch {
       const px = g.getImageData(0, 0, THUMB_W, THUMB_H).data;
       const before = this.thumb;
       this.thumb = px;
-      if (before === null) return false;
+      // Sem miniatura anterior (o fps acabou de cair): ainda não dá para dizer que mudou.
+      if (before === null) return true;
       let changed = 0;
       for (let i = 0; i < px.length; i += 4) {
         const dl = Math.abs(px[i] - before[i]) + Math.abs(px[i + 1] - before[i + 1]) + Math.abs(px[i + 2] - before[i + 2]);
